@@ -5,7 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { DirectNetworkError, isPublicIpv4, mapPorts } from "../dist/network.js";
+import { DirectNetworkError, discoverPublicIpv4, isPublicIpv4, mapPorts } from "../dist/network.js";
 
 const cliPath = path.resolve("dist/cli.js");
 
@@ -110,6 +110,8 @@ test("start --setup works after the saved workspace directory is renamed", async
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
   const health = await fetch(`http://127.0.0.1:${port}/health`);
   assert.equal(health.status, 200);
@@ -139,8 +141,8 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
     `JWT_SECRET=${"a".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
   ].join("\n"));
-  await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexec sleep 30\n", { mode: 0o700 });
-  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy });
+  await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho '{\"msg\":\"certificate obtained successfully\"}' >&2\nexec sleep 30\n", { mode: 0o700 });
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy, PI_PUBLIC_IPV4: "203.0.113.20" });
   t.after(async () => {
     cliProcess.kill("SIGINT");
     await fs.rm(root, { recursive: true, force: true });
@@ -155,8 +157,7 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   cliProcess.stdin.write("n\n");
   await waitFor(() => output.includes("Type DIRECT after completing the router configuration:"));
   cliProcess.stdin.write("DIRECT\n");
-  await waitFor(() => output.includes("Public IPv4 address:"));
-  cliProcess.stdin.write("203.0.113.20\n");
+  await waitFor(() => output.includes("Detecting the public IPv4 address..."));
   await waitFor(() => output.includes("Paste callback URL here:"));
   assert.match(output, /forward public TCP port 80 to this computer's TCP port 8080/);
   assert.match(output, /=== Direct nip\.io hosting started ===/);
@@ -171,6 +172,36 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PI_NIP_IO_HOSTNAME=${escapeRegExp(hostname)}`));
   cliProcess.stdin.write("https://chatgpt.example/nip-io-callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+});
+
+test("start reports an occupied local port without starting OAuth setup", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-port-conflict-"));
+  const configPath = path.join(root, ".env");
+  const fakeCaddy = path.join(root, "caddy");
+  const port = await availablePort();
+  const occupied = net.createServer();
+  await new Promise((resolve) => occupied.listen(port, "127.0.0.1", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => occupied.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  await fs.writeFile(configPath, [
+    `PI_WORK_DIR=${root}`,
+    `PI_DATA_DIR=${path.join(root, "data")}`,
+    `PORT=${port}`,
+    `JWT_SECRET=${"a".repeat(32)}`,
+    `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+    "PI_HOSTING_MODE=nip-io",
+    "PI_NIP_IO_NETWORK=manual",
+    "PI_NIP_IO_HOSTNAME=pilink-203-0-113-20.nip.io",
+  ].join("\n"));
+  await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexec sleep 30\n", { mode: 0o700 });
+
+  const result = await runCli(["start"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy });
+
+  assert.equal(result.code, 1);
+  assert.match(result.output, new RegExp(`PiLink could not listen on 127\\.0\\.0\\.1:${port}: the address is already in use`));
+  assert.doesNotMatch(result.output, /Paste callback URL here:/);
 });
 
 test("automatic router mappings target only PiLink's HTTPS ports and are released", async () => {
@@ -196,6 +227,17 @@ test("automatic router mappings target only PiLink's HTTPS ports and are release
   await mappings.release();
   await mappings.release();
   assert.equal(stops, 1);
+});
+
+test("public IPv4 detection falls back to another service", async () => {
+  const requested = [];
+  const publicIp = await discoverPublicIpv4(async (url) => {
+    requested.push(url);
+    return requested.length === 1 ? new Response("not an IP") : new Response("203.0.113.10\n");
+  });
+
+  assert.equal(publicIp, "203.0.113.10");
+  assert.equal(requested.length, 2);
 });
 
 test("automatic router mappings reject CGNAT addresses and release partial mappings", async () => {
@@ -232,6 +274,28 @@ test("automatic router mappings reject substituted public ports", async () => {
     (error) => error instanceof DirectNetworkError && error.canUseManualFallback,
   );
   assert.equal(stops, 1);
+});
+
+test("automatic router mappings pass cancellation to router operations", async () => {
+  const signals = [];
+  const gateway = {
+    host: "192.168.1.1",
+    async map(internalPort, _internalHost, options) {
+      signals.push(options.signal);
+      return { externalPort: internalPort === 8080 ? 80 : 443 };
+    },
+    async externalIp(options) {
+      signals.push(options.signal);
+      return "8.8.8.8";
+    },
+    async stop() {},
+  };
+  const controller = new AbortController();
+
+  const mappings = await mapPorts(gateway, "192.168.1.20", controller.signal);
+
+  assert.deepEqual(signals, [controller.signal, controller.signal, controller.signal]);
+  await mappings.release();
 });
 
 test("reset --yes removes generated files without removing unrelated data", async (t) => {
@@ -305,7 +369,7 @@ async function runCli(args, cwd, overrides) {
 
 function cliEnvironment(overrides) {
   const env = { ...process.env };
-  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_CADDY_PATH"]) {
+  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_PUBLIC_IPV4", "PI_CADDY_PATH"]) {
     delete env[name];
   }
   return { ...env, ...overrides };

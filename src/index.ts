@@ -242,7 +242,7 @@ app.post("/messages", authenticateBearer, async (req, res) => {
 });
 
 // ── Start server ─────────────────────────────────────────────
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.error(`
 ╔══════════════════════════════════════════════════╗
 ║              PiLink Server v${VERSION.padEnd(21)}║
@@ -260,6 +260,14 @@ app.listen(PORT, HOST, () => {
 ║    Register: ${(SERVER_URL + "/oauth/register").padEnd(35)}║
 ╚══════════════════════════════════════════════════╝
   `);
+});
+server.once("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`PiLink could not listen on ${HOST}:${PORT}: the address is already in use. Stop the existing PiLink server before starting another one.`);
+  } else {
+    console.error(`PiLink could not listen on ${HOST}:${PORT}: ${error.message}`);
+  }
+  process.exit(1);
 });
 
 // ── Graceful shutdown ────────────────────────────────────────

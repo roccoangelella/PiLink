@@ -65,6 +65,18 @@ Automatic mapping cannot bypass CGNAT, ISP port blocking, routers with UPnP/NAT-
 - In your router, forward public TCP `80` to this computer's TCP `8080`.
 - In your router, forward public TCP `443` to this computer's TCP `8443`.
 
+On Linux systems using firewalld, Caddy also needs its local forwarded ports opened:
+
+```bash
+sudo firewall-cmd --state
+sudo firewall-cmd --list-all
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --permanent --add-port=8443/tcp
+sudo firewall-cmd --reload
+```
+
+Run the three change commands only when firewalld is running. PiLink detects the public IPv4 address automatically; set `PI_PUBLIC_IPV4` only as a fallback when that lookup cannot reach an IP service.
+
 Choose direct hosting only if you understand that it exposes PiLink to the Internet. Keep generated secrets private, use strong OAuth credentials, and enable `--allow-unsafe-full-access` only for a fully trusted client. If your public IP changes, its `nip.io` URL changes and ChatGPT needs a new connector.
 
 ### Direct `nip.io` launch summary
@@ -159,7 +171,7 @@ The server limits request bodies, tool input sizes, bash timeout, OAuth rate, an
 - Press `Ctrl+C` in the launch terminal to stop the server and its public hosting process.
 - Restarting a Quick Tunnel creates a new URL and requires a new ChatGPT connector. Run `pilink start --setup`, configure the new connector with user-defined OAuth, then paste its callback URL into PiLink to register the matching OAuth client.
 - Restarting direct `nip.io` hosting keeps the connector and OAuth client valid while the configured public IPv4 address remains unchanged.
-- To register another OAuth client or retry skipped first-time setup, start with `--setup`: `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access --setup`.
+- To reselect public hosting, register another OAuth client, or retry skipped first-time setup, start with `--setup`: `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access --setup`.
 - To erase only PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state, then immediately run a fresh guided setup: `node /path/to/PiLink/dist/cli.js reset --yes --start --allow-unsafe-full-access`. It does not delete your repository or workspace.
 - If a preferred hosting binary is not on `PATH`, start with `PI_CLOUDFLARED_PATH=/path/to/cloudflared` or `PI_CADDY_PATH=/path/to/caddy` before the command.
 - If the server refuses to start, check that `JWT_SECRET` and `PI_BOOTSTRAP_SECRET` remain at least 32 characters and that `PI_WORK_DIR` exists.
