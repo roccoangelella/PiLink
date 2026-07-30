@@ -80,7 +80,11 @@ function resetTargets(): string[] {
     const config = dotenv.parse(fs.readFileSync(configPath));
     if (config.PI_DATA_DIR) dataDirectory = path.resolve(config.PI_DATA_DIR);
   }
-  const targets = new Set<string>([configPath, dataDirectory, path.join(configDirectory, "bin")]);
+  const targets = new Set<string>([
+    configPath,
+    path.join(dataDirectory, "clients.json"),
+    path.join(configDirectory, "bin", cloudflaredFileName()),
+  ]);
   for (const target of targets) assertSafeResetTarget(target);
   return [...targets];
 }
