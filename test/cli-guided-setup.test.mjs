@@ -31,7 +31,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
-  await waitFor(() => output.includes("Paste the ChatGPT callback URL"));
+  await waitFor(() => output.includes("Paste callback URL here:"));
   cliProcess.stdin.write("https://chatgpt.example/callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
   assert.match(output, /Client ID: pi_[a-f0-9]{16}/);

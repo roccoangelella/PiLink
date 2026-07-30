@@ -352,6 +352,11 @@ function extractClientCredentials(req: Request): { client_id: string; client_sec
 function validateRequestedScope(requested: string, allowed: string): string | null {
   const requestedScopes = requested.split(" ").filter(Boolean);
   const allowedScopes = new Set(allowed.split(" ").filter(Boolean));
+  // mcp:tools is the umbrella permission: clients such as ChatGPT request it
+  // alongside the individual read/write scopes advertised in metadata.
+  if (allowedScopes.has("mcp:tools")) {
+    for (const scope of SUPPORTED_SCOPES) allowedScopes.add(scope);
+  }
   if (!requestedScopes.length || requestedScopes.some((scope) => !SUPPORTED_SCOPES.has(scope) || !allowedScopes.has(scope))) return null;
   return requestedScopes.join(" ");
 }

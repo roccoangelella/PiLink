@@ -103,7 +103,8 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
     }
     printChatGptSetupInstructions(serverUrl);
     const readline = createInterface({ input: process.stdin, output: process.stderr });
-    const callbackUrl = (await readline.question("Paste the ChatGPT callback URL, then press Enter (leave blank to skip): ")).trim();
+    console.error("\nPaste callback URL here:");
+    const callbackUrl = (await readline.question("> ")).trim();
     readline.close();
     if (!callbackUrl) {
       console.error("ChatGPT client registration skipped. Restart with 'pi-mcp start --setup' when you have the callback URL.");

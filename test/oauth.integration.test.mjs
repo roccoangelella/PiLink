@@ -57,10 +57,11 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
   const verifier = "a".repeat(43);
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const redirectUri = "http://127.0.0.1:7777/callback";
+  const chatGptScopes = "mcp:tools mcp:read mcp:write";
   const authClientResponse = await fetch(`${serverUrl}/oauth/register`, {
     method: "POST",
     headers: { Authorization: `Bearer ${"b".repeat(32)}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ client_name: "pkce-test", grant_types: ["authorization_code"], redirect_uris: [redirectUri], scope: "mcp:read" }),
+    body: JSON.stringify({ client_name: "pkce-test", grant_types: ["authorization_code"], redirect_uris: [redirectUri], scope: "mcp:tools" }),
   });
   const authClient = await authClientResponse.json();
   const authorization = new URL(`${serverUrl}/oauth/authorize`);
@@ -68,7 +69,7 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
     response_type: "code",
     client_id: authClient.client_id,
     redirect_uri: redirectUri,
-    scope: "mcp:read",
+    scope: chatGptScopes,
     state: "test-state",
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -79,7 +80,7 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     redirect: "manual",
-    body: new URLSearchParams({ action: "approve", client_id: authClient.client_id, redirect_uri: redirectUri, scope: "mcp:read", state: "test-state", code_challenge: challenge, code_challenge_method: "S256" }),
+    body: new URLSearchParams({ action: "approve", client_id: authClient.client_id, redirect_uri: redirectUri, scope: chatGptScopes, state: "test-state", code_challenge: challenge, code_challenge_method: "S256" }),
   });
   assert.equal(consent.status, 302);
   const authorizationCode = new URL(consent.headers.get("location")).searchParams.get("code");
@@ -90,7 +91,7 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
     body: JSON.stringify({ grant_type: "authorization_code", client_id: authClient.client_id, redirect_uri: redirectUri, code: authorizationCode, code_verifier: verifier }),
   });
   assert.equal(pkceTokenResponse.status, 200);
-  assert.equal((await pkceTokenResponse.json()).scope, "mcp:read");
+  assert.equal((await pkceTokenResponse.json()).scope, chatGptScopes);
 });
 
 async function waitForHealth(url) {
