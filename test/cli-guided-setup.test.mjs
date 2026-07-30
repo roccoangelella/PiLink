@@ -141,7 +141,7 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
     `JWT_SECRET=${"a".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
   ].join("\n"));
-  await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho '{\"msg\":\"certificate obtained successfully\"}' >&2\nexec sleep 30\n", { mode: 0o700 });
+  await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\n(sleep 1; echo '{\"msg\":\"certificate obtained successfully\"}' >&2) &\nexec sleep 30\n", { mode: 0o700 });
   const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy, PI_PUBLIC_IPV4: "203.0.113.20" });
   t.after(async () => {
     cliProcess.kill("SIGINT");
@@ -159,6 +159,7 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   cliProcess.stdin.write("DIRECT\n");
   await waitFor(() => output.includes("Detecting the public IPv4 address..."));
   await waitFor(() => output.includes("Paste callback URL here:"));
+  assert.ok(output.indexOf("certificate obtained successfully") < output.indexOf("Paste callback URL here:"), "OAuth setup must wait for Caddy's certificate");
   assert.match(output, /forward public TCP port 80 to this computer's TCP port 8080/);
   assert.match(output, /=== Direct nip\.io hosting started ===/);
   assert.match(output, /Wait for Caddy to report that it obtained a public TLS certificate before connecting ChatGPT/);

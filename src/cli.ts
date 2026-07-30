@@ -502,6 +502,13 @@ async function startCaddy(hostname: string, port: number): Promise<{ process: Ch
   };
   const verifyCachedCertificate = () => {
     if (certificateSettled) return;
+    const retryVerification = () => {
+      if (certificateSettled || retry) return;
+      retry = setTimeout(() => {
+        retry = undefined;
+        verifyCachedCertificate();
+      }, 500);
+    };
     const request = https.get({
       hostname,
       port: DIRECT_HTTPS_PORT,
@@ -513,9 +520,8 @@ async function startCaddy(hostname: string, port: number): Promise<{ process: Ch
       settleCertificate(true);
     });
     request.on("timeout", () => request.destroy());
-    request.on("error", () => {
-      if (!certificateSettled) retry = setTimeout(verifyCachedCertificate, 500);
-    });
+    request.on("error", retryVerification);
+    request.on("close", retryVerification);
   };
   const forwardCaddyOutput = (chunk: Buffer) => {
     const output = chunk.toString();
