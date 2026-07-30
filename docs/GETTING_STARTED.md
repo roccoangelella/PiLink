@@ -104,6 +104,7 @@ The server limits request bodies, tool input sizes, bash timeout, OAuth rate, an
 - Press `Ctrl+C` in the launch terminal to stop the server and tunnel.
 - Restarting a Quick Tunnel creates a new URL. Update the MCP connection URL plus authorization/token URLs in ChatGPT. The ChatGPT callback URL, client ID, and client secret stay valid, so do not register again.
 - To register another OAuth client or retry skipped first-time setup, start with `--setup`: `node /path/to/PI-MCP/dist/cli.js start --allow-unsafe-full-access --setup`.
+- To erase only PI-MCP's generated configuration, OAuth clients, and managed Cloudflared binary, then immediately run a fresh guided setup: `node /path/to/PI-MCP/dist/cli.js reset --yes --start --allow-unsafe-full-access`. It does not delete your repository or workspace.
 - If a preferred Cloudflare binary is not on `PATH`, start with `PI_CLOUDFLARED_PATH=/path/to/cloudflared` before the command.
 - If the server refuses to start, check that `JWT_SECRET` and `PI_BOOTSTRAP_SECRET` remain at least 32 characters and that `PI_WORK_DIR` exists.
 - If ChatGPT gets a 401 during setup, confirm that its configured OAuth client ID/secret match the registration response and that the tunnel process is still running.

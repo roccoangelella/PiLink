@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import crypto from "node:crypto";
+import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -19,8 +20,10 @@ if (command === "init") {
   void start(args.includes("--allow-unsafe-full-access"), args.includes("--setup"));
 } else if (command === "serve") {
   startServer(args.includes("--allow-unsafe-full-access"));
+} else if (command === "reset") {
+  void reset(args);
 } else {
-  console.error("Usage: pi-mcp <init|start|serve> [--allow-unsafe-full-access] [--setup]");
+  console.error("Usage: pi-mcp <init|start|serve|reset> [--allow-unsafe-full-access] [--setup] [--yes] [--start]");
   process.exitCode = 1;
 }
 
@@ -49,6 +52,46 @@ function initialize(): void {
   console.error("Use 'pi-mcp start --allow-unsafe-full-access' only if you accept remote shell access to this machine.");
 }
 
+async function reset(args: string[]): Promise<void> {
+  const targets = resetTargets();
+  console.error("This deletes PI-MCP's generated configuration, OAuth clients, and managed Cloudflared binary.");
+  console.error("It does not delete your repository or configured workspace.");
+  console.error(`Targets:\n${targets.map((target) => `  - ${target}`).join("\n")}`);
+  if (!args.includes("--yes")) {
+    const readline = createInterface({ input: process.stdin, output: process.stderr });
+    const confirmation = (await readline.question("Type RESET to continue: ")).trim();
+    readline.close();
+    if (confirmation !== "RESET") {
+      console.error("Reset cancelled.");
+      return;
+    }
+  }
+  for (const target of targets) fs.rmSync(target, { recursive: true, force: true });
+  console.error("PI-MCP state was reset. The next start is a first-time setup.");
+  if (args.includes("--start")) {
+    await start(args.includes("--allow-unsafe-full-access"), false);
+  }
+}
+
+function resetTargets(): string[] {
+  const configDirectory = path.dirname(configPath);
+  let dataDirectory = configDirectory;
+  if (fs.existsSync(configPath)) {
+    const config = dotenv.parse(fs.readFileSync(configPath));
+    if (config.PI_DATA_DIR) dataDirectory = path.resolve(config.PI_DATA_DIR);
+  }
+  const targets = new Set<string>([configPath, dataDirectory, path.join(configDirectory, "bin")]);
+  for (const target of targets) assertSafeResetTarget(target);
+  return [...targets];
+}
+
+function assertSafeResetTarget(target: string): void {
+  const resolved = path.resolve(target);
+  if (resolved === path.parse(resolved).root || resolved === path.resolve(process.env.HOME || "")) {
+    throw new Error(`Refusing to reset unsafe target: ${resolved}`);
+  }
+}
+
 async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
   if (!fs.existsSync(configPath)) initialize();
   const port = readPort();
@@ -72,8 +115,9 @@ async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
       tunnel.stderr?.removeAllListeners("data");
       console.error(`Cloudflare Quick Tunnel: ${url}`);
       console.error(`Paste this MCP server URL in ChatGPT: ${url}/sse`);
-      server = startServer(unsafe, url, tunnel);
-      void runFirstTimeSetup(url, forceSetup);
+      const { process: serverProc, ready } = startServer(unsafe, url, tunnel);
+      server = serverProc;
+      void ready.then(() => runFirstTimeSetup(url, forceSetup));
     }
   };
   tunnel.stdout?.on("data", discoverUrl);
@@ -200,12 +244,22 @@ function canRun(executable: string): boolean {
   return spawnSync(executable, ["--version"], { stdio: "ignore" }).status === 0;
 }
 
-function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<typeof spawn>): ChildProcess {
+function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<typeof spawn>): { process: ChildProcess; ready: Promise<void> } {
   if (!fs.existsSync(configPath)) initialize();
   loadEnvironment();
   const config = loadRuntimeConfig();
   if (unsafe) console.error("DANGER: full-machine filesystem and shell access is enabled for every authorized MCP client.");
   const indexPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
+
+  let resolveReady: () => void;
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+
+  const timer = setTimeout(() => {
+    resolveReady();
+  }, 5000);
+
   const server = spawn(process.execPath, [indexPath], {
     env: {
       ...process.env,
@@ -215,8 +269,19 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
       ...(unsafe ? { PI_UNSAFE_FULL_ACCESS: "true" } : {}),
     },
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "pipe"],
   });
+
+  let stderrBuffer = "";
+  server.stderr?.on("data", (chunk: Buffer) => {
+    process.stderr.write(chunk);
+    stderrBuffer += chunk.toString();
+    if (stderrBuffer.includes("╚══════════════════════════════════════════════════╝")) {
+      clearTimeout(timer);
+      resolveReady();
+    }
+  });
+
   const shutdown = () => {
     server.kill("SIGINT");
     tunnel?.kill("SIGTERM");
@@ -224,10 +289,12 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   server.on("exit", (code) => {
+    clearTimeout(timer);
+    resolveReady();
     tunnel?.kill("SIGTERM");
     process.exitCode = code ?? 1;
   });
-  return server;
+  return { process: server, ready };
 }
 
 function readPort(): number {

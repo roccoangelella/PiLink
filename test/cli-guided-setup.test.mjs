@@ -32,6 +32,11 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("Paste callback URL here:"));
+  const bannerIndex = output.indexOf("╚══════════════════════════════════════════════════╝");
+  const promptIndex = output.indexOf("Paste callback URL here:");
+  assert.ok(bannerIndex !== -1, "Server banner box should be printed");
+  assert.ok(promptIndex !== -1, "Paste callback URL prompt should be printed");
+  assert.ok(bannerIndex < promptIndex, "Server banner box must be printed before Paste callback URL prompt");
   cliProcess.stdin.write("https://chatgpt.example/callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
   assert.match(output, /Client ID: pi_[a-f0-9]{16}/);
