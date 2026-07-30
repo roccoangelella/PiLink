@@ -171,7 +171,7 @@ The server limits request bodies, tool input sizes, bash timeout, OAuth rate, an
 - Press `Ctrl+C` in the launch terminal to stop the server and its public hosting process.
 - Restarting a Quick Tunnel creates a new URL and requires a new ChatGPT connector. Run `pilink start --setup`, configure the new connector with user-defined OAuth, then paste its callback URL into PiLink to register the matching OAuth client.
 - Restarting direct `nip.io` hosting keeps the connector and OAuth client valid while the configured public IPv4 address remains unchanged.
-- To reselect public hosting, register another OAuth client, or retry skipped first-time setup, start with `--setup`: `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access --setup`.
+- To delete all PiLink-generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state, then run the complete first-time setup again, start with `--setup`: `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access --setup`. It does not delete your repository or workspace.
 - To erase only PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state, then immediately run a fresh guided setup: `node /path/to/PiLink/dist/cli.js reset --yes --start --allow-unsafe-full-access`. It does not delete your repository or workspace.
 - If a preferred hosting binary is not on `PATH`, start with `PI_CLOUDFLARED_PATH=/path/to/cloudflared` or `PI_CADDY_PATH=/path/to/caddy` before the command.
 - If the server refuses to start, check that `JWT_SECRET` and `PI_BOOTSTRAP_SECRET` remain at least 32 characters and that `PI_WORK_DIR` exists.

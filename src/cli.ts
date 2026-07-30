@@ -72,11 +72,15 @@ async function reset(args: string[]): Promise<void> {
       return;
     }
   }
-  for (const target of targets) fs.rmSync(target, { recursive: true, force: true });
+  removeGeneratedState(targets);
   console.error("PiLink state was reset. The next start is a first-time setup.");
   if (args.includes("--start")) {
     await start(args.includes("--allow-unsafe-full-access"), false);
   }
+}
+
+function removeGeneratedState(targets = resetTargets()): void {
+  for (const target of targets) fs.rmSync(target, { recursive: true, force: true });
 }
 
 function resetTargets(): string[] {
@@ -106,6 +110,10 @@ function assertSafeResetTarget(target: string): void {
 }
 
 async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
+  if (forceSetup) {
+    console.error("--setup deletes PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh.");
+    removeGeneratedState();
+  }
   if (!fs.existsSync(configPath)) initialize();
   let hostingMode: "quick-tunnel" | "nip-io";
   try {
@@ -682,6 +690,8 @@ function flushDeferredServerOutput(): void {
 }
 
 function readPort(): number {
+  const environmentPort = Number(process.env.PORT);
+  if (Number.isSafeInteger(environmentPort) && environmentPort > 0) return environmentPort;
   if (!fs.existsSync(configPath)) return 3200;
   const match = fs.readFileSync(configPath, "utf8").match(/^PORT=(\d+)$/m);
   return match ? Number(match[1]) : 3200;

@@ -90,18 +90,17 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   assert.deepEqual(store.clients[0].redirect_uris, ["https://chatgpt.example/callback"]);
 });
 
-test("start --setup works after the saved workspace directory is renamed", async (t) => {
+test("start --setup resets generated state before the first-time flow", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-setup-"));
   const configPath = path.join(root, ".env");
   const dataPath = path.join(root, "data");
   const fakeCloudflared = path.join(root, "cloudflared");
   const port = await availablePort();
-  const missingWorkspace = path.join(root, "previous-repository-name");
-  await writeConfig(configPath, missingWorkspace, port, dataPath);
+  await writeConfig(configPath, path.join(root, "previous-repository-name"), port, dataPath);
   await fs.mkdir(dataPath);
   await fs.writeFile(path.join(dataPath, "clients.json"), JSON.stringify({ clients: [{ client_id: "existing" }] }));
   await fs.writeFile(fakeCloudflared, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho https://cli-test.trycloudflare.com\nexec sleep 30\n", { mode: 0o700 });
-  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CLOUDFLARED_PATH: fakeCloudflared });
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CLOUDFLARED_PATH: fakeCloudflared, PORT: String(port) });
   t.after(async () => {
     cliProcess.kill("SIGINT");
     await fs.rm(root, { recursive: true, force: true });
@@ -122,16 +121,17 @@ test("start --setup works after the saved workspace directory is renamed", async
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
   assert.match(output, /\[HTTP\] GET \/health → 200/);
 
-  const store = JSON.parse(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"));
-  assert.equal(store.clients.length, 2);
-  assert.deepEqual(store.clients[1].redirect_uris, ["https://chatgpt.example/renamed-repository-callback"]);
+  const store = JSON.parse(await fs.readFile(path.join(root, "clients.json"), "utf8"));
+  assert.equal(store.clients.length, 1);
+  assert.deepEqual(store.clients[0].redirect_uris, ["https://chatgpt.example/renamed-repository-callback"]);
+  assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PI_WORK_DIR=${escapeRegExp(root)}`));
 });
 
 test("first start configures direct nip.io hosting through Caddy", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-nip-io-"));
   const configPath = path.join(root, ".env");
   const dataPath = path.join(root, "data");
-  const fakeCaddy = path.join(root, "caddy");
+  const fakeCaddy = path.join(root, "tools", "caddy");
   const port = await availablePort();
   const hostname = "pilink-203-0-113-20.nip.io";
   await fs.writeFile(configPath, [
@@ -141,8 +141,9 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
     `JWT_SECRET=${"a".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
   ].join("\n"));
+  await fs.mkdir(path.dirname(fakeCaddy));
   await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\n(sleep 1; echo '{\"msg\":\"certificate obtained successfully\"}' >&2) &\nexec sleep 30\n", { mode: 0o700 });
-  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy, PI_PUBLIC_IPV4: "203.0.113.20" });
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy, PI_PUBLIC_IPV4: "203.0.113.20", PORT: String(port) });
   t.after(async () => {
     cliProcess.kill("SIGINT");
     await fs.rm(root, { recursive: true, force: true });
