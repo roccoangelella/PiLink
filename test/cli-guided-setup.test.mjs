@@ -104,8 +104,14 @@ test("start --setup works after the saved workspace directory is renamed", async
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("Paste callback URL here:"));
+  const health = await fetch(`http://127.0.0.1:${port}/health`);
+  assert.equal(health.status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(output.endsWith("> "), "The callback prompt must remain the final output while input is pending");
+  assert.doesNotMatch(output, /\[HTTP\] GET \/health/);
   cliProcess.stdin.write("https://chatgpt.example/renamed-repository-callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+  assert.match(output, /\[HTTP\] GET \/health → 200/);
 
   const store = JSON.parse(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"));
   assert.equal(store.clients.length, 2);

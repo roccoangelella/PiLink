@@ -13,6 +13,10 @@ import { loadClients, registerClient } from "./auth.js";
 
 const [, , command = "start", ...args] = process.argv;
 const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
+const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
+let waitingForSetupCallback = false;
+let deferredServerOutput = "";
+let deferredServerOutputTruncated = false;
 
 if (command === "init") {
   initialize();
@@ -151,9 +155,16 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
     }
     printChatGptSetupInstructions(serverUrl);
     const readline = createInterface({ input: process.stdin, output: process.stderr });
-    console.error("\nPaste callback URL here:");
-    const callbackUrl = (await readline.question("> ")).trim();
-    readline.close();
+    let callbackUrl: string;
+    try {
+      waitingForSetupCallback = true;
+      console.error("\nPaste callback URL here:");
+      callbackUrl = (await readline.question("> ")).trim();
+    } finally {
+      waitingForSetupCallback = false;
+      readline.close();
+      flushDeferredServerOutput();
+    }
     if (!callbackUrl) {
       console.error("ChatGPT client registration skipped. Restart with 'pilink start --setup' when you have the callback URL.");
       return;
@@ -278,8 +289,9 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
 
   let stderrBuffer = "";
   server.stderr?.on("data", (chunk: Buffer) => {
-    process.stderr.write(chunk);
-    stderrBuffer += chunk.toString();
+    const text = chunk.toString();
+    writeServerOutput(text);
+    stderrBuffer += text;
     if (stderrBuffer.includes("╚══════════════════════════════════════════════════╝")) {
       clearTimeout(timer);
       resolveReady();
@@ -299,6 +311,25 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
     process.exitCode = code ?? 1;
   });
   return { process: server, ready };
+}
+
+function writeServerOutput(output: string): void {
+  if (waitingForSetupCallback) {
+    const remaining = MAX_DEFERRED_SERVER_OUTPUT - deferredServerOutput.length;
+    if (remaining > 0) deferredServerOutput += output.slice(0, remaining);
+    if (output.length > remaining) deferredServerOutputTruncated = true;
+  } else {
+    process.stderr.write(output);
+  }
+}
+
+function flushDeferredServerOutput(): void {
+  if (deferredServerOutput) process.stderr.write(deferredServerOutput);
+  if (deferredServerOutputTruncated) {
+    process.stderr.write("[PiLink] Some server output was omitted while waiting for the callback URL.\n");
+  }
+  deferredServerOutput = "";
+  deferredServerOutputTruncated = false;
 }
 
 function readPort(): number {
