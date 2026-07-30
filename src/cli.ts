@@ -14,6 +14,8 @@ import { loadClients, registerClient } from "./auth.js";
 const [, , command = "start", ...args] = process.argv;
 const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
 const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
+const DIRECT_HTTP_PORT = 8080;
+const DIRECT_HTTPS_PORT = 8443;
 let waitingForSetupCallback = false;
 let deferredServerOutput = "";
 let deferredServerOutputTruncated = false;
@@ -58,7 +60,7 @@ function initialize(): void {
 
 async function reset(args: string[]): Promise<void> {
   const targets = resetTargets();
-  console.error("This deletes PiLink's generated configuration, OAuth clients, and managed Cloudflared binary.");
+  console.error("This deletes PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state.");
   console.error("It does not delete your repository or configured workspace.");
   console.error(`Targets:\n${targets.map((target) => `  - ${target}`).join("\n")}`);
   if (!args.includes("--yes")) {
@@ -88,6 +90,9 @@ function resetTargets(): string[] {
     configPath,
     path.join(dataDirectory, "clients.json"),
     path.join(configDirectory, "bin", cloudflaredFileName()),
+    path.join(configDirectory, "bin", caddyFileName()),
+    path.join(configDirectory, "Caddyfile"),
+    path.join(configDirectory, "caddy"),
   ]);
   for (const target of targets) assertSafeResetTarget(target);
   return [...targets];
@@ -102,6 +107,22 @@ function assertSafeResetTarget(target: string): void {
 
 async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
   if (!fs.existsSync(configPath)) initialize();
+  let hostingMode: "quick-tunnel" | "nip-io";
+  try {
+    hostingMode = await selectHostingMode();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Unable to configure hosting");
+    process.exitCode = 1;
+    return;
+  }
+  if (hostingMode === "nip-io") {
+    await startNipIo(unsafe, forceSetup);
+    return;
+  }
+  await startQuickTunnel(unsafe, forceSetup);
+}
+
+async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<void> {
   const port = readPort();
   let executable: string;
   try {
@@ -141,6 +162,101 @@ async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
     console.error(`cloudflared exited (${code ?? "signal"}); stopping PiLink.`);
     server?.kill("SIGINT");
     process.exitCode = code === 0 ? 0 : 1;
+  });
+}
+
+async function selectHostingMode(): Promise<"quick-tunnel" | "nip-io"> {
+  loadEnvironment();
+  const configuredMode = process.env.PI_HOSTING_MODE;
+  if (configuredMode === "quick-tunnel" || configuredMode === "nip-io") return configuredMode;
+  if (configuredMode) throw new Error("PI_HOSTING_MODE must be 'quick-tunnel' or 'nip-io'");
+
+  console.error("\n=== Choose public hosting ===");
+  console.error("1. Cloudflare Quick Tunnel (recommended for a first test)");
+  console.error("   No account, router changes, or extra setup. Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session.");
+  console.error("2. Direct nip.io HTTPS hosting");
+  console.error("   Keeps the same URL while your public IPv4 address stays the same. It exposes this computer to the Internet and requires router port forwarding plus a reachable public IPv4 address.");
+  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  const choice = (await readline.question("Select hosting [1/2]: ")).trim();
+  readline.close();
+  if (choice === "" || choice === "1") {
+    saveConfig({ PI_HOSTING_MODE: "quick-tunnel" });
+    return "quick-tunnel";
+  }
+  if (choice !== "2") throw new Error("Hosting setup cancelled: choose 1 or 2.");
+
+  await configureNipIoHosting();
+  return "nip-io";
+}
+
+async function configureNipIoHosting(): Promise<void> {
+  console.error("\n=== Direct nip.io HTTPS requirements ===");
+  console.error(`1. Your ISP must give this machine a reachable public IPv4 address (not CGNAT).`);
+  console.error("2. Reserve this computer's LAN address in your router so port forwarding stays correct.");
+  console.error(`3. In your router, forward public TCP port 80 to this computer's TCP port ${DIRECT_HTTP_PORT}.`);
+  console.error(`4. In your router, forward public TCP port 443 to this computer's TCP port ${DIRECT_HTTPS_PORT}.`);
+  console.error("5. Leave PiLink running so Caddy can obtain and renew a public TLS certificate.");
+  console.error("This exposes PiLink to the Internet. Keep its generated secrets private and enable unsafe full access only for a fully trusted client.");
+  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  const confirmation = (await readline.question("Type DIRECT after completing the router configuration: ")).trim();
+  if (confirmation !== "DIRECT") {
+    readline.close();
+    throw new Error("Direct nip.io hosting cancelled.");
+  }
+  const publicIp = (await readline.question("Public IPv4 address: ")).trim();
+  readline.close();
+  if (!isPublicIpv4(publicIp)) throw new Error("Enter a reachable public IPv4 address (private, loopback, and link-local addresses are not valid).");
+  const hostname = `pilink-${publicIp.replaceAll(".", "-")}.nip.io`;
+  saveConfig({
+    PI_HOSTING_MODE: "nip-io",
+    PI_NIP_IO_HOSTNAME: hostname,
+    SERVER_URL: `https://${hostname}`,
+  });
+  process.env.PI_HOSTING_MODE = "nip-io";
+  process.env.PI_NIP_IO_HOSTNAME = hostname;
+  process.env.SERVER_URL = `https://${hostname}`;
+  console.error(`PiLink will use the persistent address: https://${hostname}`);
+}
+
+async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
+  loadEnvironment();
+  const hostname = process.env.PI_NIP_IO_HOSTNAME || "";
+  if (!hostname.endsWith(".nip.io") || !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(hostname)) {
+    console.error("PI_NIP_IO_HOSTNAME must be a valid .nip.io hostname. Run 'pilink reset --yes --start' to choose hosting again.");
+    process.exitCode = 1;
+    return;
+  }
+  const port = readPort();
+  let caddy: ChildProcess;
+  try {
+    caddy = await startCaddy(hostname, port);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Unable to start Caddy");
+    process.exitCode = 1;
+    return;
+  }
+  const serverUrl = `https://${hostname}`;
+  console.error(`Direct nip.io address: ${serverUrl}`);
+  console.error(`Router forwarding required: public TCP 80 → local ${DIRECT_HTTP_PORT}; public TCP 443 → local ${DIRECT_HTTPS_PORT}.`);
+  const { process: server, ready } = startServer(unsafe, serverUrl, caddy);
+  let shuttingDown = false;
+  let caddyRunning = true;
+  caddy.on("error", (error: NodeJS.ErrnoException) => {
+    caddyRunning = false;
+    console.error(`Unable to start Caddy: ${error.message}`);
+    server.kill("SIGINT");
+    process.exitCode = 1;
+  });
+  caddy.on("exit", (code) => {
+    caddyRunning = false;
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`Caddy exited (${code ?? "signal"}); stopping PiLink.`);
+    server.kill("SIGINT");
+    process.exitCode = code === 0 ? 0 : 1;
+  });
+  void ready.then(() => {
+    if (caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
   });
 }
 
@@ -245,6 +361,75 @@ async function ensureCloudflared(): Promise<string> {
   return destination;
 }
 
+async function startCaddy(hostname: string, port: number): Promise<ChildProcess> {
+  const executable = await ensureCaddy();
+  const configDirectory = path.dirname(configPath);
+  const caddyfilePath = path.join(configDirectory, "Caddyfile");
+  const caddyfile = [
+    "{",
+    "  admin off",
+    "  persist_config off",
+    `  http_port ${DIRECT_HTTP_PORT}`,
+    `  https_port ${DIRECT_HTTPS_PORT}`,
+    "}",
+    "",
+    `https://${hostname} {`,
+    `  reverse_proxy 127.0.0.1:${port}`,
+    "}",
+    "",
+  ].join("\n");
+  fs.writeFileSync(caddyfilePath, caddyfile, { mode: 0o600 });
+  fs.chmodSync(caddyfilePath, 0o600);
+  const caddy = spawn(executable, ["run", "--config", caddyfilePath, "--adapter", "caddyfile"], {
+    env: { ...process.env, XDG_DATA_HOME: configDirectory },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  caddy.stdout?.on("data", (chunk: Buffer) => writeServerOutput(chunk.toString()));
+  caddy.stderr?.on("data", (chunk: Buffer) => writeServerOutput(chunk.toString()));
+  return caddy;
+}
+
+async function ensureCaddy(): Promise<string> {
+  const configuredPath = process.env.PI_CADDY_PATH;
+  if (configuredPath) {
+    if (canRun(configuredPath)) return configuredPath;
+    throw new Error(`PI_CADDY_PATH is not executable: ${configuredPath}`);
+  }
+  if (canRun("caddy")) return "caddy";
+
+  if (process.platform !== "linux") {
+    throw new Error("Caddy is required for direct nip.io HTTPS hosting. Install Caddy and set PI_CADDY_PATH to its executable.");
+  }
+  const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : undefined;
+  if (!architecture) throw new Error(`Automatic Caddy installation is unsupported for architecture '${process.arch}'. Install Caddy and set PI_CADDY_PATH.`);
+  const destination = path.join(path.dirname(configPath), "bin", caddyFileName());
+  if (canRun(destination)) return destination;
+  const archive = `${destination}.${process.pid}.tar.gz`;
+  console.error(`Caddy is not installed; downloading the official Linux ${architecture} release for direct nip.io HTTPS hosting...`);
+  try {
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    const response = await fetch(`https://caddyserver.com/api/download?os=linux&arch=${architecture}`, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok || !response.body) throw new Error(`Caddy download failed (${response.status})`);
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(archive, { mode: 0o600 }));
+    const result = spawnSync("tar", ["-xzf", archive, "-C", path.dirname(destination), "caddy"], { stdio: "ignore" });
+    if (result.status !== 0) throw new Error("Could not extract Caddy; install it manually and set PI_CADDY_PATH.");
+    fs.chmodSync(destination, 0o700);
+  } catch (error) {
+    fs.rmSync(destination, { force: true });
+    throw new Error(`Could not install Caddy automatically: ${error instanceof Error ? error.message : "unknown error"}`);
+  } finally {
+    fs.rmSync(archive, { force: true });
+  }
+  if (!canRun(destination)) {
+    fs.rmSync(destination, { force: true });
+    throw new Error("Downloaded Caddy did not run successfully. Install it manually and set PI_CADDY_PATH.");
+  }
+  return destination;
+}
+
 function cloudflaredAsset(): string {
   const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : undefined;
   if (!architecture) throw new Error(`Automatic cloudflared installation is unsupported for architecture '${process.arch}'. Install cloudflared manually.`);
@@ -255,11 +440,15 @@ function cloudflaredFileName(): string {
   return process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
 }
 
+function caddyFileName(): string {
+  return process.platform === "win32" ? "caddy.exe" : "caddy";
+}
+
 function canRun(executable: string): boolean {
   return spawnSync(executable, ["--version"], { stdio: "ignore" }).status === 0;
 }
 
-function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<typeof spawn>): { process: ChildProcess; ready: Promise<void> } {
+function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): { process: ChildProcess; ready: Promise<void> } {
   if (!fs.existsSync(configPath)) initialize();
   loadEnvironment();
   const config = loadRuntimeConfig();
@@ -300,17 +489,38 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
 
   const shutdown = () => {
     server.kill("SIGINT");
-    tunnel?.kill("SIGTERM");
+    edge?.kill("SIGTERM");
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   server.on("exit", (code) => {
     clearTimeout(timer);
     resolveReady();
-    tunnel?.kill("SIGTERM");
+    edge?.kill("SIGTERM");
     process.exitCode = code ?? 1;
   });
   return { process: server, ready };
+}
+
+function saveConfig(values: Record<string, string>): void {
+  const existing = fs.readFileSync(configPath, "utf8");
+  const lines = existing.split("\n");
+  for (const [name, value] of Object.entries(values)) {
+    if (/\r|\n/.test(value)) throw new Error(`Invalid configuration value for ${name}`);
+    const index = lines.findIndex((line) => line.startsWith(`${name}=`));
+    const entry = `${name}=${value}`;
+    if (index === -1) lines.push(entry);
+    else lines[index] = entry;
+  }
+  fs.writeFileSync(configPath, lines.join("\n"), { mode: 0o600 });
+  fs.chmodSync(configPath, 0o600);
+}
+
+function isPublicIpv4(value: string): boolean {
+  const octets = value.split(".").map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [first, second] = octets;
+  return first !== 0 && first !== 10 && first !== 127 && first < 224 && !(first === 100 && second >= 64 && second <= 127) && !(first === 169 && second === 254) && !(first === 172 && second >= 16 && second <= 31) && !(first === 192 && second === 168);
 }
 
 function writeServerOutput(output: string): void {

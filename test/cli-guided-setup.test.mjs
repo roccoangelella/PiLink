@@ -67,6 +67,9 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  assert.match(output, /Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session/);
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
   const bannerIndex = output.indexOf("╚══════════════════════════════════════════════════╝");
   const promptIndex = output.indexOf("Paste callback URL here:");
@@ -78,6 +81,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   assert.match(output, /Client ID: pi_[a-f0-9]{16}/);
   assert.match(output, /Client secret: [A-Za-z0-9_-]{40,}/);
   assert.match(output, /Token endpoint auth method: client_secret_post/);
+  assert.match(await fs.readFile(configPath, "utf8"), /PI_HOSTING_MODE=quick-tunnel/);
   const store = JSON.parse(await fs.readFile(path.join(root, "data", "clients.json"), "utf8"));
   assert.equal(store.clients.length, 1);
   assert.deepEqual(store.clients[0].redirect_uris, ["https://chatgpt.example/callback"]);
@@ -118,6 +122,50 @@ test("start --setup works after the saved workspace directory is renamed", async
   assert.deepEqual(store.clients[1].redirect_uris, ["https://chatgpt.example/renamed-repository-callback"]);
 });
 
+test("first start configures direct nip.io hosting through Caddy", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-nip-io-"));
+  const configPath = path.join(root, ".env");
+  const dataPath = path.join(root, "data");
+  const fakeCaddy = path.join(root, "caddy");
+  const port = await availablePort();
+  const hostname = "pilink-203-0-113-20.nip.io";
+  await fs.writeFile(configPath, [
+    `PI_WORK_DIR=${root}`,
+    `PI_DATA_DIR=${dataPath}`,
+    `PORT=${port}`,
+    `JWT_SECRET=${"a".repeat(32)}`,
+    `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+  ].join("\n"));
+  await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexec sleep 30\n", { mode: 0o700 });
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CADDY_PATH: fakeCaddy });
+  t.after(async () => {
+    cliProcess.kill("SIGINT");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  let output = "";
+  cliProcess.stdout.on("data", (chunk) => { output += chunk; });
+  cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  cliProcess.stdin.write("2\n");
+  await waitFor(() => output.includes("Type DIRECT after completing the router configuration:"));
+  cliProcess.stdin.write("DIRECT\n");
+  await waitFor(() => output.includes("Public IPv4 address:"));
+  cliProcess.stdin.write("203.0.113.20\n");
+  await waitFor(() => output.includes("Paste callback URL here:"));
+  assert.match(output, /forward public TCP port 80 to this computer's TCP port 8080/);
+  assert.match(output, new RegExp(`Direct nip.io address: https://${escapeRegExp(hostname)}`));
+  const caddyfile = await fs.readFile(path.join(root, "Caddyfile"), "utf8");
+  assert.match(caddyfile, new RegExp(`https://${escapeRegExp(hostname)} \\{`));
+  assert.match(caddyfile, new RegExp(`reverse_proxy 127\\.0\\.0\\.1:${port}`));
+  assert.match(caddyfile, /http_port 8080/);
+  assert.match(caddyfile, /https_port 8443/);
+  assert.match(await fs.readFile(configPath, "utf8"), /PI_HOSTING_MODE=nip-io/);
+  assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PI_NIP_IO_HOSTNAME=${escapeRegExp(hostname)}`));
+  cliProcess.stdin.write("https://chatgpt.example/nip-io-callback\n");
+  await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+});
+
 test("reset --yes removes generated files without removing unrelated data", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-reset-"));
   const configPath = path.join(root, ".env");
@@ -128,7 +176,10 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   await fs.writeFile(path.join(dataPath, "clients.json"), "{}");
   await fs.writeFile(path.join(dataPath, "keep.txt"), "unrelated data");
   await fs.writeFile(path.join(root, "bin", "cloudflared"), "managed binary");
+  await fs.writeFile(path.join(root, "bin", "caddy"), "managed binary");
   await fs.writeFile(path.join(root, "bin", "keep.txt"), "unrelated binary");
+  await fs.mkdir(path.join(root, "caddy"));
+  await fs.writeFile(path.join(root, "Caddyfile"), "managed configuration");
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const result = await runCli(["reset", "--yes"], root, { PILINK_CONFIG: configPath });
@@ -138,6 +189,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   await assert.rejects(fs.stat(configPath));
   await assert.rejects(fs.stat(path.join(dataPath, "clients.json")));
   await assert.rejects(fs.stat(path.join(root, "bin", "cloudflared")));
+  await assert.rejects(fs.stat(path.join(root, "bin", "caddy")));
+  await assert.rejects(fs.stat(path.join(root, "Caddyfile")));
+  await assert.rejects(fs.stat(path.join(root, "caddy")));
   assert.equal(await fs.readFile(path.join(dataPath, "keep.txt"), "utf8"), "unrelated data");
   assert.equal(await fs.readFile(path.join(root, "bin", "keep.txt"), "utf8"), "unrelated binary");
 });
@@ -150,6 +204,7 @@ test("reset --yes does not delete the workspace when configuration is stored in 
     `PORT=${await availablePort()}`,
     `JWT_SECRET=${"a".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+    "PI_HOSTING_MODE=quick-tunnel",
   ].join("\n"));
   await fs.writeFile(path.join(root, "clients.json"), "{}");
   await fs.writeFile(path.join(root, "repository-file.txt"), "must remain");
@@ -182,7 +237,7 @@ async function runCli(args, cwd, overrides) {
 
 function cliEnvironment(overrides) {
   const env = { ...process.env };
-  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG"]) {
+  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_CADDY_PATH"]) {
     delete env[name];
   }
   return { ...env, ...overrides };
@@ -195,6 +250,7 @@ async function writeConfig(configPath, workspace, port, dataPath = path.join(pat
     `PORT=${port}`,
     `JWT_SECRET=${"a".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+    "PI_HOSTING_MODE=quick-tunnel",
   ].join("\n"));
 }
 

@@ -10,15 +10,24 @@ See [the complete getting-started guide](docs/GETTING_STARTED.md) for first-time
 
 ## Quick start
 
-Prerequisite: Node.js 22.19+. On Linux, the first `start` automatically downloads the official Cloudflare `cloudflared` binary to the private PiLink configuration directory. On macOS and Windows, install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) first.
+Prerequisite: Node.js 22.19+. On Linux, the first `start` automatically downloads the selected hosting binary—official Cloudflare `cloudflared` for a Quick Tunnel or Caddy for direct `nip.io` HTTPS—to the private PiLink configuration directory. On macOS and Windows, install the selected hosting binary yourself first.
 
 ```bash
 npx pilink start --allow-unsafe-full-access
 ```
 
-The first run creates `~/.config/pilink/.env` with mode `0600`, starts a Cloudflare Quick Tunnel, then guides you through ChatGPT's user-defined OAuth setup and waits for its callback URL. `pilink init` creates the private configuration without starting the server. `pilink serve` starts without a tunnel for reverse-proxy or local use.
+The first run creates `~/.config/pilink/.env` with mode `0600`, asks how to expose PiLink publicly, then guides you through ChatGPT's user-defined OAuth setup and waits for its callback URL. `pilink init` creates the private configuration without starting the server. `pilink serve` starts without public hosting for reverse-proxy or local use.
 
 Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `PATH`.
+
+## Public hosting choices
+
+The first `pilink start` asks which public hosting mode to save:
+
+- **Cloudflare Quick Tunnel** is the default and needs no account, router change, or additional setup. Its hostname changes every restart. ChatGPT treats each hostname as a new connector, so create a new connector and OAuth client with `pilink start --setup` after every Quick Tunnel restart.
+- **Direct `nip.io` HTTPS hosting** keeps a hostname such as `https://pilink-203-0-113-10.nip.io` while your public IPv4 address remains unchanged. PiLink downloads and runs [Caddy](https://caddyserver.com/) on Linux to provide trusted HTTPS automatically. Before selecting it, you must have a reachable public IPv4 address (not CGNAT), reserve your computer's LAN address, and configure your router to forward public TCP `80` to local TCP `8080` and public TCP `443` to local TCP `8443`. This exposes your computer to the Internet; do not enable unsafe full access unless every authorized client is fully trusted.
+
+The direct mode cannot configure a router or bypass an ISP that blocks inbound traffic. If your public IP changes, its `nip.io` hostname changes too and ChatGPT needs a new connector.
 
 ## Security model
 
