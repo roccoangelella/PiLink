@@ -55,4 +55,4 @@ The package contains only `dist`, this README, and the MIT license.
 ## Credits & Acknowledgments
 
 PiLink builds upon the excellent **Pi Agent** ecosystem:
-- **[Pi Agent (`@earendil-works/pi-coding-agent`)](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)**: The powerful underlying coding-agent tool harness providing structured file operations, grep search, symbol analysis, and command execution capability. Special thanks to Mario Zupan / Earendil Works and the Pi Agent contributors.
+- **[Pi Agent (`@earendil-works/pi-coding-agent`)](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)**: The powerful underlying coding-agent tool harness providing structured file operations, grep search, symbol analysis, and command execution capability.
