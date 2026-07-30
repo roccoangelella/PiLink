@@ -15,8 +15,6 @@ import {
   createFindTool,
   createLsTool,
 } from "@earendil-works/pi-coding-agent";
-// @ts-ignore - module exists in dist
-import { buildSystemPrompt } from "@earendil-works/pi-coding-agent/dist/core/system-prompt.js";
 
 const PI_WORK_DIR = process.env.PI_WORK_DIR || process.env.AGY_WORK_DIR || "/home/ubuntu";
 
@@ -41,21 +39,31 @@ export function createMcpServer(): McpServer {
   const findTool = createFindTool(cwd);
   const lsTool = createLsTool(cwd);
 
-  // Generate Pi Agent's native system prompt
+  // Generate Pi Agent's native system prompt instructions
   function generatePiSystemPrompt(): string {
-    return buildSystemPrompt({
-      cwd,
-      selectedTools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
-      toolSnippets: {
-        read: "Read file contents (text/images). Truncates large output.",
-        bash: "Execute bash commands in current working directory. Returns stdout/stderr.",
-        edit: "Edit files using exact text replacement (oldText -> newText).",
-        write: "Write content to a file. Creates or overwrites.",
-        grep: "Search file contents for regex or literal patterns.",
-        find: "Search for files by glob pattern.",
-        ls: "List directory contents with file sizes and type indicators.",
-      },
-    });
+    const today = new Date().toISOString().split("T")[0];
+    return `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+- read: Read file contents (text/images). Truncates large output.
+- bash: Execute bash commands in current working directory. Returns stdout/stderr.
+- edit: Edit files using exact text replacement (oldText -> newText).
+- write: Write content to a file. Creates or overwrites.
+- grep: Search file contents for regex or literal patterns.
+- find: Search for files by glob pattern.
+- ls: List directory contents with file sizes and type indicators.
+
+Guidelines:
+- Be concise in your responses
+- Show file paths clearly when working with files
+
+Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: /home/ubuntu/.local/lib/node_modules/@earendil-works/pi-coding-agent/README.md
+- Additional docs: /home/ubuntu/.local/lib/node_modules/@earendil-works/pi-coding-agent/docs
+- Examples: /home/ubuntu/.local/lib/node_modules/@earendil-works/pi-coding-agent/examples
+
+Current date: ${today}
+Current working directory: ${cwd}`;
   }
 
   // ── Prompt: pi_system_prompt ────────────────────────────
