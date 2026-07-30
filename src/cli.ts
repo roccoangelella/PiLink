@@ -10,12 +10,11 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.js";
 import { loadClients, registerClient } from "./auth.js";
+import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
 
 const [, , command = "start", ...args] = process.argv;
 const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
 const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
-const DIRECT_HTTP_PORT = 8080;
-const DIRECT_HTTPS_PORT = 8443;
 let waitingForSetupCallback = false;
 let deferredServerOutput = "";
 let deferredServerOutputTruncated = false;
@@ -142,8 +141,7 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
     if (url) {
       tunnel.stdout?.removeAllListeners("data");
       tunnel.stderr?.removeAllListeners("data");
-      console.error(`Cloudflare Quick Tunnel: ${url}`);
-      console.error(`Paste this MCP server URL in ChatGPT: ${url}/sse`);
+      printQuickTunnelStartupInstructions(url);
       const { process: serverProc, ready } = startServer(unsafe, url, tunnel);
       server = serverProc;
       void ready.then(() => runFirstTimeSetup(url, forceSetup));
@@ -190,13 +188,30 @@ async function selectHostingMode(): Promise<"quick-tunnel" | "nip-io"> {
 }
 
 async function configureNipIoHosting(): Promise<void> {
-  console.error("\n=== Direct nip.io HTTPS requirements ===");
-  console.error(`1. Your ISP must give this machine a reachable public IPv4 address (not CGNAT).`);
+  console.error("\n=== Direct nip.io HTTPS setup ===");
+  console.error("PiLink can automatically request temporary router mappings for public TCP 80 → local 8080 and public TCP 443 → local 8443.");
+  console.error("It tries UPnP first, then NAT-PMP; mappings are renewed while PiLink runs and removed when it stops.");
+  console.error("This exposes PiLink to the Internet. Keep its generated secrets private and enable unsafe full access only for a fully trusted client.");
+  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  const automatic = (await readline.question("Allow PiLink to request these temporary router mappings? [Y/n]: ")).trim().toLowerCase();
+  readline.close();
+  if (automatic === "" || automatic === "y" || automatic === "yes") {
+    saveConfig({ PI_HOSTING_MODE: "nip-io", PI_NIP_IO_NETWORK: "auto" });
+    process.env.PI_HOSTING_MODE = "nip-io";
+    process.env.PI_NIP_IO_NETWORK = "auto";
+    console.error("PiLink will now try automatic router setup. If your router does not support it, PiLink will offer manual instructions.");
+    return;
+  }
+  if (automatic !== "n" && automatic !== "no") throw new Error("Direct nip.io hosting cancelled.");
+  await configureManualNipIoHosting();
+}
+
+async function configureManualNipIoHosting(): Promise<void> {
+  console.error("\n=== Manual direct nip.io requirements ===");
+  console.error("1. Your ISP must give this machine a reachable public IPv4 address (not CGNAT).");
   console.error("2. Reserve this computer's LAN address in your router so port forwarding stays correct.");
   console.error(`3. In your router, forward public TCP port 80 to this computer's TCP port ${DIRECT_HTTP_PORT}.`);
   console.error(`4. In your router, forward public TCP port 443 to this computer's TCP port ${DIRECT_HTTPS_PORT}.`);
-  console.error("5. Leave PiLink running so Caddy can obtain and renew a public TLS certificate.");
-  console.error("This exposes PiLink to the Internet. Keep its generated secrets private and enable unsafe full access only for a fully trusted client.");
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   const confirmation = (await readline.question("Type DIRECT after completing the router configuration: ")).trim();
   if (confirmation !== "DIRECT") {
@@ -209,10 +224,12 @@ async function configureNipIoHosting(): Promise<void> {
   const hostname = `pilink-${publicIp.replaceAll(".", "-")}.nip.io`;
   saveConfig({
     PI_HOSTING_MODE: "nip-io",
+    PI_NIP_IO_NETWORK: "manual",
     PI_NIP_IO_HOSTNAME: hostname,
     SERVER_URL: `https://${hostname}`,
   });
   process.env.PI_HOSTING_MODE = "nip-io";
+  process.env.PI_NIP_IO_NETWORK = "manual";
   process.env.PI_NIP_IO_HOSTNAME = hostname;
   process.env.SERVER_URL = `https://${hostname}`;
   console.error(`PiLink will use the persistent address: https://${hostname}`);
@@ -220,7 +237,41 @@ async function configureNipIoHosting(): Promise<void> {
 
 async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   loadEnvironment();
-  const hostname = process.env.PI_NIP_IO_HOSTNAME || "";
+  let hostname = process.env.PI_NIP_IO_HOSTNAME || "";
+  let portMappings: ManagedPortMappings | undefined;
+  const networkMode = process.env.PI_NIP_IO_NETWORK || "manual";
+  if (networkMode !== "auto" && networkMode !== "manual") {
+    console.error("PI_NIP_IO_NETWORK must be 'auto' or 'manual'.");
+    process.exitCode = 1;
+    return;
+  }
+  if (networkMode === "auto") {
+    try {
+      console.error("Requesting temporary router port mappings through UPnP or NAT-PMP...");
+      portMappings = await openAutomaticPortMappings();
+      hostname = `pilink-${portMappings.publicIp.replaceAll(".", "-")}.nip.io`;
+      saveConfig({ PI_NIP_IO_HOSTNAME: hostname, SERVER_URL: `https://${hostname}` });
+      process.env.PI_NIP_IO_HOSTNAME = hostname;
+      process.env.SERVER_URL = `https://${hostname}`;
+      console.error(`Router mappings active. Public address: https://${hostname}`);
+    } catch (error) {
+      if (error instanceof DirectNetworkError && !error.canUseManualFallback) {
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+      console.error(`Automatic router setup failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      console.error("PiLink will use manual router configuration instead.");
+      try {
+        await configureManualNipIoHosting();
+        hostname = process.env.PI_NIP_IO_HOSTNAME || "";
+      } catch (manualError) {
+        console.error(manualError instanceof Error ? manualError.message : "Direct nip.io hosting cancelled.");
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
   if (!hostname.endsWith(".nip.io") || !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(hostname)) {
     console.error("PI_NIP_IO_HOSTNAME must be a valid .nip.io hostname. Run 'pilink reset --yes --start' to choose hosting again.");
     process.exitCode = 1;
@@ -231,24 +282,36 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   try {
     caddy = await startCaddy(hostname, port);
   } catch (error) {
+    await portMappings?.release().catch(() => undefined);
     console.error(error instanceof Error ? error.message : "Unable to start Caddy");
     process.exitCode = 1;
     return;
   }
   const serverUrl = `https://${hostname}`;
-  console.error(`Direct nip.io address: ${serverUrl}`);
-  console.error(`Router forwarding required: public TCP 80 → local ${DIRECT_HTTP_PORT}; public TCP 443 → local ${DIRECT_HTTPS_PORT}.`);
+  printNipIoStartupInstructions(serverUrl, Boolean(portMappings));
   const { process: server, ready } = startServer(unsafe, serverUrl, caddy);
   let shuttingDown = false;
   let caddyRunning = true;
+  let mappingsReleased = false;
+  const releaseMappings = () => {
+    if (mappingsReleased) return;
+    mappingsReleased = true;
+    void portMappings?.release().catch((error: unknown) => {
+      console.error(`Could not remove automatic router mappings: ${error instanceof Error ? error.message : "unknown error"}`);
+    });
+  };
+  process.once("SIGINT", releaseMappings);
+  process.once("SIGTERM", releaseMappings);
   caddy.on("error", (error: NodeJS.ErrnoException) => {
     caddyRunning = false;
+    releaseMappings();
     console.error(`Unable to start Caddy: ${error.message}`);
     server.kill("SIGINT");
     process.exitCode = 1;
   });
   caddy.on("exit", (code) => {
     caddyRunning = false;
+    releaseMappings();
     if (shuttingDown) return;
     shuttingDown = true;
     console.error(`Caddy exited (${code ?? "signal"}); stopping PiLink.`);
@@ -258,6 +321,26 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   void ready.then(() => {
     if (caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
   });
+}
+
+function printQuickTunnelStartupInstructions(serverUrl: string): void {
+  console.error("\n=== Cloudflare Quick Tunnel started ===");
+  console.error(`1. Keep this terminal open. Your current public address is: ${serverUrl}`);
+  console.error(`2. Use this MCP server URL in ChatGPT: ${serverUrl}/sse`);
+  console.error("3. Continue with the ChatGPT OAuth setup below.");
+  console.error("Important: this Quick Tunnel URL changes every restart, so ChatGPT needs a new connector and OAuth client each time.");
+}
+
+function printNipIoStartupInstructions(serverUrl: string, automaticMappings: boolean): void {
+  console.error("\n=== Direct nip.io hosting started ===");
+  console.error(`1. Keep this terminal open. Your persistent public address is: ${serverUrl}`);
+  if (automaticMappings) {
+    console.error("2. Automatic router mappings are active and will be removed when PiLink stops.");
+  } else {
+    console.error(`2. Keep your manual router forwarding active: public TCP 80 → local ${DIRECT_HTTP_PORT}; public TCP 443 → local ${DIRECT_HTTPS_PORT}.`);
+  }
+  console.error("3. Wait for Caddy to report that it obtained a public TLS certificate before connecting ChatGPT.");
+  console.error(`4. Then use this MCP server URL in ChatGPT: ${serverUrl}/sse`);
 }
 
 async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promise<void> {
@@ -384,8 +467,17 @@ async function startCaddy(hostname: string, port: number): Promise<ChildProcess>
     env: { ...process.env, XDG_DATA_HOME: configDirectory },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  caddy.stdout?.on("data", (chunk: Buffer) => writeServerOutput(chunk.toString()));
-  caddy.stderr?.on("data", (chunk: Buffer) => writeServerOutput(chunk.toString()));
+  let certificateVerified = false;
+  const forwardCaddyOutput = (chunk: Buffer) => {
+    const output = chunk.toString();
+    writeServerOutput(output);
+    if (!certificateVerified && output.includes("certificate obtained successfully")) {
+      certificateVerified = true;
+      writeServerOutput("[PiLink] Caddy obtained a public TLS certificate; external HTTP reachability was verified by ACME.\n");
+    }
+  };
+  caddy.stdout?.on("data", forwardCaddyOutput);
+  caddy.stderr?.on("data", forwardCaddyOutput);
   return caddy;
 }
 
@@ -514,13 +606,6 @@ function saveConfig(values: Record<string, string>): void {
   }
   fs.writeFileSync(configPath, lines.join("\n"), { mode: 0o600 });
   fs.chmodSync(configPath, 0o600);
-}
-
-function isPublicIpv4(value: string): boolean {
-  const octets = value.split(".").map((part) => Number(part));
-  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [first, second] = octets;
-  return first !== 0 && first !== 10 && first !== 127 && first < 224 && !(first === 100 && second >= 64 && second <= 127) && !(first === 169 && second === 254) && !(first === 172 && second >= 16 && second <= 31) && !(first === 192 && second === 168);
 }
 
 function writeServerOutput(output: string): void {

@@ -25,9 +25,9 @@ Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `P
 The first `pilink start` asks which public hosting mode to save:
 
 - **Cloudflare Quick Tunnel** is the default and needs no account, router change, or additional setup. Its hostname changes every restart. ChatGPT treats each hostname as a new connector, so create a new connector and OAuth client with `pilink start --setup` after every Quick Tunnel restart.
-- **Direct `nip.io` HTTPS hosting** keeps a hostname such as `https://pilink-203-0-113-10.nip.io` while your public IPv4 address remains unchanged. PiLink downloads and runs [Caddy](https://caddyserver.com/) on Linux to provide trusted HTTPS automatically. Before selecting it, you must have a reachable public IPv4 address (not CGNAT), reserve your computer's LAN address, and configure your router to forward public TCP `80` to local TCP `8080` and public TCP `443` to local TCP `8443`. This exposes your computer to the Internet; do not enable unsafe full access unless every authorized client is fully trusted.
+- **Direct `nip.io` HTTPS hosting** keeps a hostname such as `https://pilink-203-0-113-10.nip.io` while your public IPv4 address remains unchanged. PiLink downloads and runs [Caddy](https://caddyserver.com/) on Linux to provide trusted HTTPS automatically, then—with explicit confirmation—tries UPnP and NAT-PMP to create temporary router mappings for public TCP `80` and `443`. It renews them while running and removes them on shutdown. This exposes your computer to the Internet; do not enable unsafe full access unless every authorized client is fully trusted.
 
-The direct mode cannot configure a router or bypass an ISP that blocks inbound traffic. If your public IP changes, its `nip.io` hostname changes too and ChatGPT needs a new connector.
+Automatic mapping cannot bypass CGNAT, ISP port blocking, or routers that disable UPnP/NAT-PMP. PiLink falls back to manual port-forwarding instructions in those cases. If your public IP changes, its `nip.io` hostname changes too and ChatGPT needs a new connector.
 
 ## Security model
 

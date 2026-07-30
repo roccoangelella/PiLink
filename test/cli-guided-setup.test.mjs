@@ -5,6 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DirectNetworkError, isPublicIpv4, mapPorts } from "../dist/network.js";
 
 const cliPath = path.resolve("dist/cli.js");
 
@@ -73,6 +74,8 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   await waitFor(() => output.includes("Paste callback URL here:"));
   const bannerIndex = output.indexOf("╚══════════════════════════════════════════════════╝");
   const promptIndex = output.indexOf("Paste callback URL here:");
+  assert.match(output, /=== Cloudflare Quick Tunnel started ===/);
+  assert.match(output, /Use this MCP server URL in ChatGPT: https:\/\/cli-test\.trycloudflare\.com\/sse/);
   assert.ok(bannerIndex !== -1, "Server banner box should be printed");
   assert.ok(promptIndex !== -1, "Paste callback URL prompt should be printed");
   assert.ok(bannerIndex < promptIndex, "Server banner box must be printed before Paste callback URL prompt");
@@ -148,13 +151,17 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("2\n");
+  await waitFor(() => output.includes("Allow PiLink to request these temporary router mappings? [Y/n]:"));
+  cliProcess.stdin.write("n\n");
   await waitFor(() => output.includes("Type DIRECT after completing the router configuration:"));
   cliProcess.stdin.write("DIRECT\n");
   await waitFor(() => output.includes("Public IPv4 address:"));
   cliProcess.stdin.write("203.0.113.20\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
   assert.match(output, /forward public TCP port 80 to this computer's TCP port 8080/);
-  assert.match(output, new RegExp(`Direct nip.io address: https://${escapeRegExp(hostname)}`));
+  assert.match(output, /=== Direct nip\.io hosting started ===/);
+  assert.match(output, /Wait for Caddy to report that it obtained a public TLS certificate before connecting ChatGPT/);
+  assert.match(output, new RegExp(`persistent public address is: https://${escapeRegExp(hostname)}`));
   const caddyfile = await fs.readFile(path.join(root, "Caddyfile"), "utf8");
   assert.match(caddyfile, new RegExp(`https://${escapeRegExp(hostname)} \\{`));
   assert.match(caddyfile, new RegExp(`reverse_proxy 127\\.0\\.0\\.1:${port}`));
@@ -164,6 +171,67 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PI_NIP_IO_HOSTNAME=${escapeRegExp(hostname)}`));
   cliProcess.stdin.write("https://chatgpt.example/nip-io-callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+});
+
+test("automatic router mappings target only PiLink's HTTPS ports and are released", async () => {
+  const mapped = [];
+  let stops = 0;
+  const gateway = {
+    host: "192.168.1.1",
+    async map(internalPort, internalHost, options) {
+      mapped.push({ internalPort, internalHost, options });
+      return { internalPort, internalHost, externalPort: options.externalPort, externalHost: "198.51.100.4", protocol: "TCP" };
+    },
+    async externalIp() { return "8.8.8.8"; },
+    async stop() { stops += 1; },
+  };
+
+  const mappings = await mapPorts(gateway, "192.168.1.20");
+
+  assert.equal(mappings.publicIp, "8.8.8.8");
+  assert.deepEqual(mapped, [
+    { internalPort: 8080, internalHost: "192.168.1.20", options: { externalPort: 80, protocol: "TCP", ttl: 3_600_000, autoRefresh: true, description: "PiLink direct HTTPS" } },
+    { internalPort: 8443, internalHost: "192.168.1.20", options: { externalPort: 443, protocol: "TCP", ttl: 3_600_000, autoRefresh: true, description: "PiLink direct HTTPS" } },
+  ]);
+  await mappings.release();
+  await mappings.release();
+  assert.equal(stops, 1);
+});
+
+test("automatic router mappings reject CGNAT addresses and release partial mappings", async () => {
+  let stops = 0;
+  const gateway = {
+    host: "192.168.1.1",
+    async map(internalPort) { return { externalPort: internalPort === 8080 ? 80 : 443 }; },
+    async externalIp() { return "100.64.1.2"; },
+    async stop() { stops += 1; },
+  };
+
+  await assert.rejects(
+    mapPorts(gateway, "192.168.1.20"),
+    (error) => error instanceof DirectNetworkError && !error.canUseManualFallback,
+  );
+  assert.equal(stops, 1);
+  assert.equal(isPublicIpv4("8.8.8.8"), true);
+  assert.equal(isPublicIpv4("100.64.1.2"), false);
+});
+
+test("automatic router mappings reject substituted public ports", async () => {
+  let stops = 0;
+  const gateway = {
+    host: "192.168.1.1",
+    async map(internalPort) {
+      return { externalPort: internalPort === 8080 ? 8081 : 443 };
+    },
+    async externalIp() { return "8.8.8.8"; },
+    async stop() { stops += 1; },
+  };
+
+  await assert.rejects(
+    mapPorts(gateway, "192.168.1.20"),
+    (error) => error instanceof DirectNetworkError && error.canUseManualFallback,
+  );
+  assert.equal(stops, 1);
 });
 
 test("reset --yes removes generated files without removing unrelated data", async (t) => {
@@ -237,7 +305,7 @@ async function runCli(args, cwd, overrides) {
 
 function cliEnvironment(overrides) {
   const env = { ...process.env };
-  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_CADDY_PATH"]) {
+  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_CADDY_PATH"]) {
     delete env[name];
   }
   return { ...env, ...overrides };

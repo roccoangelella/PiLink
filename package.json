@@ -44,9 +44,11 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@achingbrain/nat-port-mapper": "^4.0.5",
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "@modelcontextprotocol/sdk": "^1.1.0",
     "bcryptjs": "^2.4.3",
+    "default-gateway": "^7.2.2",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
@@ -55,6 +57,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/default-gateway": "^7.2.2",
     "@types/express": "^5.0.0",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.2",

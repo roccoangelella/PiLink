@@ -56,19 +56,20 @@ The first `pilink start` asks which mode to save in the private configuration:
 1. **Cloudflare Quick Tunnel** is the default. It needs no account, router configuration, or extra installation. Its `trycloudflare.com` URL changes each restart, and ChatGPT treats each URL as a new connector. After every Quick Tunnel restart, create a new connector and use `pilink start --setup` to register an OAuth client for that connector's callback URL.
 2. **Direct `nip.io` HTTPS hosting** uses a hostname containing your public IPv4 address. It stays the same while that IP address remains unchanged, allowing one ChatGPT connector to be reused. PiLink downloads Caddy automatically on Linux and runs it locally to obtain and renew a trusted HTTPS certificate.
 
-Direct `nip.io` hosting has non-optional network requirements that PiLink cannot automate:
+After explicit confirmation, PiLink first attempts UPnP and NAT-PMP router mappings for public TCP `80 → 8080` and `443 → 8443`. The mappings are renewed while PiLink runs and released on shutdown. Caddy uses them to obtain and renew a trusted HTTPS certificate. This removes the normal router-configuration step on compatible home networks.
+
+Automatic mapping cannot bypass CGNAT, ISP port blocking, routers with UPnP/NAT-PMP disabled, or a router that has already assigned ports `80` or `443`. PiLink detects a non-public router address and stops; for other mapping failures, it offers the manual fallback:
 
 - Your ISP must assign a publicly reachable IPv4 address; CGNAT does not work.
 - Reserve this computer's LAN address in your router so forwarding continues to reach it.
 - In your router, forward public TCP `80` to this computer's TCP `8080`.
 - In your router, forward public TCP `443` to this computer's TCP `8443`.
-- Keep PiLink running while Caddy obtains and renews the certificate.
 
-Choose direct hosting only if you understand that it exposes PiLink to the Internet. Keep generated secrets private, use strong OAuth credentials, and enable `--allow-unsafe-full-access` only for a fully trusted client. If your public IP changes, your `nip.io` URL changes and ChatGPT needs a new connector.
+Choose direct hosting only if you understand that it exposes PiLink to the Internet. Keep generated secrets private, use strong OAuth credentials, and enable `--allow-unsafe-full-access` only for a fully trusted client. If your public IP changes, its `nip.io` URL changes and ChatGPT needs a new connector.
 
 ### Direct `nip.io` launch summary
 
-After completing the router configuration above, this is the complete terminal flow. It starts in safe workspace mode; add `--allow-unsafe-full-access` only if you accept remote shell access from every authorized client.
+This is the complete terminal flow. It starts in safe workspace mode; add `--allow-unsafe-full-access` only if you accept remote shell access from every authorized client.
 
 ```bash
 git clone https://github.com/roccoangelella/PiLink.git
@@ -82,7 +83,7 @@ node "$PILINK/dist/cli.js" init
 node "$PILINK/dist/cli.js" start
 ```
 
-At the hosting prompt, select `2`, type `DIRECT` after confirming the router rules, and enter the public IPv4 address. PiLink downloads Caddy on Linux, prints the resulting `https://pilink-<ip>.nip.io` address, then begins the ChatGPT OAuth guide below.
+At the hosting prompt, select `2` and accept the automatic router-mapping request. PiLink downloads Caddy on Linux, obtains the public IPv4 address from the router, prints the resulting `https://pilink-<ip>.nip.io` address, then begins the ChatGPT OAuth guide below. When Caddy reports that it obtained a public TLS certificate, its ACME validation has confirmed that the hostname is externally reachable. Follow the manual fallback only if PiLink reports that your router cannot create the mappings.
 
 ## 4. Choose the access mode
 
