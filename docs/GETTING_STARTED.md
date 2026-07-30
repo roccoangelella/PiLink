@@ -1,6 +1,6 @@
 # PiLink: complete first-time guide
 
-PiLink lets a remote MCP client use coding tools on this machine. It can read, search, edit, write, and—when explicitly enabled—run shell commands. Treat it as remote code execution: connect only a ChatGPT profile and account you trust.
+PiLink lets a remote MCP client use coding tools on this machine. It can read, search, edit, write, and (when explicitly enabled) run shell commands. Treat it as remote code execution: connect only a ChatGPT profile and account you trust.
 
 ## 1. Prerequisites
 
@@ -40,7 +40,7 @@ npm link
 
 If `npm link` reports `EACCES` for `/usr/lib/node_modules`, the prefix has not been changed for your user. Run the commands above, open a new shell (or source `~/.bashrc`), then retry `npm link`.
 
-Run the next command from the project you want the agent to access—not necessarily this PiLink repository. The first run saves that directory as the workspace.
+Run the next command from the project you want the agent to access (not necessarily this PiLink repository). The first run saves that directory as the workspace.
 
 ```bash
 cd /path/to/your/project

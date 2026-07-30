@@ -10,7 +10,7 @@ See [the complete getting-started guide](docs/GETTING_STARTED.md) for first-time
 
 ## Quick start
 
-Prerequisite: Node.js 22.19+. On Linux, the first `start` automatically downloads the selected hosting binary—official Cloudflare `cloudflared` for a Quick Tunnel or Caddy for direct `nip.io` HTTPS—to the private PiLink configuration directory. On macOS and Windows, install the selected hosting binary yourself first.
+Prerequisite: Node.js 22.19+. On Linux, the first `start` automatically downloads the selected hosting binary (official Cloudflare `cloudflared` for a Quick Tunnel or Caddy for direct `nip.io` HTTPS) to the private PiLink configuration directory. On macOS and Windows, install the selected hosting binary yourself first.
 
 ```bash
 npx pilink start --allow-unsafe-full-access
@@ -25,7 +25,7 @@ Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `P
 The first `pilink start` asks which public hosting mode to save. `pilink start --setup` always asks again, so it can switch between hosting modes and register a fresh ChatGPT OAuth client without deleting PiLink data:
 
 - **Cloudflare Quick Tunnel** is the default and needs no account, router change, or additional setup. Its hostname changes every restart. ChatGPT treats each hostname as a new connector, so create a new connector and OAuth client with `pilink start --setup` after every Quick Tunnel restart.
-- **Direct `nip.io` HTTPS hosting** keeps a hostname such as `https://pilink-203-0-113-10.nip.io` while your public IPv4 address remains unchanged. PiLink downloads and runs [Caddy](https://caddyserver.com/) on Linux to provide trusted HTTPS automatically, then—with explicit confirmation—tries UPnP and NAT-PMP to create temporary router mappings for public TCP `80` and `443`. It renews them while running and removes them on shutdown. This exposes your computer to the Internet; do not enable unsafe full access unless every authorized client is fully trusted.
+- **Direct `nip.io` HTTPS hosting** keeps a hostname such as `https://pilink-203-0-113-10.nip.io` while your public IPv4 address remains unchanged. PiLink downloads and runs [Caddy](https://caddyserver.com/) on Linux to provide trusted HTTPS automatically, then, with explicit confirmation, tries UPnP and NAT-PMP to create temporary router mappings for public TCP `80` and `443`. It renews them while running and removes them on shutdown. This exposes your computer to the Internet; do not enable unsafe full access unless every authorized client is fully trusted.
 
 If Linux uses firewalld, allow Caddy's forwarded ports before starting direct hosting: `sudo firewall-cmd --permanent --add-port=8080/tcp`, `sudo firewall-cmd --permanent --add-port=8443/tcp`, then `sudo firewall-cmd --reload`.
 
