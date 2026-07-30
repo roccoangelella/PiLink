@@ -5,8 +5,10 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { defaultConfigPath } from "./config.js";
+import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.js";
+import { loadClients, registerClient } from "./auth.js";
 
 const [, , command = "start", ...args] = process.argv;
 const configPath = process.env.PI_MCP_CONFIG || defaultConfigPath();
@@ -14,11 +16,11 @@ const configPath = process.env.PI_MCP_CONFIG || defaultConfigPath();
 if (command === "init") {
   initialize();
 } else if (command === "start") {
-  void start(args.includes("--allow-unsafe-full-access"));
+  void start(args.includes("--allow-unsafe-full-access"), args.includes("--setup"));
 } else if (command === "serve") {
   startServer(args.includes("--allow-unsafe-full-access"));
 } else {
-  console.error("Usage: pi-mcp <init|start|serve> [--allow-unsafe-full-access]");
+  console.error("Usage: pi-mcp <init|start|serve> [--allow-unsafe-full-access] [--setup]");
   process.exitCode = 1;
 }
 
@@ -47,7 +49,7 @@ function initialize(): void {
   console.error("Use 'pi-mcp start --allow-unsafe-full-access' only if you accept remote shell access to this machine.");
 }
 
-async function start(unsafe: boolean): Promise<void> {
+async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
   if (!fs.existsSync(configPath)) initialize();
   const port = readPort();
   let executable: string;
@@ -71,6 +73,7 @@ async function start(unsafe: boolean): Promise<void> {
       console.error(`Cloudflare Quick Tunnel: ${url}`);
       console.error(`Paste this MCP server URL in ChatGPT: ${url}/sse`);
       server = startServer(unsafe, url, tunnel);
+      void runFirstTimeSetup(url, forceSetup);
     }
   };
   tunnel.stdout?.on("data", discoverUrl);
@@ -87,6 +90,61 @@ async function start(unsafe: boolean): Promise<void> {
     server?.kill("SIGINT");
     process.exitCode = code === 0 ? 0 : 1;
   });
+}
+
+async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promise<void> {
+  try {
+    loadEnvironment();
+    loadRuntimeConfig();
+    const clients = loadClients();
+    if (!forceSetup && clients.length > 0) {
+      console.error("An OAuth client is already configured. Use 'pi-mcp start --setup' to register another client.");
+      return;
+    }
+    printChatGptSetupInstructions(serverUrl);
+    const readline = createInterface({ input: process.stdin, output: process.stderr });
+    const callbackUrl = (await readline.question("Paste the ChatGPT callback URL, then press Enter (leave blank to skip): ")).trim();
+    readline.close();
+    if (!callbackUrl) {
+      console.error("ChatGPT client registration skipped. Restart with 'pi-mcp start --setup' when you have the callback URL.");
+      return;
+    }
+    assertHttpUrl(callbackUrl, "callback URL");
+    const { client, client_secret: clientSecret } = await registerClient(
+      "ChatGPT",
+      [callbackUrl],
+      ["authorization_code"],
+      "mcp:tools",
+    );
+    console.error("\nChatGPT OAuth client registered. Copy these values into ChatGPT now; the secret is shown only once.");
+    console.error(`Client ID: ${client.client_id}`);
+    console.error(`Client secret: ${clientSecret}`);
+    console.error("Token endpoint auth method: client_secret_post");
+    console.error(`Authorization URL: ${serverUrl}/oauth/authorize`);
+    console.error(`Token URL: ${serverUrl}/oauth/token`);
+    console.error("Scope: mcp:tools\n");
+  } catch (error) {
+    console.error(`First-time ChatGPT setup could not complete: ${error instanceof Error ? error.message : "unknown error"}`);
+    console.error("The MCP server is still running. Restart with 'pi-mcp start --setup' to try again.");
+  }
+}
+
+function printChatGptSetupInstructions(serverUrl: string): void {
+  console.error("\n=== First-time ChatGPT setup ===");
+  console.error("1. In ChatGPT, open Settings → Apps/Connectors (or your MCP connections page) → Add connection.");
+  console.error(`2. Set the connection/MCP server URL to: ${serverUrl}/sse`);
+  console.error("3. Select Authentication: OAuth.");
+  console.error("4. Open Advanced OAuth settings and select Registration method: User defined.");
+  console.error("5. Copy ChatGPT's callback URL and paste it below. PI-MCP will create and print the client ID and secret.");
+}
+
+function assertHttpUrl(value: string, label: string): void {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+  } catch {
+    throw new Error(`The ${label} must be an absolute http(s) URL`);
+  }
 }
 
 async function ensureCloudflared(): Promise<string> {
@@ -143,6 +201,8 @@ function canRun(executable: string): boolean {
 
 function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<typeof spawn>): ChildProcess {
   if (!fs.existsSync(configPath)) initialize();
+  loadEnvironment();
+  const config = loadRuntimeConfig();
   if (unsafe) console.error("DANGER: full-machine filesystem and shell access is enabled for every authorized MCP client.");
   const indexPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
   const server = spawn(process.execPath, [indexPath], {
@@ -150,7 +210,7 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
       ...process.env,
       PI_MCP_CONFIG: configPath,
       HOST: "127.0.0.1",
-      PI_DATA_DIR: path.dirname(configPath),
+      PI_DATA_DIR: config.dataDir,
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
       ...(unsafe ? { PI_UNSAFE_FULL_ACCESS: "true" } : {}),
     },
