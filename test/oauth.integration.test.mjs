@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 test("OAuth registration is bootstrap-protected and issued scopes are retained", async (t) => {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "pi-mcp-integration-"));
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-integration-"));
   const port = 35991;
   const serverUrl = `http://127.0.0.1:${port}`;
   const server = spawn(process.execPath, [path.resolve("dist/index.js")], {
@@ -103,5 +103,5 @@ async function waitForHealth(url) {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("PI-MCP did not become healthy");
+  throw new Error("PiLink did not become healthy");
 }

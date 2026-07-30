@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// PI-MCP: Main Entry Point
+// PiLink: Main Entry Point
 // Supports Streamable HTTP and legacy SSE MCP transports
 // Exposes the native Pi Agent tool harness to MCP clients
 // ─────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ app.use(oauthRouter);
 app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
-    server: "pi-mcp",
+    server: "pilink",
     version: VERSION,
     harness: "pi-agent",
     timestamp: new Date().toISOString(),

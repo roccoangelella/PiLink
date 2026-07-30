@@ -21,18 +21,13 @@ export interface RuntimeConfig {
 }
 
 export function defaultConfigPath(): string {
-  const newPath = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "pilink", ".env");
-  const legacyPath = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "pi-mcp", ".env");
-  if (!fs.existsSync(newPath) && fs.existsSync(legacyPath)) {
-    return legacyPath;
-  }
-  return newPath;
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "pilink", ".env");
 }
 
 export function loadEnvironment(): void {
   const inheritedEnvironment = { ...process.env };
   dotenv.config();
-  dotenv.config({ path: process.env.PILINK_CONFIG || process.env.PI_MCP_CONFIG || defaultConfigPath(), override: true });
+  dotenv.config({ path: process.env.PILINK_CONFIG || defaultConfigPath(), override: true });
   Object.assign(process.env, inheritedEnvironment);
 }
 
@@ -61,7 +56,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     throw new Error("SERVER_URL must be an absolute http(s) URL");
   }
 
-  const activeConfigPath = env.PILINK_CONFIG || env.PI_MCP_CONFIG || defaultConfigPath();
+  const activeConfigPath = env.PILINK_CONFIG || defaultConfigPath();
 
   return {
     port,

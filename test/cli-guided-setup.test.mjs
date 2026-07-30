@@ -41,7 +41,9 @@ test("serve starts the local server without a tunnel", async (t) => {
   const health = await fetch(`http://127.0.0.1:${port}/health`);
 
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).status, "ok");
+  const status = await health.json();
+  assert.equal(status.status, "ok");
+  assert.equal(status.server, "pilink");
 });
 
 test("first start guides callback registration and persists a ChatGPT OAuth client", async (t) => {
@@ -174,7 +176,7 @@ async function runCli(args, cwd, overrides) {
 
 function cliEnvironment(overrides) {
   const env = { ...process.env };
-  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_MCP_CONFIG"]) {
+  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG"]) {
     delete env[name];
   }
   return { ...env, ...overrides };

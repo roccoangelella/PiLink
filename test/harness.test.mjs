@@ -14,7 +14,7 @@ function config(workspace, unsafeFullAccess = false) {
 }
 
 test("workspace policy rejects traversal and symlink escapes", async (t) => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-mcp-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-"));
   const workspace = path.join(root, "workspace");
   const outside = path.join(root, "outside");
   await fs.mkdir(workspace);
@@ -30,7 +30,7 @@ test("workspace policy rejects traversal and symlink escapes", async (t) => {
 });
 
 test("workspace policy forbids bash while explicit unsafe mode clamps its timeout", async () => {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pi-mcp-"));
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-"));
   try {
     await assert.rejects(sanitizeToolArguments(createHarnessPolicy(config(workspace)), "bash", { command: "pwd" }), /disabled/);
     const unsafe = await sanitizeToolArguments(createHarnessPolicy(config(workspace, true)), "bash", { command: "pwd", timeout: 999 });

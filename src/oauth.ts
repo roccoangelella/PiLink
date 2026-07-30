@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// PI-MCP: OAuth 2.0 Authorization Server Routes
+// PiLink: OAuth 2.0 Authorization Server Routes
 // ─────────────────────────────────────────────────────────────
 
 import crypto from "node:crypto";
@@ -395,7 +395,7 @@ function renderConsentPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PI-MCP Authorization</title>
+  <title>PiLink Authorization</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {

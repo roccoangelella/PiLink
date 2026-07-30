@@ -12,7 +12,7 @@ import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.
 import { loadClients, registerClient } from "./auth.js";
 
 const [, , command = "start", ...args] = process.argv;
-const configPath = process.env.PILINK_CONFIG || process.env.PI_MCP_CONFIG || defaultConfigPath();
+const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
 
 if (command === "init") {
   initialize();
@@ -268,7 +268,6 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
     env: {
       ...process.env,
       PILINK_CONFIG: configPath,
-      PI_MCP_CONFIG: configPath,
       HOST: "127.0.0.1",
       PI_DATA_DIR: config.dataDir,
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
