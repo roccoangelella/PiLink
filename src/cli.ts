@@ -69,7 +69,7 @@ async function start(unsafe: boolean): Promise<void> {
       tunnel.stdout?.removeAllListeners("data");
       tunnel.stderr?.removeAllListeners("data");
       console.error(`Cloudflare Quick Tunnel: ${url}`);
-      console.error("Configure this URL as the MCP server URL in ChatGPT.");
+      console.error(`Paste this MCP server URL in ChatGPT: ${url}/sse`);
       server = startServer(unsafe, url, tunnel);
     }
   };
