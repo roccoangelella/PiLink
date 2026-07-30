@@ -2,7 +2,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { defaultConfigPath } from "./config.js";
 
@@ -12,7 +14,7 @@ const configPath = process.env.PI_MCP_CONFIG || defaultConfigPath();
 if (command === "init") {
   initialize();
 } else if (command === "start") {
-  start(args.includes("--allow-unsafe-full-access"));
+  void start(args.includes("--allow-unsafe-full-access"));
 } else if (command === "serve") {
   startServer(args.includes("--allow-unsafe-full-access"));
 } else {
@@ -45,10 +47,20 @@ function initialize(): void {
   console.error("Use 'pi-mcp start --allow-unsafe-full-access' only if you accept remote shell access to this machine.");
 }
 
-function start(unsafe: boolean): void {
+async function start(unsafe: boolean): Promise<void> {
   if (!fs.existsSync(configPath)) initialize();
   const port = readPort();
-  const tunnel = spawn("cloudflared", ["tunnel", "--url", `http://127.0.0.1:${port}`], { stdio: ["ignore", "pipe", "pipe"] });
+  let executable: string;
+  try {
+    executable = await ensureCloudflared();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Unable to install cloudflared");
+    process.exitCode = 1;
+    return;
+  }
+  const tunnel = spawn(executable, ["tunnel", "--url", `http://127.0.0.1:${port}`], { stdio: ["ignore", "pipe", "pipe"] });
+  let server: ChildProcess | undefined;
+  let shuttingDown = false;
   let output = "";
   const discoverUrl = (chunk: Buffer) => {
     output += chunk.toString();
@@ -58,23 +70,78 @@ function start(unsafe: boolean): void {
       tunnel.stderr?.removeAllListeners("data");
       console.error(`Cloudflare Quick Tunnel: ${url}`);
       console.error("Configure this URL as the MCP server URL in ChatGPT.");
-      startServer(unsafe, url, tunnel);
+      server = startServer(unsafe, url, tunnel);
     }
   };
   tunnel.stdout?.on("data", discoverUrl);
   tunnel.stderr?.on("data", discoverUrl);
   tunnel.on("error", (error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") console.error("cloudflared is required. Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+    if (error.code === "ENOENT") console.error("cloudflared could not be executed after installation.");
     else console.error(`Unable to start cloudflared: ${error.message}`);
     process.exitCode = 1;
   });
   tunnel.on("exit", (code) => {
-    if (!process.exitCode) console.error(`cloudflared exited (${code ?? "signal"})`);
-    process.exitCode ||= 1;
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`cloudflared exited (${code ?? "signal"}); stopping PI-MCP.`);
+    server?.kill("SIGINT");
+    process.exitCode = code === 0 ? 0 : 1;
   });
 }
 
-function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<typeof spawn>): void {
+async function ensureCloudflared(): Promise<string> {
+  const configuredPath = process.env.PI_CLOUDFLARED_PATH;
+  if (configuredPath) {
+    if (canRun(configuredPath)) return configuredPath;
+    throw new Error(`PI_CLOUDFLARED_PATH is not executable: ${configuredPath}`);
+  }
+  if (canRun("cloudflared")) return "cloudflared";
+
+  const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());
+  if (canRun(destination)) return destination;
+  if (process.platform !== "linux") {
+    throw new Error("cloudflared is not installed. Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ and run pi-mcp start again.");
+  }
+
+  const asset = cloudflaredAsset();
+  console.error(`cloudflared is not installed; downloading the official ${asset} release for this first launch...`);
+  const temporary = `${destination}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    const response = await fetch(`https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok || !response.body) throw new Error(`Cloudflare download failed (${response.status})`);
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { mode: 0o700 }));
+    fs.chmodSync(temporary, 0o700);
+    fs.renameSync(temporary, destination);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw new Error(`Could not install cloudflared automatically: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
+  if (!canRun(destination)) {
+    fs.rmSync(destination, { force: true });
+    throw new Error("Downloaded cloudflared did not run successfully. Install it manually from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+  }
+  return destination;
+}
+
+function cloudflaredAsset(): string {
+  const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : undefined;
+  if (!architecture) throw new Error(`Automatic cloudflared installation is unsupported for architecture '${process.arch}'. Install cloudflared manually.`);
+  return `cloudflared-linux-${architecture}`;
+}
+
+function cloudflaredFileName(): string {
+  return process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
+}
+
+function canRun(executable: string): boolean {
+  return spawnSync(executable, ["--version"], { stdio: "ignore" }).status === 0;
+}
+
+function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<typeof spawn>): ChildProcess {
   if (!fs.existsSync(configPath)) initialize();
   if (unsafe) console.error("DANGER: full-machine filesystem and shell access is enabled for every authorized MCP client.");
   const indexPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
@@ -99,6 +166,7 @@ function startServer(unsafe: boolean, serverUrl?: string, tunnel?: ReturnType<ty
     tunnel?.kill("SIGTERM");
     process.exitCode = code ?? 1;
   });
+  return server;
 }
 
 function readPort(): number {

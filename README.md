@@ -4,13 +4,15 @@ An OAuth-protected MCP server that exposes the Pi coding-agent tools over Stream
 
 ## Quick start
 
-Prerequisites: Node.js 22.19+ and [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+Prerequisite: Node.js 22.19+. On Linux, the first `start` automatically downloads the official Cloudflare `cloudflared` binary to the private PI-MCP configuration directory. On macOS and Windows, install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) first.
 
 ```bash
 npx pi-mcp start --allow-unsafe-full-access
 ```
 
 The first run creates `~/.config/pi-mcp/.env` with mode `0600`, starts a Cloudflare Quick Tunnel, and prints the HTTPS URL to add to ChatGPT. `pi-mcp init` creates the private configuration without starting the server. `pi-mcp serve` starts without a tunnel for reverse-proxy or local use.
+
+Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `PATH`.
 
 ## Security model
 
