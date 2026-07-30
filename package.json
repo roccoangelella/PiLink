@@ -1,10 +1,10 @@
 {
-  "name": "pi-mcp",
+  "name": "pilink",
   "version": "1.1.0",
-  "description": "Hardened OAuth-protected MCP server for the Pi coding-agent tool harness",
+  "description": "Hardened OAuth-protected MCP server for the Pi Agent tool harness",
   "main": "dist/index.js",
   "bin": {
-    "pi-mcp": "dist/cli.js"
+    "pilink": "dist/cli.js"
   },
   "type": "module",
   "files": [
@@ -19,15 +19,17 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/REPLACE-ME/pi-mcp.git"
+    "url": "https://github.com/roccoangelella/PiLink.git"
   },
   "bugs": {
-    "url": "https://github.com/REPLACE-ME/pi-mcp/issues"
+    "url": "https://github.com/roccoangelella/PiLink/issues"
   },
-  "homepage": "https://github.com/REPLACE-ME/pi-mcp#readme",
+  "homepage": "https://github.com/roccoangelella/PiLink#readme",
   "keywords": [
+    "pilink",
     "mcp",
     "model-context-protocol",
+    "pi-agent",
     "coding-agent",
     "oauth"
   ],

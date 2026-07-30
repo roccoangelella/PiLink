@@ -21,13 +21,18 @@ export interface RuntimeConfig {
 }
 
 export function defaultConfigPath(): string {
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "pi-mcp", ".env");
+  const newPath = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "pilink", ".env");
+  const legacyPath = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "pi-mcp", ".env");
+  if (!fs.existsSync(newPath) && fs.existsSync(legacyPath)) {
+    return legacyPath;
+  }
+  return newPath;
 }
 
 export function loadEnvironment(): void {
   const inheritedEnvironment = { ...process.env };
   dotenv.config();
-  dotenv.config({ path: process.env.PI_MCP_CONFIG || defaultConfigPath(), override: true });
+  dotenv.config({ path: process.env.PILINK_CONFIG || process.env.PI_MCP_CONFIG || defaultConfigPath(), override: true });
   Object.assign(process.env, inheritedEnvironment);
 }
 
@@ -51,12 +56,14 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     throw new Error("SERVER_URL must be an absolute http(s) URL");
   }
 
+  const activeConfigPath = env.PILINK_CONFIG || env.PI_MCP_CONFIG || defaultConfigPath();
+
   return {
     port,
     host,
     serverUrl: serverUrl.replace(/\/$/, ""),
     workspace,
-    dataDir: path.resolve(env.PI_DATA_DIR || path.dirname(env.PI_MCP_CONFIG || defaultConfigPath())),
+    dataDir: path.resolve(env.PI_DATA_DIR || path.dirname(activeConfigPath)),
     jwtSecret,
     bootstrapSecret,
     tokenExpirySeconds,
@@ -69,7 +76,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
 
 function requiredSecret(value: string | undefined, name: string): string {
   if (!value || value.length < 32) {
-    throw new Error(`${name} must be set to a random value of at least 32 characters. Run 'pi-mcp init'.`);
+    throw new Error(`${name} must be set to a random value of at least 32 characters. Run 'pilink init'.`);
   }
   return value;
 }

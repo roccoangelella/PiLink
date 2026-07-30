@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// PI-MCP: OAuth 2.0 Token & Client Management
+// PiLink: OAuth 2.0 Token & Client Management
 // ─────────────────────────────────────────────────────────────
 
 import fs from "node:fs";

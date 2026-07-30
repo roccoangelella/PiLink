@@ -245,7 +245,7 @@ app.post("/messages", authenticateBearer, async (req, res) => {
 app.listen(PORT, HOST, () => {
   console.error(`
 ╔══════════════════════════════════════════════════╗
-║              PI-MCP Server v${VERSION.padEnd(21)}║
+║              PiLink Server v${VERSION.padEnd(21)}║
 ║             (Pi Agent Tool Harness)              ║
 ╠══════════════════════════════════════════════════╣
 ║  Listening:  ${(HOST + ":" + PORT).padEnd(35)}║
@@ -280,7 +280,7 @@ function renderLandingPage(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PI-MCP Server</title>
+  <title>PiLink Server</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -313,7 +313,7 @@ function renderLandingPage(): string {
 </head>
 <body>
   <div class="container">
-    <div class="logo">PI<span>-MCP</span></div>
+    <div class="logo">Pi<span>Link</span></div>
     <span class="tag">Pi Agent Tool Harness • Streamable HTTP & SSE • OAuth 2.0</span>
     <div class="status"><span class="pulse"></span> Server Online</div>
     <div class="endpoints">
@@ -332,7 +332,7 @@ function renderLandingPage(): string {
       <div class="endpoint"><span class="method">POST</span><span class="path">/oauth/token</span></div>
       <div class="endpoint"><span class="method">POST</span><span class="path">/oauth/register</span></div>
     </div>
-    <p class="footer">PI-MCP v${VERSION} &bull; Pi Agent Tool Harness &bull; Streamable HTTP + SSE</p>
+    <p class="footer">PiLink v${VERSION} &bull; Powered by Pi Agent Tool Harness &bull; Streamable HTTP + SSE</p>
   </div>
 </body>
 </html>`;

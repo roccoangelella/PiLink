@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 test("first start guides callback registration and persists a ChatGPT OAuth client", async (t) => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-mcp-cli-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-cli-"));
   const configPath = path.join(root, ".env");
   const fakeCloudflared = path.join(root, "cloudflared");
   const port = await availablePort();
@@ -21,7 +21,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   await fs.writeFile(fakeCloudflared, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho https://cli-test.trycloudflare.com\nexec sleep 30\n", { mode: 0o700 });
   const cliProcess = spawn(process.execPath, [path.resolve("dist/cli.js"), "start"], {
     cwd: root,
-    env: { ...globalThis.process.env, PI_MCP_CONFIG: configPath, PI_CLOUDFLARED_PATH: fakeCloudflared },
+    env: { ...globalThis.process.env, PILINK_CONFIG: configPath, PI_CLOUDFLARED_PATH: fakeCloudflared },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(async () => {
