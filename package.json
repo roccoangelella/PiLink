@@ -1,0 +1,31 @@
+{
+  "name": "pi-mcp",
+  "version": "1.0.0",
+  "description": "MCP server wrapping Pi Agent harness with OAuth 2.0 and Streamable HTTP support",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "file:/home/ubuntu/.local/lib/node_modules/@earendil-works/pi-coding-agent",
+    "@modelcontextprotocol/sdk": "^1.1.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^11.0.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.2",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
