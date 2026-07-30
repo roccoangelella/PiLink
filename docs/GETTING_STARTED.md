@@ -21,6 +21,25 @@ npm ci
 npm run build
 ```
 
+### Optional: make the local CLI available as `pilink`
+
+Run a command from this checkout without a global installation:
+
+```bash
+npm exec -- pilink start --setup
+```
+
+To use `pilink` from any directory, configure npm's global prefix to a directory owned by your user before linking this checkout. Do not use `sudo`:
+
+```bash
+npm config set prefix "$HOME/.local"
+printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> ~/.bashrc
+source ~/.bashrc
+npm link
+```
+
+If `npm link` reports `EACCES` for `/usr/lib/node_modules`, the prefix has not been changed for your user. Run the commands above, open a new shell (or source `~/.bashrc`), then retry `npm link`.
+
 Run the next command from the project you want the agent to access—not necessarily this PiLink repository. The first run saves that directory as the workspace.
 
 ```bash

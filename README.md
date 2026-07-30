@@ -50,6 +50,25 @@ npm ci
 npm test
 ```
 
+### Run a local checkout as `pilink`
+
+From the repository root, run the local CLI without a global installation:
+
+```bash
+npm exec -- pilink start --setup
+```
+
+To make `pilink` available in your shell permanently without `sudo`, configure npm to use a directory owned by your user, add it to `PATH`, then link this checkout:
+
+```bash
+npm config set prefix "$HOME/.local"
+printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> ~/.bashrc
+source ~/.bashrc
+npm link
+```
+
+After that, `pilink start --setup` works from any directory. The default npm global prefix may be `/usr`, where `npm link` fails with `EACCES` for non-root users; do not use `sudo` to work around that error.
+
 The package contains only `dist`, this README, and the MIT license.
 
 ## Credits & Acknowledgments
