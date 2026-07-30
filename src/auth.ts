@@ -10,35 +10,43 @@ import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import type { Request, Response, NextFunction } from "express";
 import type { OAuthClient, AuthorizationCode, TokenPayload, ClientStore } from "./types.js";
-
-const JWT_SECRET = process.env.JWT_SECRET || "pi-mcp-jwt-secret-change-me";
-const TOKEN_EXPIRY = parseInt(process.env.TOKEN_EXPIRY || "3600", 10);
-const SERVER_URL = process.env.SERVER_URL || "http://localhost:3200";
-const DATA_DIR = path.resolve(process.cwd(), "data");
-const CLIENTS_FILE = path.join(DATA_DIR, "clients.json");
+import { loadRuntimeConfig } from "./config.js";
 
 const authCodes = new Map<string, AuthorizationCode>();
 
+function clientStorePath(): string {
+  return path.join(loadRuntimeConfig().dataDir, "clients.json");
+}
+
 function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  const dataDir = loadRuntimeConfig().dataDir;
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   }
+  fs.chmodSync(dataDir, 0o700);
 }
 
 export function loadClients(): OAuthClient[] {
   ensureDataDir();
-  if (!fs.existsSync(CLIENTS_FILE)) {
-    fs.writeFileSync(CLIENTS_FILE, JSON.stringify({ clients: [] }, null, 2));
+  const clientsFile = clientStorePath();
+  if (!fs.existsSync(clientsFile)) {
+    fs.writeFileSync(clientsFile, JSON.stringify({ clients: [] }, null, 2), { mode: 0o600 });
+    fs.chmodSync(clientsFile, 0o600);
     return [];
   }
-  const data: ClientStore = JSON.parse(fs.readFileSync(CLIENTS_FILE, "utf-8"));
+  const data: ClientStore = JSON.parse(fs.readFileSync(clientsFile, "utf-8"));
+  if (!Array.isArray(data.clients)) throw new Error("Client store is malformed");
   return data.clients;
 }
 
 export function saveClients(clients: OAuthClient[]): void {
   ensureDataDir();
+  const clientsFile = clientStorePath();
   const store: ClientStore = { clients };
-  fs.writeFileSync(CLIENTS_FILE, JSON.stringify(store, null, 2));
+  const temporaryFile = `${clientsFile}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(store, null, 2), { mode: 0o600 });
+  fs.renameSync(temporaryFile, clientsFile);
+  fs.chmodSync(clientsFile, 0o600);
 }
 
 export function findClient(clientId: string): OAuthClient | undefined {
@@ -109,6 +117,16 @@ export function consumeAuthorizationCode(code: string): AuthorizationCode | null
   return authCode;
 }
 
+export function peekAuthorizationCode(code: string): AuthorizationCode | null {
+  const authCode = authCodes.get(code);
+  if (!authCode) return null;
+  if (Date.now() > authCode.expires_at) {
+    authCodes.delete(code);
+    return null;
+  }
+  return authCode;
+}
+
 export function verifyPKCE(codeVerifier: string, codeChallenge: string): boolean {
   const hash = crypto
     .createHash("sha256")
@@ -121,30 +139,32 @@ export function createAccessToken(
   clientId: string,
   scope: string
 ): { access_token: string; expires_in: number; token_type: string } {
+  const config = loadRuntimeConfig();
   const payload: Omit<TokenPayload, "iat" | "exp"> = {
     sub: clientId,
     scope,
-    iss: SERVER_URL,
-    aud: SERVER_URL,
+    iss: config.serverUrl,
+    aud: config.serverUrl,
     jti: uuidv4(),
   };
 
-  const access_token = jwt.sign(payload, JWT_SECRET, {
-    expiresIn: TOKEN_EXPIRY,
+  const access_token = jwt.sign(payload, config.jwtSecret, {
+    expiresIn: config.tokenExpirySeconds,
   });
 
   return {
     access_token,
-    expires_in: TOKEN_EXPIRY,
+    expires_in: config.tokenExpirySeconds,
     token_type: "Bearer",
   };
 }
 
 export function verifyAccessToken(token: string): TokenPayload | null {
+  const config = loadRuntimeConfig();
   try {
-    return jwt.verify(token, JWT_SECRET, {
-      issuer: SERVER_URL,
-      audience: SERVER_URL,
+    return jwt.verify(token, config.jwtSecret, {
+      issuer: config.serverUrl,
+      audience: config.serverUrl,
     }) as TokenPayload;
   } catch {
     return null;
@@ -156,12 +176,13 @@ export function authenticateBearer(
   res: Response,
   next: NextFunction
 ): void {
+  const config = loadRuntimeConfig();
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     res.setHeader(
       "WWW-Authenticate",
-      `Bearer resource_metadata="${SERVER_URL}/.well-known/oauth-protected-resource"`
+       `Bearer resource_metadata="${config.serverUrl}/.well-known/oauth-protected-resource"`
     );
     res.status(401).json({ error: "unauthorized", error_description: "Missing Bearer token" });
     return;

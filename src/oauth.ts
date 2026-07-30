@@ -2,6 +2,7 @@
 // PI-MCP: OAuth 2.0 Authorization Server Routes
 // ─────────────────────────────────────────────────────────────
 
+import crypto from "node:crypto";
 import { Router } from "express";
 import type { Request, Response } from "express";
 import {
@@ -10,11 +11,13 @@ import {
   registerClient,
   createAuthorizationCode,
   consumeAuthorizationCode,
+  peekAuthorizationCode,
   createAccessToken,
   verifyPKCE,
 } from "./auth.js";
+import { loadRuntimeConfig } from "./config.js";
 
-const SERVER_URL = process.env.SERVER_URL || "http://localhost:3200";
+const SUPPORTED_SCOPES = new Set(["mcp:tools", "mcp:read", "mcp:write"]);
 
 function log(msg: string) {
   console.error(`[OAuth] ${msg}`);
@@ -25,11 +28,12 @@ export function createOAuthRouter(): Router {
 
   // ── RFC 8414 & OpenID Metadata ────────────────────────────────
   const sendAuthServerMetadata = (_req: Request, res: Response) => {
+    const serverUrl = loadRuntimeConfig().serverUrl;
     res.json({
-      issuer: SERVER_URL,
-      authorization_endpoint: `${SERVER_URL}/oauth/authorize`,
-      token_endpoint: `${SERVER_URL}/oauth/token`,
-      registration_endpoint: `${SERVER_URL}/oauth/register`,
+      issuer: serverUrl,
+      authorization_endpoint: `${serverUrl}/oauth/authorize`,
+      token_endpoint: `${serverUrl}/oauth/token`,
+      registration_endpoint: `${serverUrl}/oauth/register`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "client_credentials"],
       code_challenge_methods_supported: ["S256"],
@@ -38,7 +42,7 @@ export function createOAuthRouter(): Router {
         "client_secret_basic",
         "none",
       ],
-      scopes_supported: ["mcp:tools", "mcp:read", "mcp:write", "mcp:admin"],
+       scopes_supported: ["mcp:tools", "mcp:read", "mcp:write"],
     });
   };
 
@@ -51,10 +55,11 @@ export function createOAuthRouter(): Router {
 
   // ── RFC 9728: Protected Resource Metadata ──────────────────
   const sendProtectedResourceMetadata = (_req: Request, res: Response) => {
+    const serverUrl = loadRuntimeConfig().serverUrl;
     res.json({
-      resource: SERVER_URL,
-      authorization_servers: [SERVER_URL],
-      scopes_supported: ["mcp:tools", "mcp:read", "mcp:write", "mcp:admin"],
+      resource: serverUrl,
+      authorization_servers: [serverUrl],
+       scopes_supported: ["mcp:tools", "mcp:read", "mcp:write"],
       bearer_methods_supported: ["header"],
     });
   };
@@ -92,10 +97,19 @@ export function createOAuthRouter(): Router {
       res.status(400).json({ error: "invalid_request", error_description: "Invalid redirect_uri" });
       return;
     }
+    if (!code_challenge || code_challenge_method !== "S256") {
+      res.status(400).json({ error: "invalid_request", error_description: "S256 PKCE is required" });
+      return;
+    }
+    const resolvedScope = validateRequestedScope(scope || client.scope, client.scope);
+    if (!resolvedScope) {
+      res.status(400).json({ error: "invalid_scope" });
+      return;
+    }
 
     const html = renderConsentPage(
       client.client_name,
-      scope || client.scope,
+      resolvedScope,
       client_id,
       redirect_uri || client.redirect_uris[0],
       state || "",
@@ -119,18 +133,30 @@ export function createOAuthRouter(): Router {
 
     log(`Consent POST: action=${action} client_id=${client_id}`);
 
+    const client = findClient(client_id);
+    if (!client || !redirect_uri || !client.redirect_uris.includes(redirect_uri)) {
+      res.status(400).json({ error: "invalid_request", error_description: "Unknown client or redirect URI" });
+      return;
+    }
+    const resolvedScope = validateRequestedScope(scope || client.scope, client.scope);
+    if (!resolvedScope || !code_challenge || code_challenge_method !== "S256") {
+      res.status(400).json({ error: "invalid_request", error_description: "Invalid scope or PKCE parameters" });
+      return;
+    }
     if (action !== "approve") {
-      const deniedUrl = `${redirect_uri}?error=access_denied${state ? `&state=${state}` : ""}`;
-      res.redirect(deniedUrl);
+      const deniedUrl = new URL(redirect_uri);
+      deniedUrl.searchParams.set("error", "access_denied");
+      if (state) deniedUrl.searchParams.set("state", state);
+      res.redirect(deniedUrl.toString());
       return;
     }
 
     const code = createAuthorizationCode(
       client_id,
       redirect_uri,
-      scope,
-      code_challenge || "",
-      code_challenge_method || "S256"
+      resolvedScope,
+      code_challenge,
+      "S256"
     );
 
     const callbackUrl = new URL(redirect_uri);
@@ -166,8 +192,16 @@ export function createOAuthRouter(): Router {
         res.status(401).json({ error: "invalid_client" });
         return;
       }
+      if (!client.grant_types.includes("client_credentials")) {
+        res.status(400).json({ error: "unauthorized_client" });
+        return;
+      }
 
-      const resolvedScope = scope || client.scope;
+      const resolvedScope = validateRequestedScope(scope || client.scope, client.scope);
+      if (!resolvedScope) {
+        res.status(400).json({ error: "invalid_scope" });
+        return;
+      }
       const token = createAccessToken(client_id, resolvedScope);
       log(`Token issued for '${client_id}' via client_credentials`);
       res.json({ ...token, scope: resolvedScope });
@@ -188,7 +222,7 @@ export function createOAuthRouter(): Router {
         return;
       }
 
-      const authCode = consumeAuthorizationCode(code);
+      const authCode = peekAuthorizationCode(code);
       if (!authCode) {
         res.status(400).json({ error: "invalid_grant", error_description: "Invalid or expired authorization code" });
         return;
@@ -199,19 +233,22 @@ export function createOAuthRouter(): Router {
         return;
       }
 
+      const client = findClient(authCode.client_id);
+      if (!client || !client.grant_types.includes("authorization_code")) {
+        res.status(400).json({ error: "unauthorized_client" });
+        return;
+      }
+
       if (redirect_uri && authCode.redirect_uri !== redirect_uri) {
         res.status(400).json({ error: "invalid_grant", error_description: "redirect_uri mismatch" });
         return;
       }
 
       if (client_secret) {
-        const client = findClient(authCode.client_id);
-        if (client) {
-          const valid = await verifyClientSecret(client, client_secret);
-          if (!valid) {
-            res.status(401).json({ error: "invalid_client" });
-            return;
-          }
+        const valid = await verifyClientSecret(client, client_secret);
+        if (!valid) {
+          res.status(401).json({ error: "invalid_client" });
+          return;
         }
       }
 
@@ -226,9 +263,14 @@ export function createOAuthRouter(): Router {
         }
       }
 
-      const token = createAccessToken(authCode.client_id, authCode.scope);
+      const consumedCode = consumeAuthorizationCode(code);
+      if (!consumedCode) {
+        res.status(400).json({ error: "invalid_grant", error_description: "Authorization code was already used" });
+        return;
+      }
+      const token = createAccessToken(consumedCode.client_id, consumedCode.scope);
       log(`Token issued for '${authCode.client_id}' via authorization_code`);
-      res.json({ ...token, scope: authCode.scope });
+      res.json({ ...token, scope: consumedCode.scope });
       return;
     }
 
@@ -247,10 +289,19 @@ export function createOAuthRouter(): Router {
       res.status(400).json({ error: "invalid_client_metadata", error_description: "client_name is required" });
       return;
     }
+    if (!hasBootstrapAccess(req)) {
+      res.status(401).set("WWW-Authenticate", "Bearer").json({ error: "invalid_token", error_description: "A registration access token is required" });
+      return;
+    }
 
     const resolvedGrantTypes = grant_types || ["client_credentials"];
     const resolvedRedirectUris = redirect_uris || [];
     const resolvedScope = scope || "mcp:tools";
+
+    if (typeof client_name !== "string" || !Array.isArray(resolvedGrantTypes) || !Array.isArray(resolvedRedirectUris) || typeof resolvedScope !== "string" || !validateRequestedScope(resolvedScope, "mcp:tools mcp:read mcp:write") || resolvedGrantTypes.some((grant) => grant !== "authorization_code" && grant !== "client_credentials") || resolvedRedirectUris.some((uri) => !isHttpUrl(uri))) {
+      res.status(400).json({ error: "invalid_client_metadata", error_description: "Invalid grant types, redirect URIs, or scope" });
+      return;
+    }
 
     if (resolvedGrantTypes.includes("authorization_code") && resolvedRedirectUris.length === 0) {
       res.status(400).json({ error: "invalid_client_metadata", error_description: "redirect_uris required for authorization_code grant" });
@@ -296,6 +347,30 @@ function extractClientCredentials(req: Request): { client_id: string; client_sec
     client_secret: req.body.client_secret,
     scope: req.body.scope,
   };
+}
+
+function validateRequestedScope(requested: string, allowed: string): string | null {
+  const requestedScopes = requested.split(" ").filter(Boolean);
+  const allowedScopes = new Set(allowed.split(" ").filter(Boolean));
+  if (!requestedScopes.length || requestedScopes.some((scope) => !SUPPORTED_SCOPES.has(scope) || !allowedScopes.has(scope))) return null;
+  return requestedScopes.join(" ");
+}
+
+function hasBootstrapAccess(req: Request): boolean {
+  const presented = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : "";
+  const expected = loadRuntimeConfig().bootstrapSecret;
+  if (!presented || presented.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(expected));
+}
+
+function isHttpUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function renderConsentPage(

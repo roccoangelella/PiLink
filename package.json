@@ -1,16 +1,47 @@
 {
   "name": "pi-mcp",
-  "version": "1.0.0",
-  "description": "MCP server wrapping Pi Agent harness with OAuth 2.0 and Streamable HTTP support",
+  "version": "1.1.0",
+  "description": "Hardened OAuth-protected MCP server for the Pi coding-agent tool harness",
   "main": "dist/index.js",
+  "bin": {
+    "pi-mcp": "dist/cli.js"
+  },
   "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/REPLACE-ME/pi-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/REPLACE-ME/pi-mcp/issues"
+  },
+  "homepage": "https://github.com/REPLACE-ME/pi-mcp#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "coding-agent",
+    "oauth"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "test": "npm run build && node --test test/**/*.test.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "file:/home/ubuntu/.local/lib/node_modules/@earendil-works/pi-coding-agent",
+    "@earendil-works/pi-coding-agent": "^0.80.3",
     "@modelcontextprotocol/sdk": "^1.1.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.7",

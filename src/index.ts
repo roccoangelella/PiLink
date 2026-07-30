@@ -4,7 +4,6 @@
 // Exposes the native Pi Agent tool harness to MCP clients
 // ─────────────────────────────────────────────────────────────
 
-import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -12,24 +11,33 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createMcpServer } from "./mcp.js";
 import { createOAuthRouter } from "./oauth.js";
 import { authenticateBearer } from "./auth.js";
+import { createHarnessPolicy } from "./harness.js";
+import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
+import { createRateLimiter } from "./security.js";
 
-const PORT = parseInt(process.env.PORT || "3200", 10);
-const HOST = process.env.HOST || "0.0.0.0";
-const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
+loadEnvironment();
+const config = loadRuntimeConfig();
+const policy = createHarnessPolicy(config);
+const { port: PORT, host: HOST, serverUrl: SERVER_URL } = config;
 
 const app = express();
+app.set("trust proxy", config.trustProxy);
 
 // ── Body parsing ─────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
-// ── CORS (allow any origin for MCP clients) ──────────────────
-app.use((_req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id");
-  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
-  if (_req.method === "OPTIONS") {
+// ── CORS (opt-in: browser clients only) ───────────────────────
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && config.corsOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+  }
+  if (req.method === "OPTIONS") {
     res.sendStatus(204);
     return;
   }
@@ -45,10 +53,7 @@ app.use((req, res, next) => {
     const sessionId = req.headers["mcp-session-id"] || "";
     console.error(
       `[HTTP] ${req.method} ${req.path} → ${res.statusCode} (${duration}ms)` +
-      (sessionId ? ` session=${sessionId}` : "") +
-      (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0
-        ? ` body=${JSON.stringify(req.body, (key, val) => key === "client_secret" ? "***" : val).slice(0, 200)}`
-        : "")
+      (sessionId ? ` session=${sessionId}` : "")
     );
     return (originalEnd as Function).apply(res, args);
   } as any;
@@ -57,6 +62,7 @@ app.use((req, res, next) => {
 
 // ── Mount OAuth routes (public, no Bearer required) ──────────
 const oauthRouter = createOAuthRouter();
+app.use(["/oauth/token", "/oauth/register", "/oauth/authorize"], createRateLimiter(20, 60_000));
 app.use(oauthRouter);
 
 // ── Health / status endpoint ─────────────────────────────────
@@ -64,7 +70,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     server: "pi-mcp",
-    version: "1.0.0",
+    version: VERSION,
     harness: "pi-agent",
     timestamp: new Date().toISOString(),
   });
@@ -79,7 +85,16 @@ app.get("/", (_req, res) => {
 // MCP Transport Layer (protected by OAuth Bearer token)
 // ══════════════════════════════════════════════════════════════
 
-const transports: Record<string, StreamableHTTPServerTransport | SSEServerTransport> = {};
+interface ManagedTransport {
+  transport: StreamableHTTPServerTransport | SSEServerTransport;
+  clientId: string;
+}
+
+const transports: Record<string, ManagedTransport> = {};
+
+function tokenFor(req: express.Request): { sub: string; scope: string } {
+  return (req as express.Request & { tokenPayload: { sub: string; scope: string } }).tokenPayload;
+}
 
 function ensureAcceptHeader(req: express.Request): void {
   const currentAccept = req.headers["accept"] || "";
@@ -104,7 +119,12 @@ app.post("/sse", authenticateBearer, async (req, res) => {
 
   try {
     if (sessionId && transports[sessionId]) {
-      const transport = transports[sessionId];
+      const managed = transports[sessionId];
+      if (managed.clientId !== tokenFor(req).sub) {
+        res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
+        return;
+      }
+      const transport = managed.transport;
       if (transport instanceof StreamableHTTPServerTransport) {
         await transport.handleRequest(req, res, req.body);
       } else {
@@ -122,7 +142,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
         console.error(`[MCP] Streamable HTTP session created: ${sid}`);
-        transports[sid] = transport;
+        transports[sid] = { transport, clientId: tokenFor(req).sub };
       },
     });
 
@@ -134,7 +154,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       }
     };
 
-    const mcpServer = createMcpServer();
+    const mcpServer = createMcpServer(policy, tokenFor(req).scope);
     await mcpServer.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
@@ -154,7 +174,12 @@ app.get("/sse", authenticateBearer, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   if (sessionId && transports[sessionId]) {
-    const transport = transports[sessionId];
+    const managed = transports[sessionId];
+    if (managed.clientId !== tokenFor(req).sub) {
+      res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
+      return;
+    }
+    const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
       console.error(`[MCP] Streamable HTTP SSE stream opened for session: ${sessionId}`);
       await transport.handleRequest(req, res);
@@ -164,7 +189,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
 
   console.error("[MCP] Legacy SSE session starting...");
   const transport = new SSEServerTransport("/messages", res);
-  transports[transport.sessionId] = transport;
+  transports[transport.sessionId] = { transport, clientId: tokenFor(req).sub };
   console.error(`[MCP] Legacy SSE session created: ${transport.sessionId}`);
 
   res.on("close", () => {
@@ -172,7 +197,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     delete transports[transport.sessionId];
   });
 
-  const mcpServer = createMcpServer();
+  const mcpServer = createMcpServer(policy, tokenFor(req).scope);
   await mcpServer.connect(transport);
 });
 
@@ -181,7 +206,12 @@ app.delete("/sse", authenticateBearer, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   if (sessionId && transports[sessionId]) {
-    const transport = transports[sessionId];
+    const managed = transports[sessionId];
+    if (managed.clientId !== tokenFor(req).sub) {
+      res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
+      return;
+    }
+    const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
       console.error(`[MCP] Streamable HTTP session deleted: ${sessionId}`);
       await transport.handleRequest(req, res);
@@ -202,20 +232,20 @@ app.post("/messages", authenticateBearer, async (req, res) => {
     return;
   }
 
-  const transport = transports[sessionId];
-  if (!transport || !(transport instanceof SSEServerTransport)) {
+  const managed = transports[sessionId];
+  if (!managed || managed.clientId !== tokenFor(req).sub || !(managed.transport instanceof SSEServerTransport)) {
     res.status(404).json({ error: "Session not found or expired" });
     return;
   }
 
-  await transport.handlePostMessage(req, res);
+  await managed.transport.handlePostMessage(req, res);
 });
 
 // ── Start server ─────────────────────────────────────────────
 app.listen(PORT, HOST, () => {
   console.error(`
 ╔══════════════════════════════════════════════════╗
-║              PI-MCP Server v1.0.0               ║
+║              PI-MCP Server v${VERSION.padEnd(21)}║
 ║             (Pi Agent Tool Harness)              ║
 ╠══════════════════════════════════════════════════╣
 ║  Listening:  ${(HOST + ":" + PORT).padEnd(35)}║
@@ -237,7 +267,7 @@ process.on("SIGINT", async () => {
   console.error("Shutting down...");
   for (const sessionId in transports) {
     try {
-      await transports[sessionId].close?.();
+      await transports[sessionId].transport.close?.();
       delete transports[sessionId];
     } catch { /* ignore */ }
   }
@@ -302,7 +332,7 @@ function renderLandingPage(): string {
       <div class="endpoint"><span class="method">POST</span><span class="path">/oauth/token</span></div>
       <div class="endpoint"><span class="method">POST</span><span class="path">/oauth/register</span></div>
     </div>
-    <p class="footer">PI-MCP v1.0.0 &bull; Pi Agent Tool Harness &bull; Streamable HTTP + SSE</p>
+    <p class="footer">PI-MCP v${VERSION} &bull; Pi Agent Tool Harness &bull; Streamable HTTP + SSE</p>
   </div>
 </body>
 </html>`;
