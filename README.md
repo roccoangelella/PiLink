@@ -18,7 +18,7 @@ npx pilink start --allow-unsafe-full-access
 
 The first run creates `~/.config/pilink/.env` with mode `0600`, asks how to expose PiLink publicly, then guides you through ChatGPT's user-defined OAuth setup and waits for its callback URL. `pilink init` creates the private configuration without starting the server. `pilink serve` starts without public hosting for reverse-proxy or local use.
 
-Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `PATH`.
+Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `PATH`, or `PI_CLOUDFLARED_URL` to use a custom mirror for automatic downloads.
 
 ## Public hosting choices
 
@@ -52,7 +52,7 @@ Keep that secret out of ChatGPT prompts, logs, source control, and public config
 
 `pilink init` documents the generated values. See `.env.example` for manual or deployment configuration. The server rejects startup if `JWT_SECRET` or `PI_BOOTSTRAP_SECRET` is missing or shorter than 32 characters. `SERVER_URL` must be the externally visible HTTPS URL when using a reverse proxy or tunnel.
 
-OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 3600), and preserve their scopes for the lifetime of an MCP session. `mcp:read` permits only read/search tools, `mcp:write` permits mutation (and bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
+OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 36000), and preserve their scopes for the lifetime of an MCP session. `mcp:read` permits only read/search tools, `mcp:write` permits mutation (and bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
 
 ## Development and publishing
 

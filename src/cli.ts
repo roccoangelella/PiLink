@@ -430,6 +430,82 @@ function assertHttpUrl(value: string, label: string): void {
   }
 }
 
+async function downloadBinaryWithFallback(urls: string[], destination: string, label: string): Promise<void> {
+  const temporary = `${destination}.${process.pid}.tmp`;
+  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+
+  let lastError: Error | undefined;
+
+  for (const url of urls) {
+    // Attempt 1: Try system curl if available
+    try {
+      if (canRun("curl")) {
+        const res = spawnSync("curl", ["-sSL", "--retry", "3", "--retry-connrefused", "--connect-timeout", "30", "-o", temporary, url], {
+          stdio: "ignore",
+          timeout: 600_000,
+        });
+        if (res.status === 0 && fs.existsSync(temporary) && fs.statSync(temporary).size > 0) {
+          fs.chmodSync(temporary, 0o700);
+          fs.renameSync(temporary, destination);
+          return;
+        }
+      }
+    } catch {
+      // Fall through
+    } finally {
+      if (fs.existsSync(temporary) && !fs.existsSync(destination)) {
+        fs.rmSync(temporary, { force: true });
+      }
+    }
+
+    // Attempt 2: Try system wget if available
+    try {
+      if (canRun("wget")) {
+        const res = spawnSync("wget", ["-q", "--tries=3", "--timeout=30", "-O", temporary, url], {
+          stdio: "ignore",
+          timeout: 600_000,
+        });
+        if (res.status === 0 && fs.existsSync(temporary) && fs.statSync(temporary).size > 0) {
+          fs.chmodSync(temporary, 0o700);
+          fs.renameSync(temporary, destination);
+          return;
+        }
+      }
+    } catch {
+      // Fall through
+    } finally {
+      if (fs.existsSync(temporary) && !fs.existsSync(destination)) {
+        fs.rmSync(temporary, { force: true });
+      }
+    }
+
+    // Attempt 3: Fallback to Node fetch with generous 10-minute timeout
+    try {
+      const response = await fetch(url, {
+        redirect: "follow",
+        signal: AbortSignal.timeout(600_000),
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP download failed (${response.status})`);
+      }
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { mode: 0o700 }));
+      if (fs.existsSync(temporary) && fs.statSync(temporary).size > 0) {
+        fs.chmodSync(temporary, 0o700);
+        fs.renameSync(temporary, destination);
+        return;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      if (fs.existsSync(temporary) && !fs.existsSync(destination)) {
+        fs.rmSync(temporary, { force: true });
+      }
+    }
+  }
+
+  throw new Error(`Could not install ${label} automatically: ${lastError ? lastError.message : "download failed"}`);
+}
+
 async function ensureCloudflared(): Promise<string> {
   const configuredPath = process.env.PI_CLOUDFLARED_PATH;
   if (configuredPath) {
@@ -446,21 +522,19 @@ async function ensureCloudflared(): Promise<string> {
 
   const asset = cloudflaredAsset();
   console.error(`cloudflared is not installed; downloading the official ${asset} release for this first launch...`);
-  const temporary = `${destination}.${process.pid}.tmp`;
+  const urls = process.env.PI_CLOUDFLARED_URL
+    ? [process.env.PI_CLOUDFLARED_URL]
+    : [`https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`];
+
   try {
-    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-    const response = await fetch(`https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!response.ok || !response.body) throw new Error(`Cloudflare download failed (${response.status})`);
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { mode: 0o700 }));
-    fs.chmodSync(temporary, 0o700);
-    fs.renameSync(temporary, destination);
+    await downloadBinaryWithFallback(urls, destination, asset);
   } catch (error) {
-    fs.rmSync(temporary, { force: true });
-    throw new Error(`Could not install cloudflared automatically: ${error instanceof Error ? error.message : "unknown error"}`);
+    throw new Error(
+      `Could not install cloudflared automatically: ${error instanceof Error ? error.message : "unknown error"}. ` +
+      `Install cloudflared manually (e.g. from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) and set PI_CLOUDFLARED_PATH if needed.`
+    );
   }
+
   if (!canRun(destination)) {
     fs.rmSync(destination, { force: true });
     throw new Error("Downloaded cloudflared did not run successfully. Install it manually from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
@@ -559,24 +633,17 @@ async function ensureCaddy(): Promise<string> {
   if (!architecture) throw new Error(`Automatic Caddy installation is unsupported for architecture '${process.arch}'. Install Caddy and set PI_CADDY_PATH.`);
   const destination = path.join(path.dirname(configPath), "bin", caddyFileName());
   if (canRun(destination)) return destination;
-  const temporary = `${destination}.${process.pid}.tmp`;
   console.error(`Caddy is not installed; downloading the official Linux ${architecture} release for direct nip.io HTTPS hosting...`);
+  const urls = process.env.PI_CADDY_URL
+    ? [process.env.PI_CADDY_URL]
+    : [`https://caddyserver.com/api/download?os=linux&arch=${architecture}`];
+
   try {
-    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-    const response = await fetch(`https://caddyserver.com/api/download?os=linux&arch=${architecture}`, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!response.ok || !response.body) throw new Error(`Caddy download failed (${response.status})`);
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { mode: 0o700 }));
-    fs.chmodSync(temporary, 0o700);
-    fs.renameSync(temporary, destination);
+    await downloadBinaryWithFallback(urls, destination, `Caddy (${architecture})`);
   } catch (error) {
-    fs.rmSync(destination, { force: true });
     throw new Error(`Could not install Caddy automatically: ${error instanceof Error ? error.message : "unknown error"}`);
-  } finally {
-    fs.rmSync(temporary, { force: true });
   }
+
   if (!canRun(destination)) {
     fs.rmSync(destination, { force: true });
     throw new Error("Downloaded Caddy did not run successfully. Install it manually and set PI_CADDY_PATH.");

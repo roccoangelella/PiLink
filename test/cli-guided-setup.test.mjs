@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -371,11 +372,49 @@ async function runCli(args, cwd, overrides) {
 
 function cliEnvironment(overrides) {
   const env = { ...process.env };
-  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_PUBLIC_IPV4", "PI_CADDY_PATH"]) {
+  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_PUBLIC_IPV4", "PI_CADDY_PATH", "PI_CLOUDFLARED_PATH", "PI_CLOUDFLARED_URL", "PI_CADDY_URL"]) {
     delete env[name];
   }
   return { ...env, ...overrides };
 }
+
+test("first start downloads cloudflared from PI_CLOUDFLARED_URL when not preinstalled", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-dl-test-"));
+  const configPath = path.join(root, ".env");
+  const port = await availablePort();
+  await writeConfig(configPath, root, port);
+
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/octet-stream" });
+    res.end("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho https://cli-test.trycloudflare.com\nexec sleep 30\n");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const serverPort = server.address().port;
+  t.after(async () => {
+    server.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  const cliProcess = spawnCli(["start", "--setup"], root, {
+    PILINK_CONFIG: configPath,
+    PI_CLOUDFLARED_URL: `http://127.0.0.1:${serverPort}/cloudflared`,
+    PORT: String(port),
+  });
+
+  let output = "";
+  cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  cliProcess.stdout.on("data", (chunk) => { output += chunk; });
+
+  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  cliProcess.stdin.write("1\n");
+  await waitFor(() => output.includes("cloudflared is not installed; downloading"));
+  cliProcess.kill("SIGTERM");
+  await once(cliProcess, "exit");
+
+  const downloadedPath = path.join(root, "bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared");
+  const stat = await fs.stat(downloadedPath);
+  assert.ok(stat.size > 0);
+});
 
 async function writeConfig(configPath, workspace, port, dataPath = path.join(path.dirname(configPath), "data")) {
   await fs.writeFile(configPath, [
