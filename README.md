@@ -52,7 +52,7 @@ Keep that secret out of ChatGPT prompts, logs, source control, and public config
 
 `pilink init` documents the generated values. See `.env.example` for manual or deployment configuration. The server rejects startup if `JWT_SECRET` or `PI_BOOTSTRAP_SECRET` is missing or shorter than 32 characters. `SERVER_URL` must be the externally visible HTTPS URL when using a reverse proxy or tunnel.
 
-OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 36000), and preserve their scopes for the lifetime of an MCP session. `mcp:read` permits only read/search tools, `mcp:write` permits mutation (and bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
+OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 360000000000), and preserve their scopes for the lifetime of an MCP session. `mcp:read` permits only read/search tools, `mcp:write` permits mutation (and bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
 
 ## Development and publishing
 
