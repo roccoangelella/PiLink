@@ -13,7 +13,7 @@ import { createOAuthRouter } from "./oauth.js";
 import { authenticateBearer, findClient } from "./auth.js";
 import { createHarnessPolicy } from "./harness.js";
 import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
-import { createRateLimiter } from "./security.js";
+import { createCorsAndOriginProtection, createRateLimiter } from "./security.js";
 import { AgentChatBroker, AgentChatStore } from "./chat.js";
 import { ToolAuditLog } from "./audit.js";
 import { AgentTaskStore } from "./tasks.js";
@@ -25,27 +25,6 @@ const { port: PORT, host: HOST, serverUrl: SERVER_URL } = config;
 
 const app = express();
 app.set("trust proxy", config.trustProxy);
-
-// ── Body parsing ─────────────────────────────────────────────
-app.use(express.json({ limit: "256kb" }));
-app.use(express.urlencoded({ extended: true, limit: "256kb" }));
-
-// ── CORS (opt-in: browser clients only) ───────────────────────
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && config.corsOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id");
-    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
-  }
-  if (req.method === "OPTIONS") {
-    res.sendStatus(204);
-    return;
-  }
-  next();
-});
 
 // ── Request logging ──────────────────────────────────────────
 app.use((req, res, next) => {
@@ -62,6 +41,15 @@ app.use((req, res, next) => {
   } as any;
   next();
 });
+
+// ── Browser-origin protection and CORS ───────────────────────
+// A present Origin header on an MCP transport request must be explicitly allowed.
+// This runs before body parsing so rejected browser requests consume minimal work.
+app.use(createCorsAndOriginProtection(config.corsOrigins));
+
+// ── Body parsing ─────────────────────────────────────────────
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 // ── Mount OAuth routes (public, no Bearer required) ──────────
 const oauthRouter = createOAuthRouter();

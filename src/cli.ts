@@ -50,6 +50,7 @@ function initialize(portOverride?: number): void {
     "PI_MAX_BASH_TIMEOUT=120",
     "# PI_ALLOW_WORKSPACE_EXECUTION=false",
     "# PI_UNSAFE_FULL_ACCESS=false",
+    "# Additional exact browser origins for MCP requests; SERVER_URL's own origin is always allowed.",
     "# CORS_ORIGINS=https://chatgpt.com",
     "",
   ].join("\n");

@@ -71,9 +71,35 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
     allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
     maxBashTimeoutSeconds,
-    corsOrigins: (env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
+    corsOrigins: parseAllowedOrigins(serverUrl, env.CORS_ORIGINS),
     trustProxy: env.TRUST_PROXY === "true",
   };
+}
+
+export function parseAllowedOrigins(serverUrl: string, configuredOrigins?: string): string[] {
+  const origins = new Set<string>([new URL(serverUrl).origin]);
+  for (const configuredOrigin of (configuredOrigins || "").split(",")) {
+    const trimmed = configuredOrigin.trim();
+    if (!trimmed) continue;
+    origins.add(normalizeHttpOrigin(trimmed, "CORS_ORIGINS"));
+  }
+  return [...origins];
+}
+
+export function normalizeHttpOrigin(value: string, field = "Origin"): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${field} entries must be absolute http(s) origins`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${field} entries must use http or https`);
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new Error(`${field} entries must contain only scheme, host, and optional port`);
+  }
+  return url.origin;
 }
 
 function requiredSecret(value: string | undefined, name: string): string {

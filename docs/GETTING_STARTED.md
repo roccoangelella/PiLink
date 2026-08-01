@@ -107,6 +107,8 @@ nano ~/.config/pilink/.env
 
 `PI_WORK_DIR` is the directory exposed to file tools.
 
+For browser-based MCP clients, PiLink accepts a present `Origin` header only when it matches `SERVER_URL`'s own origin or an exact additional HTTP(S) origin in the comma-separated `CORS_ORIGINS` setting. Invalid, malformed, wildcard, `null`, credential-bearing, or path-bearing origins are rejected with `403` on `/sse` and `/messages`. Server-to-server clients normally omit `Origin` and do not require a CORS entry.
+
 Agent chat uses the same configured `PI_WORK_DIR` as the project scope. It is stored privately under `PI_DATA_DIR` in a hashed project namespace, never in the git workspace. For chat to be usable, `PI_DATA_DIR` must be outside `PI_WORK_DIR` (and should remain private). All agents connected to the same PiLink process with the same configured `PI_WORK_DIR` share that project's chat. There is no separate chat-only authorization: reading requires `mcp:read` or `mcp:tools`, while posting requires `mcp:write` or `mcp:tools`.
 
 | Mode | Command | Capabilities |

@@ -54,6 +54,8 @@ Keep that secret out of ChatGPT prompts, logs, source control, and public config
 
 `pilink init` documents the generated values. See `.env.example` for manual or deployment configuration. The server rejects startup if `JWT_SECRET` or `PI_BOOTSTRAP_SECRET` is missing or shorter than 32 characters. `SERVER_URL` must be the externally visible HTTPS URL when using a reverse proxy or tunnel. `PI_MAX_BASH_TIMEOUT` caps both unrestricted `bash` and constrained `run` execution.
 
+Browser-origin MCP requests are accepted only from `SERVER_URL`'s own origin or exact additional HTTP(S) origins listed in `CORS_ORIGINS`. PiLink rejects every present unapproved or malformed `Origin` header on `/sse` and `/messages` with `403`, while non-browser clients that omit `Origin` continue normally. Wildcards, `null`, credentials, paths, queries, and fragments are not valid allowlist entries.
+
 OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 2,592,000, or 30 days), and preserve their scopes for the lifetime of an MCP session. Tokens can be revoked at `POST /oauth/revoke` using the issuing client's credentials, the token itself as a Bearer credential, or the administrator bootstrap credential; revocations persist under `PI_DATA_DIR` until the token would naturally expire. `mcp:read` permits only read/search tools, `mcp:write` permits mutation and constrained execution (plus bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
 
 ## Tool audit log
