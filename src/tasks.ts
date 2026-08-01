@@ -461,7 +461,17 @@ export class AgentTaskStore {
     try {
       const lock = await fs.promises.stat(this.lockPath);
       if (Date.now() - lock.mtimeMs <= AGENT_TASK_STALE_LOCK_MS) return;
-      await fs.promises.rm(this.lockPath, { force: true });
+      const owner = (await fs.promises.readFile(this.lockPath, "utf8")).trim();
+      const ownerPid = parseLockOwnerPid(owner);
+      if (ownerPid === undefined || isProcessAlive(ownerPid)) return;
+
+      // Check that neither the inode nor owner token changed while liveness was
+      // evaluated. A replacement lock belongs to a new operation and must not
+      // be removed even when the previous owner is dead.
+      const currentLock = await fs.promises.stat(this.lockPath);
+      const currentOwner = (await fs.promises.readFile(this.lockPath, "utf8")).trim();
+      if (currentOwner !== owner || currentLock.dev !== lock.dev || currentLock.ino !== lock.ino) return;
+      await fs.promises.rm(this.lockPath);
     } catch (error) {
       if (!isNodeError(error, "ENOENT")) throw error;
     }
@@ -748,6 +758,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
+}
+
+function parseLockOwnerPid(owner: string): number | undefined {
+  const match = /^(\d+):[0-9a-f]{32}$/.exec(owner);
+  if (!match) return undefined;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isNodeError(error, "ESRCH")) return false;
+    // EPERM and every ambiguous platform/runtime failure are fail-safe: the
+    // lock is treated as live and the caller eventually receives a timeout.
+    return true;
+  }
 }
 
 function delay(milliseconds: number): Promise<void> {
