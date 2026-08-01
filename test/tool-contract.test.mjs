@@ -73,6 +73,39 @@ test("every advertised tool has an agent-readable strict contract", async (t) =>
   }
 });
 
+test("system guidance keeps agents in the autonomous collaboration pull loop", async (t) => {
+  const value = await fixture();
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const broker = new AgentChatBroker(new AgentChatStore({ workspace: value.workspace, dataDir: value.dataDir }));
+  const tasks = new AgentTaskStore({ workspace: value.workspace, dataDir: value.dataDir });
+  const handle = createMcpServer(
+    { workspace: value.workspace, unsafeFullAccess: false, allowWorkspaceExecution: false, maxBashTimeoutSeconds: 30 },
+    "mcp:tools",
+    Object.freeze({ agentId: "autonomy-agent", agentName: "Autonomy Agent" }),
+    broker,
+    undefined,
+    "autonomy-instance",
+    tasks,
+  );
+  const client = new Client({ name: "autonomy-guidance-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(clientTransport), handle.server.connect(serverTransport)]);
+  t.after(async () => {
+    handle.dispose();
+    await client.close();
+  });
+
+  const result = await client.callTool({ name: "get_system_prompt", arguments: {} });
+  assert.notEqual(result.isError, true);
+  const guidance = result.content.find((entry) => entry.type === "text")?.text;
+  assert.equal(typeof guidance, "string");
+  assert.match(guidance, /Do not wait for the user to assign each task/);
+  assert.match(guidance, /re-read durable coordination state and continue with the next eligible contribution/);
+  assert.match(guidance, /stop merely because one task reached a terminal state/);
+  assert.match(guidance, /Escalate to the user only for a genuine unresolved product decision/);
+  assert.match(guidance, /concrete dependency, role, authorization, scope-conflict, or input reason/);
+});
+
 function validateSchemaDocumentation(schema, location, requirePropertyDescriptions) {
   assert.ok(schema && typeof schema === "object" && !Array.isArray(schema), `${location}: schema must be an object`);
 
