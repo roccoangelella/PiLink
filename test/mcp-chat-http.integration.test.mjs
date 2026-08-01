@@ -97,12 +97,12 @@ test("authenticated HTTP MCP sessions use OAuth identities and a shared agent ch
     arguments: { agent_message: "coordinate" },
   });
   const posted = parseText(postedResult);
-  assert.deepEqual(posted, {
-    cursor: 1,
-    agent_id: sender.client_id,
-    agent_name: "Registered Sender",
-    agent_message: "coordinate",
-  });
+  assert.equal(posted.cursor, 1);
+  assert.equal(posted.agent_id, sender.client_id);
+  assert.equal(typeof posted.agent_instance_id, "string");
+  assert.ok(posted.agent_instance_id.length > 0);
+  assert.equal(posted.agent_name, "Registered Sender");
+  assert.equal(posted.agent_message, "coordinate");
   assert.deepEqual(postedResult.structuredContent, posted);
 
   const receivedResult = await receiverClient.callTool({ name: "agent_chat_read", arguments: {} });

@@ -18,7 +18,7 @@ test("persists across instances and uses canonical project-scoped state", async 
   const { root, workspace, dataDir } = await fixture();
   try {
     const first = new AgentChatBroker(new AgentChatStore({ workspace, dataDir }));
-    const posted = await first.post({ agentId: "a", agentName: " Alice ", agentMessage: " hello " });
+    const posted = await first.post({ agentId: "a", agentInstanceId: "instance-a", agentName: " Alice ", agentMessage: " hello " });
     const second = new AgentChatBroker(new AgentChatStore({ workspace, dataDir }));
     assert.equal((await second.read()).messages[0].cursor, posted.cursor);
 
@@ -46,18 +46,27 @@ test("retries a failed state load after the persisted file is repaired", async (
     await fs.writeFile(store.statePath, `${JSON.stringify({
       version: 1,
       projectKey: store.projectKey,
-      nextCursor: 1,
-      messages: [],
+      nextCursor: 2,
+      messages: [{ cursor: 1, agentId: "legacy-agent", agentName: "Legacy", agentMessage: "old" }],
     })}\n`, { mode: 0o600 });
 
     const result = await store.read();
     assert.deepEqual(result, {
-      messages: [],
-      oldestCursor: 0,
-      latestCursor: 0,
-      nextCursor: 0,
+      messages: [{
+        cursor: 1,
+        agentId: "legacy-agent",
+        agentInstanceId: "legacy:legacy-agent",
+        agentName: "Legacy",
+        agentMessage: "old",
+      }],
+      oldestCursor: 1,
+      latestCursor: 1,
+      nextCursor: 1,
       gap: false,
     });
+    const migrated = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+    assert.equal(migrated.version, 2);
+    assert.equal(migrated.messages[0].agentInstanceId, "legacy:legacy-agent");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -115,7 +124,7 @@ test("separates projects and reports stale and future cursors", async () => {
   }
 });
 
-test("validates values and fans out notifications excluding the posting agent", async () => {
+test("validates values and excludes only the posting instance from notifications", async () => {
   const { root, workspace, dataDir } = await fixture();
   try {
     const broker = new AgentChatBroker(new AgentChatStore({ workspace, dataDir }));
@@ -123,17 +132,27 @@ test("validates values and fans out notifications excluding the posting agent", 
       { agentId: "a", agentName: " ", agentMessage: "ok" },
       { agentId: "a", agentName: "ok", agentMessage: " \n" },
       { agentId: "a", agentName: "x".repeat(101), agentMessage: "ok" },
+      { agentId: "a", agentInstanceId: " ", agentName: "ok", agentMessage: "ok" },
       { agentId: "a", agentName: "ok", agentMessage: "x".repeat(8193) },
     ]) await assert.rejects(() => broker.post(input));
 
     const received = [];
-    broker.subscribe("sender", () => { throw new Error("ignored"); });
-    broker.subscribe("sender", (notification) => received.push(["same", notification]));
-    broker.subscribe("receiver", async () => { throw new Error("ignored"); });
-    broker.subscribe("receiver", (notification) => received.push(["other", notification]));
-    const message = await broker.post({ agentId: "sender", agentName: "Sender", agentMessage: "text" });
-    await waitFor(() => received.length === 1);
-    assert.deepEqual(received, [["other", { uri: AGENT_CHAT_URI, latestCursor: message.cursor }]]);
+    broker.subscribe("sender-instance", () => { throw new Error("ignored"); });
+    broker.subscribe("sender-instance", (notification) => received.push(["same-instance", notification]));
+    broker.subscribe("same-actor-other-instance", (notification) => received.push(["same-actor", notification]));
+    broker.subscribe("receiver-instance", async () => { throw new Error("ignored"); });
+    broker.subscribe("receiver-instance", (notification) => received.push(["other-actor", notification]));
+    const message = await broker.post({
+      agentId: "sender",
+      agentInstanceId: "sender-instance",
+      agentName: "Sender",
+      agentMessage: "text",
+    });
+    await waitFor(() => received.length === 2);
+    assert.deepEqual(received.sort(), [
+      ["other-actor", { uri: AGENT_CHAT_URI, latestCursor: message.cursor }],
+      ["same-actor", { uri: AGENT_CHAT_URI, latestCursor: message.cursor }],
+    ]);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -10,6 +10,7 @@ export const AGENT_CHAT_MESSAGE_MAX_BYTES = 8 * 1024;
 export interface AgentChatMessage {
   cursor: number;
   agentId: string;
+  agentInstanceId: string;
   agentName: string;
   agentMessage: string;
 }
@@ -34,12 +35,13 @@ export interface AgentChatStoreOptions {
 
 export interface AgentChatPostInput {
   agentId: string;
+  agentInstanceId?: string;
   agentName: string;
   agentMessage: string;
 }
 
 interface StoredAgentChatState {
-  version: 1;
+  version: 2;
   projectKey: string;
   nextCursor: number;
   messages: AgentChatMessage[];
@@ -90,6 +92,7 @@ export class AgentChatStore {
 
   public async post(input: AgentChatPostInput): Promise<AgentChatMessage> {
     const agentId = validateAgentId(input.agentId);
+    const agentInstanceId = validateAgentInstanceId(input.agentInstanceId ?? legacyAgentInstanceId(agentId));
     const agentName = validateText(input.agentName, "agentName", AGENT_CHAT_AGENT_NAME_MAX_BYTES);
     const agentMessage = validateText(input.agentMessage, "agentMessage", AGENT_CHAT_MESSAGE_MAX_BYTES);
 
@@ -98,11 +101,12 @@ export class AgentChatStore {
       const message: AgentChatMessage = {
         cursor: current.nextCursor,
         agentId,
+        agentInstanceId,
         agentName,
         agentMessage,
       };
       const next: StoredAgentChatState = {
-        version: 1,
+        version: 2,
         projectKey: this.projectKey,
         nextCursor: current.nextCursor + 1,
         messages: [...current.messages, message].slice(-AGENT_CHAT_HISTORY_LIMIT),
@@ -178,7 +182,9 @@ export class AgentChatStore {
     } catch {
       throw new Error("Malformed agent chat state: invalid JSON");
     }
-    return validateState(parsed, this.projectKey);
+    const state = validateState(parsed, this.projectKey);
+    if (isRecord(parsed) && parsed.version === 1) await this.persistState(state);
+    return state;
   }
 
   private async persistState(state: StoredAgentChatState): Promise<void> {
@@ -234,7 +240,7 @@ export class AgentChatBroker {
 
   public async post(input: AgentChatPostInput): Promise<AgentChatMessage> {
     const message = await this.store.post(input);
-    this.dispatch(message.agentId, message.cursor);
+    this.dispatch(message.agentInstanceId, message.cursor);
     return message;
   }
 
@@ -242,25 +248,25 @@ export class AgentChatBroker {
     return this.store.read(after);
   }
 
-  public subscribe(agentId: string, notify: AgentChatListener): () => void {
-    const normalizedAgentId = validateAgentId(agentId);
+  public subscribe(agentInstanceId: string, notify: AgentChatListener): () => void {
+    const normalizedAgentInstanceId = validateAgentInstanceId(agentInstanceId);
     if (typeof notify !== "function") throw new Error("notify must be a function");
-    let agentListeners = this.listeners.get(normalizedAgentId);
+    let agentListeners = this.listeners.get(normalizedAgentInstanceId);
     if (!agentListeners) {
       agentListeners = new Set();
-      this.listeners.set(normalizedAgentId, agentListeners);
+      this.listeners.set(normalizedAgentInstanceId, agentListeners);
     }
     agentListeners.add(notify);
     return () => {
       agentListeners?.delete(notify);
-      if (agentListeners?.size === 0) this.listeners.delete(normalizedAgentId);
+      if (agentListeners?.size === 0) this.listeners.delete(normalizedAgentInstanceId);
     };
   }
 
-  private dispatch(postingAgentId: string, latestCursor: number): void {
+  private dispatch(postingAgentInstanceId: string, latestCursor: number): void {
     const notification: AgentChatNotification = { uri: AGENT_CHAT_URI, latestCursor };
-    for (const [agentId, agentListeners] of this.listeners) {
-      if (agentId === postingAgentId) continue;
+    for (const [agentInstanceId, agentListeners] of this.listeners) {
+      if (agentInstanceId === postingAgentInstanceId) continue;
       for (const listener of [...agentListeners]) {
         queueMicrotask(() => {
           Promise.resolve().then(() => listener(notification)).catch(() => undefined);
@@ -271,11 +277,11 @@ export class AgentChatBroker {
 }
 
 function emptyState(projectKey: string): StoredAgentChatState {
-  return { version: 1, projectKey, nextCursor: 1, messages: [] };
+  return { version: 2, projectKey, nextCursor: 1, messages: [] };
 }
 
 function validateState(value: unknown, expectedProjectKey: string): StoredAgentChatState {
-  if (!isRecord(value) || value.version !== 1 || value.projectKey !== expectedProjectKey) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || value.projectKey !== expectedProjectKey) {
     throw new Error("Malformed or mismatched agent chat state");
   }
   if (!Number.isSafeInteger(value.nextCursor) || value.nextCursor < 1 || !Array.isArray(value.messages)) {
@@ -294,6 +300,9 @@ function validateState(value: unknown, expectedProjectKey: string): StoredAgentC
     const message: AgentChatMessage = {
       cursor: candidate.cursor,
       agentId: validateAgentId(candidate.agentId),
+      agentInstanceId: validateAgentInstanceId(
+        value.version === 1 ? legacyAgentInstanceId(candidate.agentId) : candidate.agentInstanceId,
+      ),
       agentName: validateText(candidate.agentName, "agentName", AGENT_CHAT_AGENT_NAME_MAX_BYTES),
       agentMessage: validateText(candidate.agentMessage, "agentMessage", AGENT_CHAT_MESSAGE_MAX_BYTES),
     };
@@ -307,12 +316,23 @@ function validateState(value: unknown, expectedProjectKey: string): StoredAgentC
       (messages.length > 0 && value.nextCursor !== messages[messages.length - 1].cursor + 1)) {
     throw new Error("Malformed agent chat state: invalid cursor counter");
   }
-  return { version: 1, projectKey: expectedProjectKey, nextCursor: value.nextCursor, messages };
+  return { version: 2, projectKey: expectedProjectKey, nextCursor: value.nextCursor, messages };
 }
 
 function validateAgentId(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error("agentId must be non-empty");
   return value.trim();
+}
+
+function validateAgentInstanceId(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error("agentInstanceId must be non-empty");
+  const normalized = value.trim();
+  if (Buffer.byteLength(normalized, "utf8") > 256) throw new Error("agentInstanceId exceeds 256 UTF-8 bytes");
+  return normalized;
+}
+
+function legacyAgentInstanceId(agentId: unknown): string {
+  return `legacy:${validateAgentId(agentId)}`;
 }
 
 function copyMessage(message: AgentChatMessage): AgentChatMessage {

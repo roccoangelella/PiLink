@@ -22,8 +22,15 @@ async function fixture() {
   };
 }
 
-async function connected(fixtureValue, scopes, identity) {
-  const handle = createMcpServer(fixtureValue.policy, scopes, Object.freeze(identity), fixtureValue.broker);
+async function connected(fixtureValue, scopes, identity, agentInstanceId) {
+  const handle = createMcpServer(
+    fixtureValue.policy,
+    scopes,
+    Object.freeze(identity),
+    fixtureValue.broker,
+    undefined,
+    agentInstanceId,
+  );
   const client = new Client({ name: "mcp-chat-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([client.connect(clientTransport), handle.server.connect(serverTransport)]);
@@ -71,7 +78,7 @@ test("discovers tools with precise schemas, annotations, and server instructions
     assert.deepEqual(Object.keys(post.inputSchema.properties).sort(), ["agent_message", "agent_name"]);
     assert.equal(post.annotations.destructiveHint, false);
     assert.equal(post.outputSchema.additionalProperties, false);
-    assert.deepEqual(post.outputSchema.required, ["cursor", "agent_id", "agent_name", "agent_message"]);
+    assert.deepEqual(post.outputSchema.required, ["cursor", "agent_id", "agent_instance_id", "agent_name", "agent_message"]);
     const read = tools.find((tool) => tool.name === "agent_chat_read");
     assert.equal(read.inputSchema.additionalProperties, false);
     assert.deepEqual(read.inputSchema.required, undefined);
@@ -88,8 +95,8 @@ test("discovers tools with precise schemas, annotations, and server instructions
 
 test("enforces scopes, binds posts to the authenticated identity, and maps results", async () => {
   const value = await fixture();
-  const writer = await connected(value, "mcp:write", { agentId: "authenticated-id", agentName: "Authenticated Name" });
-  const reader = await connected(value, "mcp:read", { agentId: "reader-id", agentName: "Reader" });
+  const writer = await connected(value, "mcp:write", { agentId: "authenticated-id", agentName: "Authenticated Name" }, "writer-instance");
+  const reader = await connected(value, "mcp:read", { agentId: "reader-id", agentName: "Reader" }, "reader-instance");
   try {
     const deniedRead = await writer.client.callTool({ name: "agent_chat_read", arguments: {} });
     assert.equal(deniedRead.isError, true);
@@ -100,7 +107,13 @@ test("enforces scopes, binds posts to the authenticated identity, and maps resul
     assert.equal(wrongName.isError, true);
     const postedResult = await writer.client.callTool({ name: "agent_chat_post", arguments: { agent_message: "action" } });
     const posted = text(postedResult);
-    assert.deepEqual(posted, { cursor: 1, agent_id: "authenticated-id", agent_name: "Authenticated Name", agent_message: "action" });
+    assert.deepEqual(posted, {
+      cursor: 1,
+      agent_id: "authenticated-id",
+      agent_instance_id: "writer-instance",
+      agent_name: "Authenticated Name",
+      agent_message: "action",
+    });
     assert.deepEqual(postedResult.structuredContent, posted);
 
     const readResult = await reader.client.callTool({ name: "agent_chat_read", arguments: { after: 0 } });
@@ -120,16 +133,19 @@ test("enforces scopes, binds posts to the authenticated identity, and maps resul
   }
 });
 
-test("authorizes the resource and fans out subscribed updates without same-agent notifications", async () => {
+test("authorizes the resource and suppresses only the posting connection", async () => {
   const value = await fixture();
-  const sender = await connected(value, "mcp:write", { agentId: "sender-id", agentName: "Sender" });
-  const receiver = await connected(value, "mcp:read", { agentId: "receiver-id", agentName: "Receiver" });
-  const sameAgent = await connected(value, "mcp:read", { agentId: "sender-id", agentName: "Sender" });
-  const unsubscribed = await connected(value, "mcp:read", { agentId: "unsubscribed-id", agentName: "Unsubscribed" });
-  const notifications = [];
+  const sender = await connected(value, "mcp:tools", { agentId: "sender-id", agentName: "Sender" }, "sender-instance");
+  const receiver = await connected(value, "mcp:read", { agentId: "receiver-id", agentName: "Receiver" }, "receiver-instance");
+  const sameActor = await connected(value, "mcp:read", { agentId: "sender-id", agentName: "Sender" }, "same-actor-instance");
+  const unsubscribed = await connected(value, "mcp:read", { agentId: "unsubscribed-id", agentName: "Unsubscribed" }, "unsubscribed-instance");
+  const senderNotifications = [];
+  const receiverNotifications = [];
+  const sameActorNotifications = [];
   const unsubscribedNotifications = [];
-  receiver.client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => notifications.push(notification));
-  sameAgent.client.setNotificationHandler(ResourceUpdatedNotificationSchema, () => notifications.push({ sameAgent: true }));
+  sender.client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => senderNotifications.push(notification));
+  receiver.client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => receiverNotifications.push(notification));
+  sameActor.client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => sameActorNotifications.push(notification));
   unsubscribed.client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => unsubscribedNotifications.push(notification));
   try {
     const resource = (await receiver.client.listResources()).resources.find((item) => item.name === "agent_chat");
@@ -151,25 +167,32 @@ test("authorizes the resource and fans out subscribed updates without same-agent
       await closeConnection(forbidden);
     }
 
+    await sender.client.subscribeResource({ uri: AGENT_CHAT_URI });
     await receiver.client.subscribeResource({ uri: AGENT_CHAT_URI });
-    await sameAgent.client.subscribeResource({ uri: AGENT_CHAT_URI });
+    await sameActor.client.subscribeResource({ uri: AGENT_CHAT_URI });
     await unsubscribed.client.subscribeResource({ uri: AGENT_CHAT_URI });
     await unsubscribed.client.unsubscribeResource({ uri: AGENT_CHAT_URI });
     await assert.rejects(() => receiver.client.subscribeResource({ uri: "pilink://other" }));
-    await sender.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Sender", agent_message: "coordinate" } });
-    await waitFor(() => notifications.length === 1);
-    assert.deepEqual(notifications[0], { method: "notifications/resources/updated", params: { uri: AGENT_CHAT_URI } });
+    const posted = text(await sender.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Sender", agent_message: "coordinate" } }));
+    assert.equal(posted.agent_id, "sender-id");
+    assert.equal(posted.agent_instance_id, "sender-instance");
+    await waitFor(() => receiverNotifications.length === 1 && sameActorNotifications.length === 1);
+    const expectedNotification = { method: "notifications/resources/updated", params: { uri: AGENT_CHAT_URI } };
+    assert.deepEqual(receiverNotifications[0], expectedNotification);
+    assert.deepEqual(sameActorNotifications[0], expectedNotification);
+    assert.equal(senderNotifications.length, 0);
 
     receiver.handle.dispose();
     await sender.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Sender", agent_message: "after dispose" } });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(notifications.length, 1);
+    await waitFor(() => sameActorNotifications.length === 2);
+    assert.equal(receiverNotifications.length, 1);
+    assert.equal(senderNotifications.length, 0);
     assert.equal(unsubscribedNotifications.length, 0);
   } finally {
     sender.handle.dispose();
     await sender.client.close();
     await closeConnection(receiver);
-    await closeConnection(sameAgent);
+    await closeConnection(sameActor);
     await closeConnection(unsubscribed);
     await fs.rm(value.root, { recursive: true, force: true });
   }

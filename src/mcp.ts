@@ -24,6 +24,7 @@ export interface AuthenticatedAgentIdentity {
 
 export interface McpServerHandle {
   server: McpServer;
+  agentInstanceId: string;
   dispose: () => void;
   connect: McpServer["connect"];
 }
@@ -48,7 +49,9 @@ export function createMcpServer(
   identity?: Readonly<AuthenticatedAgentIdentity>,
   broker?: AgentChatBroker,
   audit?: ToolAuditSink,
+  agentInstanceId: string = randomUUID(),
 ): McpServerHandle {
+  const connectionAgentInstanceId = normalizeAgentInstanceId(agentInstanceId);
   const systemPromptText = buildSystemPrompt(policy);
   const server = new McpServer(
     { name: "pilink", version: VERSION },
@@ -278,6 +281,7 @@ export function createMcpServer(
     const chatMessageSchema = z.object({
       cursor: z.number().int().positive(),
       agent_id: z.string(),
+      agent_instance_id: z.string(),
       agent_name: z.string(),
       agent_message: z.string(),
     }).strict();
@@ -305,6 +309,7 @@ export function createMcpServer(
       try {
         const message = toChatMessage(await broker.post({
           agentId: authenticatedIdentity.agentId,
+          agentInstanceId: connectionAgentInstanceId,
           agentName: authenticatedIdentity.agentName,
           agentMessage: args.agent_message,
         }));
@@ -351,7 +356,7 @@ export function createMcpServer(
       return {};
     });
 
-    const unsubscribeBroker = broker.subscribe(authenticatedIdentity.agentId, async (notification) => {
+    const unsubscribeBroker = broker.subscribe(connectionAgentInstanceId, async (notification) => {
       if (!subscriptions.has(notification.uri)) return;
       try {
         await server.server.sendResourceUpdated({ uri: notification.uri });
@@ -370,7 +375,7 @@ export function createMcpServer(
     throw new Error("Authenticated identity and AgentChatBroker must be provided together");
   }
 
-  return { server, dispose, connect: (transport) => server.connect(transport) };
+  return { server, agentInstanceId: connectionAgentInstanceId, dispose, connect: (transport) => server.connect(transport) };
 }
 
 function canChatRead(scopes: string): boolean {
@@ -391,6 +396,7 @@ function toChatMessage(message: AgentChatMessage) {
   return {
     cursor: message.cursor,
     agent_id: message.agentId,
+    agent_instance_id: message.agentInstanceId,
     agent_name: message.agentName,
     agent_message: message.agentMessage,
   };
@@ -404,6 +410,13 @@ function toChatSnapshot(result: AgentChatReadResult) {
     next_cursor: result.nextCursor,
     gap: result.gap,
   };
+}
+
+function normalizeAgentInstanceId(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error("agentInstanceId must be non-empty");
+  if (Buffer.byteLength(normalized, "utf8") > 256) throw new Error("agentInstanceId exceeds 256 UTF-8 bytes");
+  return normalized;
 }
 
 function buildSystemPrompt(policy: HarnessPolicy): string {
