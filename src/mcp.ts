@@ -21,6 +21,7 @@ import {
   type AgentTask,
   type AgentTaskStore,
 } from "./tasks.js";
+import { startProgressReporter, type ProgressRequestContext } from "./progress.js";
 
 export interface AuthenticatedAgentIdentity {
   agentId: string;
@@ -38,8 +39,9 @@ export interface ToolAuditSink {
   record(input: ToolAuditEventInput): Promise<void>;
 }
 
-interface ToolRequestContext {
+interface ToolRequestContext extends ProgressRequestContext {
   sessionId?: string;
+  signal: AbortSignal;
 }
 
 interface ToolCallResult {
@@ -175,7 +177,7 @@ export function createMcpServer(
   }).strict();
   server.registerTool("run", {
     title: "Run Constrained Command",
-    description: "Run a fixed argv-based profile from the workspace without shell parsing. Git inspection profiles are available in workspace mode. npm_build and npm_test execute workspace code and require PI_ALLOW_WORKSPACE_EXECUTION=true or explicit full-access mode. Output is bounded and the process is terminated at the timeout.",
+    description: "Run a fixed argv-based profile from the workspace without shell parsing. Git inspection profiles are available in workspace mode. npm_build and npm_test execute workspace code and require PI_ALLOW_WORKSPACE_EXECUTION=true or explicit full-access mode. Output is bounded, the process is terminated at the timeout, and rate-limited progress heartbeats are sent when the client requests them.",
     inputSchema: z.object({
       profile: z.enum(RUN_PROFILES).describe("Fixed command profile to execute."),
       paths: z.array(z.string().min(1).max(4096)).max(50).optional().describe("Optional workspace-confined literal pathspecs for git status or diff profiles."),
@@ -186,8 +188,17 @@ export function createMcpServer(
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, (args, extra) => auditCall("run", extra, async () => {
     if (!isToolAllowed(scopes, "run")) return toolError("Token scope does not permit 'run'");
+    const progress = await startProgressReporter(extra, `run ${args.profile}`);
+    let completion = `run ${args.profile} failed`;
     try {
       const result = await executeRunProfile(policy, args, extra.signal);
+      completion = result.cancelled
+        ? `run ${args.profile} cancelled`
+        : result.timedOut
+          ? `run ${args.profile} timed out`
+          : result.exitCode === 0
+            ? `run ${args.profile} completed`
+            : `run ${args.profile} failed`;
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
         structuredContent: result as unknown as Record<string, unknown>,
@@ -195,6 +206,8 @@ export function createMcpServer(
       };
     } catch (error) {
       return toolError(error instanceof Error ? error.message : "Constrained command execution failed");
+    } finally {
+      await progress.finish(completion);
     }
   }, (response) => {
     const result = ("structuredContent" in response ? response.structuredContent : undefined) as RunProfileResult | undefined;
