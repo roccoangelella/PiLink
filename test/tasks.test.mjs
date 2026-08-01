@@ -96,10 +96,12 @@ test("persists a typed task lifecycle with private project-scoped state", async 
   const created = await store.create({ ...alice, title: "Add safe runner", details: "Implement fixed profiles" });
   assert.equal(created.status, "open");
   assert.equal(created.revision, 1);
+  assert.equal(created.createdByScope, "actor");
 
   const claimed = await store.claim({ ...bob, ...mutation(created), leaseSeconds: 60 });
   assert.equal(claimed.status, "working");
   assert.equal(claimed.ownerAgentId, bob.agentId);
+  assert.equal(claimed.ownerScope, "actor");
   assert.equal(claimed.leaseExpiresAt, "2026-08-01T10:01:00.000Z");
 
   value.advance(10);
@@ -248,8 +250,10 @@ test("binds task ownership to the exact collaboration session", async (t) => {
 
   const created = await store.create({ ...aliceSessionOne, title: "Session-owned implementation" });
   assert.equal(created.createdByCollaborationSessionId, aliceSessionOne.collaborationSessionId);
+  assert.equal(created.createdByScope, "actor");
   const claimed = await store.claim({ ...bobSessionOne, ...mutation(created), leaseSeconds: 60 });
   assert.equal(claimed.ownerCollaborationSessionId, bobSessionOne.collaborationSessionId);
+  assert.equal(claimed.ownerScope, "collaboration_session");
 
   await assert.rejects(
     store.claim({ ...bobSessionTwo, ...mutation(claimed), leaseSeconds: 60 }),
@@ -274,20 +278,16 @@ test("binds task ownership to the exact collaboration session", async (t) => {
     statusMessage: "Need the creator decision",
     leaseSeconds: 60,
   });
-  await assert.rejects(
-    store.provideInput({
-      ...aliceSessionTwo,
-      ...mutation(waiting),
-      statusMessage: "Wrong creator session",
-    }),
-    /owning collaboration session/,
-  );
   const resumed = await store.provideInput({
-    ...aliceSessionOne,
+    ...aliceSessionTwo,
     ...mutation(waiting),
-    statusMessage: "Proceed",
+    statusMessage: "Proceed from a replacement creator session",
     leaseSeconds: 60,
   });
+  assert.equal(resumed.createdByCollaborationSessionId, aliceSessionOne.collaborationSessionId);
+  assert.equal(resumed.createdByScope, "actor");
+  assert.equal(resumed.ownerCollaborationSessionId, bobSessionOne.collaborationSessionId);
+  assert.equal(resumed.ownerScope, "collaboration_session");
   await assert.rejects(
     store.complete({ ...bobSessionTwo, ...mutation(resumed), statusMessage: "Wrong sibling completion" }),
     /different collaboration session/,
@@ -299,6 +299,7 @@ test("binds task ownership to the exact collaboration session", async (t) => {
   });
   assert.equal(completed.status, "completed");
   assert.equal(completed.ownerCollaborationSessionId, undefined);
+  assert.equal(completed.ownerScope, undefined);
 });
 
 test("migrates legacy actor-scoped tasks without narrowing their owner", async (t) => {
@@ -327,14 +328,62 @@ test("migrates legacy actor-scoped tasks without narrowing their owner", async (
   }));
 
   const loaded = await store.get(legacyTask.taskId);
+  assert.equal(loaded.createdByScope, "actor");
   assert.equal(loaded.ownerCollaborationSessionId, undefined);
-  const renewed = await store.renew({ ...bobSessionTwo, ...mutation(loaded), leaseSeconds: 60 });
+  assert.equal(loaded.ownerScope, "actor");
+  const renewed = await store.claim({ ...bobSessionTwo, ...mutation(loaded), leaseSeconds: 60 });
   assert.equal(renewed.ownerAgentId, bob.agentId);
   assert.equal(renewed.ownerCollaborationSessionId, undefined);
+  assert.equal(renewed.ownerScope, "actor");
 
   const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
-  assert.equal(persisted.version, 2);
+  assert.equal(persisted.version, 3);
+  assert.equal(persisted.tasks[0].createdByScope, "actor");
   assert.equal(persisted.tasks[0].ownerCollaborationSessionId, undefined);
+  assert.equal(persisted.tasks[0].ownerScope, "actor");
+});
+
+test("migrates version-2 session provenance into explicit authority scopes", async (t) => {
+  const value = await fixture("pilink-tasks-session-v2-migration-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const timestamp = "2026-08-01T10:00:00.000Z";
+  const versionTwoTask = {
+    taskId: randomUUID(),
+    title: "Version two session-owned task",
+    status: "working",
+    createdByAgentId: alice.agentId,
+    createdByAgentName: alice.agentName,
+    createdByCollaborationSessionId: aliceSessionOne.collaborationSessionId,
+    ownerAgentId: bob.agentId,
+    ownerAgentName: bob.agentName,
+    ownerCollaborationSessionId: bobSessionOne.collaborationSessionId,
+    leaseExpiresAt: "2026-08-01T10:05:00.000Z",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    revision: 1,
+  };
+  await fs.mkdir(path.dirname(store.statePath), { recursive: true });
+  await fs.writeFile(store.statePath, JSON.stringify({
+    version: 2,
+    projectKey: store.projectKey,
+    tasks: [versionTwoTask],
+  }));
+
+  const loaded = await store.get(versionTwoTask.taskId);
+  assert.equal(loaded.createdByCollaborationSessionId, aliceSessionOne.collaborationSessionId);
+  assert.equal(loaded.createdByScope, "actor");
+  assert.equal(loaded.ownerCollaborationSessionId, bobSessionOne.collaborationSessionId);
+  assert.equal(loaded.ownerScope, "collaboration_session");
+  await assert.rejects(
+    store.renew({ ...bobSessionTwo, ...mutation(loaded), leaseSeconds: 60 }),
+    /different collaboration session/,
+  );
+
+  const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+  assert.equal(persisted.version, 3);
+  assert.equal(persisted.tasks[0].createdByScope, "actor");
+  assert.equal(persisted.tasks[0].ownerScope, "collaboration_session");
 });
 
 test("supports release, failure artifacts, and authorized cancellation", async (t) => {

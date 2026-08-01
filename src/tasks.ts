@@ -14,6 +14,9 @@ const AGENT_TASK_LOCK_TIMEOUT_MS = 5_000;
 const AGENT_TASK_STALE_LOCK_MS = 30_000;
 const AGENT_TASK_LOCK_RETRY_MS = 25;
 
+export const AGENT_TASK_AUTHORITY_SCOPES = ["actor", "collaboration_session"] as const;
+export type AgentTaskAuthorityScope = typeof AGENT_TASK_AUTHORITY_SCOPES[number];
+
 export const AGENT_TASK_STATUSES = [
   "open",
   "working",
@@ -41,9 +44,11 @@ export interface AgentTask {
   createdByAgentId: string;
   createdByAgentName: string;
   createdByCollaborationSessionId?: string;
+  createdByScope: AgentTaskAuthorityScope;
   ownerAgentId?: string;
   ownerAgentName?: string;
   ownerCollaborationSessionId?: string;
+  ownerScope?: AgentTaskAuthorityScope;
   leaseExpiresAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -88,7 +93,7 @@ export interface AgentTaskListOptions {
 }
 
 interface StoredAgentTaskState {
-  version: 2;
+  version: 3;
   projectKey: string;
   tasks: AgentTask[];
 }
@@ -148,6 +153,9 @@ export class AgentTaskStore {
         createdByAgentId: identity.agentId,
         createdByAgentName: identity.agentName,
         createdByCollaborationSessionId: identity.collaborationSessionId,
+        // Creator recovery stays OAuth-actor scoped. The optional session ID is
+        // provenance only, so a released creator session cannot strand a task.
+        createdByScope: "actor",
         createdAt: now,
         updatedAt: now,
         revision: 1,
@@ -205,13 +213,21 @@ export class AgentTaskStore {
       requireExpectedRevision(task, expectedRevision);
 
       const now = this.nowIso();
+      const isNewClaim = task.status === "open";
       const updated: AgentTask = {
         ...task,
         status: "working",
-        statusMessage: task.status === "open" ? undefined : task.statusMessage,
+        statusMessage: isNewClaim ? undefined : task.statusMessage,
         ownerAgentId: identity.agentId,
         ownerAgentName: identity.agentName,
-        ownerCollaborationSessionId: identity.collaborationSessionId,
+        // Renewing an existing actor-scoped legacy claim must not silently
+        // narrow it to whichever sibling session happened to renew first.
+        ownerCollaborationSessionId: isNewClaim
+          ? identity.collaborationSessionId
+          : task.ownerCollaborationSessionId,
+        ownerScope: isNewClaim
+          ? authorityScope(identity.collaborationSessionId)
+          : task.ownerScope,
         leaseExpiresAt: this.leaseExpiryIso(leaseSeconds),
         updatedAt: now,
         revision: task.revision + 1,
@@ -287,6 +303,7 @@ export class AgentTaskStore {
         ownerAgentId: undefined,
         ownerAgentName: undefined,
         ownerCollaborationSessionId: undefined,
+        ownerScope: undefined,
         leaseExpiresAt: undefined,
         updatedAt: this.nowIso(),
         revision: task.revision + 1,
@@ -395,6 +412,7 @@ export class AgentTaskStore {
         ownerAgentId: undefined,
         ownerAgentName: undefined,
         ownerCollaborationSessionId: undefined,
+        ownerScope: undefined,
         leaseExpiresAt: undefined,
         updatedAt: nowValue.toISOString(),
         revision: task.revision + 1,
@@ -407,7 +425,7 @@ export class AgentTaskStore {
   }
 
   private withTasks(tasks: AgentTask[]): StoredAgentTaskState {
-    return { version: 2, projectKey: this.projectKey, tasks };
+    return { version: 3, projectKey: this.projectKey, tasks };
   }
 
   private async enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
@@ -499,7 +517,7 @@ export class AgentTaskStore {
       throw new Error("Malformed agent task state: invalid JSON");
     }
     const state = validateState(parsed, this.projectKey);
-    if (isRecord(parsed) && parsed.version === 1) await this.persistState(state);
+    if (isRecord(parsed) && parsed.version !== 3) await this.persistState(state);
     return state;
   }
 
@@ -579,6 +597,7 @@ function terminalTask(
     ownerAgentId: undefined,
     ownerAgentName: undefined,
     ownerCollaborationSessionId: undefined,
+    ownerScope: undefined,
     leaseExpiresAt: undefined,
     updatedAt: now,
     revision: task.revision + 1,
@@ -618,43 +637,69 @@ function requireOwnedLeasedTask(
 
 function requireTaskOwner(task: AgentTask, identity: AgentTaskIdentity): void {
   if (task.ownerAgentId !== identity.agentId) throw new Error(`Task is already claimed by ${task.ownerAgentName}`);
-  if (task.ownerCollaborationSessionId !== undefined &&
+  if (task.ownerScope === "collaboration_session" &&
       task.ownerCollaborationSessionId !== identity.collaborationSessionId) {
     throw new Error(`Task is claimed by a different collaboration session for ${task.ownerAgentName}`);
   }
 }
 
 function isTaskCreator(task: AgentTask, identity: AgentTaskIdentity): boolean {
-  return task.createdByAgentId === identity.agentId &&
-    (task.createdByCollaborationSessionId === undefined ||
-      task.createdByCollaborationSessionId === identity.collaborationSessionId);
+  // Creator authority is intentionally actor-scoped. The recorded creator
+  // session is provenance, not a recovery credential.
+  return task.createdByAgentId === identity.agentId;
 }
 
 function isTaskOwner(task: AgentTask, identity: AgentTaskIdentity): boolean {
   return task.ownerAgentId === identity.agentId &&
-    (task.ownerCollaborationSessionId === undefined ||
+    (task.ownerScope === "actor" ||
       task.ownerCollaborationSessionId === identity.collaborationSessionId);
 }
 
 function validateState(value: unknown, expectedProjectKey: string): StoredAgentTaskState {
-  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) ||
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
       value.projectKey !== expectedProjectKey || !Array.isArray(value.tasks)) {
     throw new Error("Malformed or mismatched agent task state");
   }
   if (value.tasks.length > AGENT_TASK_LIMIT) throw new Error("Malformed agent task state: task limit exceeded");
 
+  const stateVersion = value.version as 1 | 2 | 3;
   const taskIds = new Set<string>();
-  const tasks = value.tasks.map((candidate) => validateStoredTask(candidate, taskIds));
-  return { version: 2, projectKey: expectedProjectKey, tasks };
+  const tasks = value.tasks.map((candidate) => validateStoredTask(candidate, taskIds, stateVersion));
+  return { version: 3, projectKey: expectedProjectKey, tasks };
 }
 
-function validateStoredTask(value: unknown, taskIds: Set<string>): AgentTask {
+function validateStoredTask(
+  value: unknown,
+  taskIds: Set<string>,
+  stateVersion: 1 | 2 | 3,
+): AgentTask {
   if (!isRecord(value)) throw new Error("Malformed agent task state: invalid task");
   const taskId = validateTaskId(value.taskId);
   if (taskIds.has(taskId)) throw new Error("Malformed agent task state: duplicate task ID");
   taskIds.add(taskId);
 
   const status = validateStatus(value.status);
+  const createdByCollaborationSessionId = validateOptionalCollaborationSessionId(
+    value.createdByCollaborationSessionId,
+  );
+  const ownerAgentId = value.ownerAgentId === undefined ? undefined : validateAgentId(value.ownerAgentId);
+  const ownerCollaborationSessionId = validateOptionalCollaborationSessionId(value.ownerCollaborationSessionId);
+  const createdByScope = validateOrInferAuthorityScope(
+    value.createdByScope,
+    "createdByScope",
+    "actor",
+    stateVersion < 3,
+  );
+  const ownerScope = ownerAgentId === undefined
+    ? value.ownerScope === undefined
+      ? undefined
+      : validateAuthorityScope(value.ownerScope, "ownerScope")
+    : validateOrInferAuthorityScope(
+      value.ownerScope,
+      "ownerScope",
+      authorityScope(ownerCollaborationSessionId),
+      stateVersion < 3,
+    );
   const task: AgentTask = {
     taskId,
     title: validateRequiredText(value.title, "title", AGENT_TASK_TITLE_MAX_BYTES),
@@ -664,19 +709,34 @@ function validateStoredTask(value: unknown, taskIds: Set<string>): AgentTask {
     artifact: validateOptionalText(value.artifact, "artifact", AGENT_TASK_ARTIFACT_MAX_BYTES),
     createdByAgentId: validateAgentId(value.createdByAgentId),
     createdByAgentName: validateRequiredText(value.createdByAgentName, "createdByAgentName", 100),
-    createdByCollaborationSessionId: validateOptionalCollaborationSessionId(value.createdByCollaborationSessionId),
-    ownerAgentId: value.ownerAgentId === undefined ? undefined : validateAgentId(value.ownerAgentId),
+    createdByCollaborationSessionId,
+    createdByScope,
+    ownerAgentId,
     ownerAgentName: validateOptionalText(value.ownerAgentName, "ownerAgentName", 100),
-    ownerCollaborationSessionId: validateOptionalCollaborationSessionId(value.ownerCollaborationSessionId),
+    ownerCollaborationSessionId,
+    ownerScope,
     leaseExpiresAt: validateOptionalDate(value.leaseExpiresAt, "leaseExpiresAt"),
     createdAt: validateDate(value.createdAt, "createdAt"),
     updatedAt: validateDate(value.updatedAt, "updatedAt"),
     revision: validateRevision(value.revision),
   };
 
+  if (task.createdByScope !== "actor") {
+    throw new Error("Malformed agent task state: creator authority must be actor-scoped");
+  }
+  if (task.ownerAgentId === undefined && task.ownerScope !== undefined) {
+    throw new Error("Malformed agent task state: owner scope lacks owner actor");
+  }
+  if (task.ownerScope === "collaboration_session" && task.ownerCollaborationSessionId === undefined) {
+    throw new Error("Malformed agent task state: session-scoped owner lacks collaboration session");
+  }
+  if (task.ownerScope === "actor" && task.ownerCollaborationSessionId !== undefined) {
+    throw new Error("Malformed agent task state: actor-scoped owner has collaboration session authority");
+  }
+
   const hasCompleteLease = Boolean(task.ownerAgentId && task.ownerAgentName && task.leaseExpiresAt);
   const hasAnyLease = Boolean(
-    task.ownerAgentId || task.ownerAgentName || task.ownerCollaborationSessionId || task.leaseExpiresAt,
+    task.ownerAgentId || task.ownerAgentName || task.ownerCollaborationSessionId || task.ownerScope || task.leaseExpiresAt,
   );
   if (task.ownerCollaborationSessionId !== undefined && task.ownerAgentId === undefined) {
     throw new Error("Malformed agent task state: owner session lacks owner actor");
@@ -716,6 +776,30 @@ function validateOptionalCollaborationSessionId(value: unknown): string | undefi
     throw new Error("collaborationSessionId must be a valid collaboration session ID");
   }
   return value;
+}
+
+function authorityScope(collaborationSessionId: string | undefined): AgentTaskAuthorityScope {
+  return collaborationSessionId === undefined ? "actor" : "collaboration_session";
+}
+
+function validateAuthorityScope(value: unknown, field: string): AgentTaskAuthorityScope {
+  if (typeof value !== "string" || !AGENT_TASK_AUTHORITY_SCOPES.includes(value as AgentTaskAuthorityScope)) {
+    throw new Error(`${field} must be actor or collaboration_session`);
+  }
+  return value as AgentTaskAuthorityScope;
+}
+
+function validateOrInferAuthorityScope(
+  value: unknown,
+  field: string,
+  inferred: AgentTaskAuthorityScope,
+  allowMissing: boolean,
+): AgentTaskAuthorityScope {
+  if (value === undefined) {
+    if (!allowMissing) throw new Error(`Malformed agent task state: ${field} is required`);
+    return inferred;
+  }
+  return validateAuthorityScope(value, field);
 }
 
 function validateTaskId(value: unknown): string {
@@ -789,7 +873,7 @@ function requireExpectedRevision(task: AgentTask, expectedRevision: number): voi
 }
 
 function emptyState(projectKey: string): StoredAgentTaskState {
-  return { version: 2, projectKey, tasks: [] };
+  return { version: 3, projectKey, tasks: [] };
 }
 
 function copyTask(task: AgentTask): AgentTask {
