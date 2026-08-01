@@ -2,11 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { RuntimeConfig } from "./config.js";
 
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
+export type ToolName = "read" | "bash" | "run" | "edit" | "write" | "grep" | "find" | "ls";
 
 export interface HarnessPolicy {
   workspace: string;
   unsafeFullAccess: boolean;
+  allowWorkspaceExecution?: boolean;
   maxBashTimeoutSeconds: number;
 }
 
@@ -14,6 +15,7 @@ export function createHarnessPolicy(config: RuntimeConfig): HarnessPolicy {
   return {
     workspace: path.resolve(config.workspace),
     unsafeFullAccess: config.unsafeFullAccess,
+    allowWorkspaceExecution: config.allowWorkspaceExecution,
     maxBashTimeoutSeconds: config.maxBashTimeoutSeconds,
   };
 }

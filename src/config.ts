@@ -15,6 +15,7 @@ export interface RuntimeConfig {
   bootstrapSecret: string;
   tokenExpirySeconds: number;
   unsafeFullAccess: boolean;
+  allowWorkspaceExecution: boolean;
   maxBashTimeoutSeconds: number;
   corsOrigins: string[];
   trustProxy: boolean;
@@ -68,6 +69,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     bootstrapSecret,
     tokenExpirySeconds,
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
+    allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
     maxBashTimeoutSeconds,
     corsOrigins: (env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
     trustProxy: env.TRUST_PROXY === "true",

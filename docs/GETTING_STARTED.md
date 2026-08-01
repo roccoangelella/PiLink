@@ -164,9 +164,13 @@ After authorization, ask ChatGPT to inspect the workspace first, then make focus
 
 - `read`, `grep`, `find`, `ls` for inspection
 - `edit`, `write` for file changes
+- `run` for fixed argv-based profiles: `git_status`, `git_diff`, `git_diff_staged`, and `git_log`
+- `npm_build` and `npm_test` through `run` only when `PI_ALLOW_WORKSPACE_EXECUTION=true` or full-access mode is enabled
 - `bash` only in `--allow-unsafe-full-access` mode
 
-The server limits request bodies, tool input sizes, bash timeout, OAuth rate, and access-token lifetime. `mcp:read` gives inspection-only access; `mcp:write` gives write access; `mcp:tools` gives all tool permissions subject to the selected server mode.
+The `run` tool never parses a shell command, confines supplied Git paths to the workspace, bounds stdout/stderr, respects MCP cancellation, and terminates the process group at the configured timeout. Git profiles disable external diff/text-conversion hooks, pagers, prompts, and system/global Git configuration. Build and test profiles are still arbitrary repository code, not a sandbox; enable them only for a trusted workspace. Their child environment excludes PiLink's OAuth/JWT secrets.
+
+The server limits request bodies, tool input sizes, command timeout, OAuth rate, and access-token lifetime. `mcp:read` gives inspection-only access; `mcp:write` gives write and constrained-execution access; `mcp:tools` gives all tool permissions subject to the selected server mode.
 
 ### Agent chat coordination
 

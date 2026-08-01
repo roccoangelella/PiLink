@@ -44,7 +44,7 @@ test("discovers tools with precise schemas, annotations, and server instructions
   const connection = await connected(value, "mcp:tools", { agentId: "agent-a", agentName: "Agent A" });
   try {
     const tools = (await connection.client.listTools()).tools;
-    assert.deepEqual(tools.filter((tool) => ["read", "bash", "edit", "write", "grep", "find", "ls", "agent_chat_post", "agent_chat_read"].includes(tool.name)).map((tool) => tool.name), ["read", "bash", "edit", "write", "grep", "find", "ls", "agent_chat_post", "agent_chat_read"]);
+    assert.deepEqual(tools.filter((tool) => ["read", "bash", "run", "edit", "write", "grep", "find", "ls", "agent_chat_post", "agent_chat_read"].includes(tool.name)).map((tool) => tool.name), ["read", "bash", "run", "edit", "write", "grep", "find", "ls", "agent_chat_post", "agent_chat_read"]);
 
     assert.match(connection.client.getInstructions(), /Inspect before changing files/);
 
@@ -55,6 +55,15 @@ test("discovers tools with precise schemas, annotations, and server instructions
     const bash = tools.find((tool) => tool.name === "bash");
     assert.equal(bash.annotations.destructiveHint, true);
     assert.equal(bash.annotations.openWorldHint, true);
+
+    const run = tools.find((tool) => tool.name === "run");
+    assert.equal(run.annotations.destructiveHint, true);
+    assert.equal(run.inputSchema.additionalProperties, false);
+    assert.deepEqual(run.inputSchema.required, ["profile"]);
+    assert.ok(run.inputSchema.properties.profile.enum.includes("git_status"));
+    assert.ok(run.inputSchema.properties.profile.enum.includes("npm_test"));
+    assert.ok(run.outputSchema.required.includes("cancelled"));
+    assert.ok(run.outputSchema.required.includes("durationMs"));
 
     const post = tools.find((tool) => tool.name === "agent_chat_post");
     assert.deepEqual(post.inputSchema.required, ["agent_message"]);

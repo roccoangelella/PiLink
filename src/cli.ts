@@ -48,6 +48,7 @@ function initialize(portOverride?: number): void {
     `JWT_SECRET=${secret()}`,
     `PI_BOOTSTRAP_SECRET=${secret()}`,
     "PI_MAX_BASH_TIMEOUT=120",
+    "# PI_ALLOW_WORKSPACE_EXECUTION=false",
     "# PI_UNSAFE_FULL_ACCESS=false",
     "# CORS_ORIGINS=https://chatgpt.com",
     "",

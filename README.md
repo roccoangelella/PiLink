@@ -33,7 +33,9 @@ Automatic mapping cannot bypass CGNAT, ISP port blocking, or routers that disabl
 
 ## Security model
 
-The default mode is deliberately restrictive: file tools are jailed to `PI_WORK_DIR` (including symlink-escape checks) and `bash` is unavailable. This is appropriate for a public tunnel.
+The default mode is deliberately restrictive: file tools are jailed to `PI_WORK_DIR` (including symlink-escape checks) and `bash` is unavailable. The fixed `run` tool can inspect Git status, diffs, staged diffs, and recent commits without shell parsing. It disables pagers, external diff drivers, text conversion, system/global Git configuration, hooks, prompts, and optional locks; paths remain confined to the workspace and output is bounded.
+
+`npm_build` and `npm_test` are also fixed `run` profiles, but they execute arbitrary code from the repository and are disabled by default. Set `PI_ALLOW_WORKSPACE_EXECUTION=true` only for a trusted workspace. PiLink gives these child processes a filtered environment without its OAuth/JWT secrets, but this is not an OS sandbox: workspace code still runs as the PiLink user and may access that user's files or network.
 
 `--allow-unsafe-full-access` enables unrestricted shell and filesystem access for every authorized MCP client. It is remote code execution by design; only use it with a private configuration, a trusted ChatGPT profile, and a machine/account you are willing to expose. PiLink cannot make arbitrary shell commands safe without an OS-level sandbox.
 
@@ -50,9 +52,9 @@ Keep that secret out of ChatGPT prompts, logs, source control, and public config
 
 ## Configuration
 
-`pilink init` documents the generated values. See `.env.example` for manual or deployment configuration. The server rejects startup if `JWT_SECRET` or `PI_BOOTSTRAP_SECRET` is missing or shorter than 32 characters. `SERVER_URL` must be the externally visible HTTPS URL when using a reverse proxy or tunnel.
+`pilink init` documents the generated values. See `.env.example` for manual or deployment configuration. The server rejects startup if `JWT_SECRET` or `PI_BOOTSTRAP_SECRET` is missing or shorter than 32 characters. `SERVER_URL` must be the externally visible HTTPS URL when using a reverse proxy or tunnel. `PI_MAX_BASH_TIMEOUT` caps both unrestricted `bash` and constrained `run` execution.
 
-OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 2,592,000, or 30 days), and preserve their scopes for the lifetime of an MCP session. Tokens can be revoked at `POST /oauth/revoke` using the issuing client's credentials, the token itself as a Bearer credential, or the administrator bootstrap credential; revocations persist under `PI_DATA_DIR` until the token would naturally expire. `mcp:read` permits only read/search tools, `mcp:write` permits mutation (and bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
+OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 2,592,000, or 30 days), and preserve their scopes for the lifetime of an MCP session. Tokens can be revoked at `POST /oauth/revoke` using the issuing client's credentials, the token itself as a Bearer credential, or the administrator bootstrap credential; revocations persist under `PI_DATA_DIR` until the token would naturally expire. `mcp:read` permits only read/search tools, `mcp:write` permits mutation and constrained execution (plus bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
 
 ## Agent chat
 
