@@ -1,0 +1,94 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { ToolAuditLog } from "../dist/audit.js";
+
+async function fixture() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-audit-"));
+  const workspace = path.join(root, "workspace");
+  const dataDir = path.join(root, "data");
+  await fs.mkdir(workspace);
+  return { root, workspace, dataDir };
+}
+
+test("writes private project-scoped metadata-only JSONL events", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const audit = new ToolAuditLog({ workspace, dataDir });
+    await audit.record({
+      callId: "call-1",
+      agentId: "agent-1",
+      tool: "read",
+      startedAt: "2026-08-01T10:00:00.000Z",
+      durationMs: 12,
+      outcome: "success",
+      accessMode: "workspace",
+      input: { path: "secret.txt" },
+      result: "sensitive output",
+      error: "sensitive error",
+    });
+
+    const events = (await fs.readFile(audit.logPath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(events, [{
+      version: 1,
+      event: "tool_call",
+      callId: "call-1",
+      agentId: "agent-1",
+      tool: "read",
+      startedAt: "2026-08-01T10:00:00.000Z",
+      durationMs: 12,
+      outcome: "success",
+      accessMode: "workspace",
+    }]);
+    assert.equal((await fs.stat(path.dirname(audit.logPath))).mode & 0o777, 0o700);
+    assert.equal((await fs.stat(audit.logPath)).mode & 0o777, 0o600);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("serializes concurrent events across audit instances", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const first = new ToolAuditLog({ workspace, dataDir });
+    const second = new ToolAuditLog({ workspace, dataDir });
+    await Promise.all(Array.from({ length: 40 }, (_, index) => (index % 2 ? first : second).record({
+      callId: `call-${index}`,
+      tool: index % 2 ? "grep" : "read",
+      startedAt: new Date(1_700_000_000_000 + index).toISOString(),
+      durationMs: index,
+      outcome: index % 3 ? "success" : "error",
+      accessMode: "workspace",
+      exitCode: index % 3 ? 0 : 1,
+      timedOut: false,
+      truncated: index % 5 === 0,
+    })));
+
+    const events = (await fs.readFile(first.logPath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(events.length, 40);
+    assert.deepEqual(new Set(events.map((event) => event.callId)), new Set(Array.from({ length: 40 }, (_, index) => `call-${index}`)));
+    assert.ok(events.every((event) => event.version === 1 && event.event === "tool_call"));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe storage and malformed event metadata", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    assert.throws(() => new ToolAuditLog({ workspace, dataDir: path.join(workspace, ".pilink") }), /must not be stored/);
+    const audit = new ToolAuditLog({ workspace, dataDir });
+    for (const event of [
+      { callId: "", tool: "read", startedAt: new Date().toISOString(), durationMs: 1, outcome: "success", accessMode: "workspace" },
+      { callId: "c", tool: "", startedAt: new Date().toISOString(), durationMs: 1, outcome: "success", accessMode: "workspace" },
+      { callId: "c", tool: "read", startedAt: "not-a-date", durationMs: 1, outcome: "success", accessMode: "workspace" },
+      { callId: "c", tool: "read", startedAt: new Date().toISOString(), durationMs: -1, outcome: "success", accessMode: "workspace" },
+      { callId: "c", tool: "read", startedAt: new Date().toISOString(), durationMs: 1, outcome: "unknown", accessMode: "workspace" },
+      { callId: "c", tool: "read", startedAt: new Date().toISOString(), durationMs: 1, outcome: "success", accessMode: "unsafe" },
+    ]) assert.throws(() => audit.record(event));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
