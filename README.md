@@ -106,6 +106,8 @@ npm ci
 npm test
 ```
 
+See [the release guide](docs/RELEASING.md) for the tokenless npm trusted-publishing setup, protected release flow, and provenance checks.
+
 ### Run a local checkout as `pilink`
 
 From the repository root, run the local CLI without a global installation:
