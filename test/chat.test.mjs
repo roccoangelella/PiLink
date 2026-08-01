@@ -34,6 +34,35 @@ test("persists across instances and uses canonical project-scoped state", async 
   }
 });
 
+test("retries a failed state load after the persisted file is repaired", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const store = new AgentChatStore({ workspace, dataDir });
+    await fs.mkdir(path.dirname(store.statePath), { recursive: true });
+    await fs.writeFile(store.statePath, "{invalid-json", { mode: 0o600 });
+
+    await assert.rejects(() => store.read(), /invalid JSON/);
+
+    await fs.writeFile(store.statePath, `${JSON.stringify({
+      version: 1,
+      projectKey: store.projectKey,
+      nextCursor: 1,
+      messages: [],
+    })}\n`, { mode: 0o600 });
+
+    const result = await store.read();
+    assert.deepEqual(result, {
+      messages: [],
+      oldestCursor: 0,
+      latestCursor: 0,
+      nextCursor: 0,
+      gap: false,
+    });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("serializes concurrent posts and retains only the newest messages", async () => {
   const { root, workspace, dataDir } = await fixture();
   try {

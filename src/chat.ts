@@ -146,11 +146,18 @@ export class AgentChatStore {
 
   private async loadState(): Promise<StoredAgentChatState> {
     if (this.sharedState.state) return this.sharedState.state;
-    if (!this.sharedState.stateLoad) {
-      this.sharedState.stateLoad = this.readStateFile();
+
+    const stateLoad = this.sharedState.stateLoad || this.readStateFile();
+    this.sharedState.stateLoad = stateLoad;
+    try {
+      const state = await stateLoad;
+      this.sharedState.state = state;
+      return state;
+    } finally {
+      // A transient read or validation failure must not poison every future read.
+      // Successful loads remain cached in `state`; failed loads may be retried.
+      if (this.sharedState.stateLoad === stateLoad) this.sharedState.stateLoad = undefined;
     }
-    this.sharedState.state = await this.sharedState.stateLoad;
-    return this.sharedState.state;
   }
 
   private async readStateFile(): Promise<StoredAgentChatState> {
