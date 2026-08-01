@@ -68,6 +68,10 @@ export interface AgentTaskCompleteInput extends AgentTaskUpdateInput {
   artifact?: string;
 }
 
+export interface AgentTaskProvideInputInput extends AgentTaskUpdateInput {
+  leaseSeconds?: number;
+}
+
 export interface AgentTaskListOptions {
   statuses?: AgentTaskStatus[];
   limit?: number;
@@ -182,6 +186,9 @@ export class AgentTaskStore {
       const state = await this.loadFreshState();
       const task = requireTask(state, taskId);
       if (terminalStatuses.has(task.status)) throw new Error(`Task is already ${task.status}`);
+      if (task.status === "input_required" && task.ownerAgentId !== identity.agentId) {
+        throw new Error("Task requires input before it can be claimed");
+      }
       if (task.status !== "open" && task.ownerAgentId !== identity.agentId) {
         throw new Error(`Task is already claimed by ${task.ownerAgentName}`);
       }
@@ -254,13 +261,42 @@ export class AgentTaskStore {
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
       const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      const remainsBlocked = task.status === "input_required";
       const updated: AgentTask = {
         ...task,
-        status: "open",
-        statusMessage,
+        status: remainsBlocked ? "input_required" : "open",
+        statusMessage: statusMessage ?? (remainsBlocked ? task.statusMessage : undefined),
         ownerAgentId: undefined,
         ownerAgentName: undefined,
         leaseExpiresAt: undefined,
+        updatedAt: this.nowIso(),
+        revision: task.revision + 1,
+      };
+      const next = replaceTask(state, updated);
+      await this.persistAndCache(next);
+      return copyTask(updated);
+    });
+  }
+
+  public async provideInput(input: AgentTaskProvideInputInput): Promise<AgentTask> {
+    const identity = validateIdentity(input);
+    const taskId = validateTaskId(input.taskId);
+    const statusMessage = validateRequiredText(input.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES);
+    const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
+
+    return this.enqueueMutation(async () => {
+      const state = await this.loadFreshState();
+      const task = requireTask(state, taskId);
+      if (task.status !== "input_required") throw new Error("Task is not waiting for input");
+      const authorized = task.createdByAgentId === identity.agentId || task.ownerAgentId === identity.agentId;
+      if (!authorized) throw new Error("Only the task creator or current owner may provide input");
+
+      const hasActiveOwner = task.ownerAgentId !== undefined;
+      const updated: AgentTask = {
+        ...task,
+        status: hasActiveOwner ? "working" : "open",
+        statusMessage,
+        leaseExpiresAt: hasActiveOwner ? this.leaseExpiryIso(leaseSeconds) : undefined,
         updatedAt: this.nowIso(),
         revision: task.revision + 1,
       };
@@ -323,10 +359,11 @@ export class AgentTaskStore {
       if (!leasedStatuses.has(task.status) || !task.leaseExpiresAt) return task;
       if (Date.parse(task.leaseExpiresAt) > nowMs) return task;
       changed = true;
+      const remainsBlocked = task.status === "input_required";
       return {
         ...task,
-        status: "open" as const,
-        statusMessage: "Lease expired; task returned to open",
+        status: remainsBlocked ? "input_required" as const : "open" as const,
+        statusMessage: remainsBlocked ? task.statusMessage : "Lease expired; task returned to open",
         ownerAgentId: undefined,
         ownerAgentName: undefined,
         leaseExpiresAt: undefined,

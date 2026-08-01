@@ -100,6 +100,84 @@ test("leases prevent duplicate work and expired claims can be reclaimed", async 
   assert.equal(persisted.tasks[0].ownerAgentId, bob.agentId);
 });
 
+test("input-required survives lease expiry and resumes only after authorized input", async (t) => {
+  const value = await fixture("pilink-tasks-input-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const task = await store.create({ ...alice, title: "Resolve deployment choice" });
+  await store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 30 });
+  await store.requestInput({
+    ...bob,
+    taskId: task.taskId,
+    statusMessage: "Which hosting mode should be used?",
+    leaseSeconds: 30,
+  });
+
+  value.advance(31);
+  const expired = await store.get(task.taskId);
+  assert.equal(expired.status, "input_required");
+  assert.equal(expired.statusMessage, "Which hosting mode should be used?");
+  assert.equal(expired.ownerAgentId, undefined);
+  assert.equal(expired.leaseExpiresAt, undefined);
+  await assert.rejects(
+    store.claim({ ...carol, taskId: task.taskId }),
+    /requires input before it can be claimed/,
+  );
+  await assert.rejects(
+    store.provideInput({ ...carol, taskId: task.taskId, statusMessage: "Use a tunnel" }),
+    /creator or current owner/,
+  );
+
+  const resumedOpen = await store.provideInput({
+    ...alice,
+    taskId: task.taskId,
+    statusMessage: "Use the quick tunnel",
+  });
+  assert.equal(resumedOpen.status, "open");
+  assert.equal(resumedOpen.statusMessage, "Use the quick tunnel");
+  assert.equal(resumedOpen.ownerAgentId, undefined);
+
+  const reclaimed = await store.claim({ ...carol, taskId: task.taskId, leaseSeconds: 45 });
+  assert.equal(reclaimed.status, "working");
+  assert.equal(reclaimed.ownerAgentId, carol.agentId);
+});
+
+test("active owners resume after input and release preserves blocked status", async (t) => {
+  const value = await fixture("pilink-tasks-input-owner-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const task = await store.create({ ...alice, title: "Review task semantics" });
+  await store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 60 });
+  await store.requestInput({
+    ...bob,
+    taskId: task.taskId,
+    statusMessage: "Need creator confirmation",
+    leaseSeconds: 60,
+  });
+
+  const resumedWorking = await store.provideInput({
+    ...alice,
+    taskId: task.taskId,
+    statusMessage: "Proceed with durable input state",
+    leaseSeconds: 120,
+  });
+  assert.equal(resumedWorking.status, "working");
+  assert.equal(resumedWorking.ownerAgentId, bob.agentId);
+  assert.equal(resumedWorking.leaseExpiresAt, "2026-08-01T10:02:00.000Z");
+
+  await store.requestInput({
+    ...bob,
+    taskId: task.taskId,
+    statusMessage: "Need one more decision",
+    leaseSeconds: 60,
+  });
+  const released = await store.release({ ...bob, taskId: task.taskId });
+  assert.equal(released.status, "input_required");
+  assert.equal(released.statusMessage, "Need one more decision");
+  assert.equal(released.ownerAgentId, undefined);
+  assert.equal(released.leaseExpiresAt, undefined);
+});
+
 test("supports release, failure artifacts, and authorized cancellation", async (t) => {
   const value = await fixture("pilink-tasks-transitions-");
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
