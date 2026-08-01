@@ -36,8 +36,10 @@ export interface ToolAuditEvent {
 export interface ToolAuditLogOptions {
   workspace: string;
   dataDir: string;
+  maximumBytes?: number;
 }
 
+export const TOOL_AUDIT_DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const appendQueues = new Map<string, Promise<void>>();
 
 /** Project-scoped, metadata-only audit log. Callers decide whether failures are fatal. */
@@ -45,9 +47,11 @@ export class ToolAuditLog {
   public readonly workspace: string;
   public readonly projectKey: string;
   public readonly logPath: string;
+  public readonly rotatedLogPath: string;
 
   private readonly dataDir: string;
   private readonly projectDir: string;
+  private readonly maximumBytes: number;
 
   public constructor(options: ToolAuditLogOptions) {
     this.workspace = fs.realpathSync(options.workspace);
@@ -56,9 +60,11 @@ export class ToolAuditLog {
       throw new Error("Tool audit data must not be stored under the workspace");
     }
 
+    this.maximumBytes = validatePositiveInteger(options.maximumBytes ?? TOOL_AUDIT_DEFAULT_MAX_BYTES, "maximumBytes");
     this.projectKey = createHash("sha256").update(this.workspace).digest("hex");
     this.projectDir = path.join(this.dataDir, "projects", this.projectKey);
     this.logPath = path.join(this.projectDir, "tool-audit.jsonl");
+    this.rotatedLogPath = path.join(this.projectDir, "tool-audit.1.jsonl");
   }
 
   public record(input: ToolAuditEventInput): Promise<void> {
@@ -71,10 +77,18 @@ export class ToolAuditLog {
 
   private async append(event: ToolAuditEvent): Promise<void> {
     await this.ensureDirectories();
+    const serialized = `${JSON.stringify(event)}\n`;
+    const existingBytes = await fileSize(this.logPath);
+    if (existingBytes > 0 && existingBytes + Buffer.byteLength(serialized, "utf8") > this.maximumBytes) {
+      await fs.promises.rm(this.rotatedLogPath, { force: true });
+      await fs.promises.rename(this.logPath, this.rotatedLogPath);
+      await fs.promises.chmod(this.rotatedLogPath, 0o600);
+    }
+
     const file = await fs.promises.open(this.logPath, "a", 0o600);
     try {
       await file.chmod(0o600);
-      await file.writeFile(`${JSON.stringify(event)}\n`, "utf8");
+      await file.writeFile(serialized, "utf8");
       await file.sync();
     } finally {
       await file.close();
@@ -149,6 +163,13 @@ function validateNonNegativeInteger(value: unknown, field: string): number {
   return value as number;
 }
 
+function validatePositiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error(`${field} must be a positive safe integer`);
+  }
+  return value as number;
+}
+
 function validateOutcome(value: unknown): ToolAuditOutcome {
   if (value !== "success" && value !== "error") throw new Error("outcome must be success or error");
   return value;
@@ -170,6 +191,15 @@ function validateExitCode(value: unknown): number | null {
 function validateBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${field} must be a boolean`);
   return value;
+}
+
+async function fileSize(filePath: string): Promise<number> {
+  try {
+    return (await fs.promises.stat(filePath)).size;
+  } catch (error) {
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
 }
 
 function isWithin(parent: string, candidate: string): boolean {

@@ -49,6 +49,33 @@ test("writes private project-scoped metadata-only JSONL events", async () => {
   }
 });
 
+test("rotates the active log before it exceeds the configured size", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const audit = new ToolAuditLog({ workspace, dataDir, maximumBytes: 420 });
+    for (let index = 0; index < 6; index += 1) {
+      await audit.record({
+        callId: `rotation-${index}`,
+        tool: "read",
+        startedAt: new Date(1_700_000_000_000 + index).toISOString(),
+        durationMs: index,
+        outcome: "success",
+        accessMode: "workspace",
+      });
+    }
+
+    const active = (await fs.readFile(audit.logPath, "utf8")).trim().split("\n").map(JSON.parse);
+    const rotated = (await fs.readFile(audit.rotatedLogPath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.ok(active.length > 0);
+    assert.ok(rotated.length > 0);
+    assert.equal(active.at(-1).callId, "rotation-5");
+    assert.ok((await fs.stat(audit.logPath)).size <= 420);
+    assert.ok((await fs.stat(audit.rotatedLogPath)).size <= 420);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("serializes concurrent events across audit instances", async () => {
   const { root, workspace, dataDir } = await fixture();
   try {
@@ -79,6 +106,7 @@ test("rejects unsafe storage and malformed event metadata", async () => {
   const { root, workspace, dataDir } = await fixture();
   try {
     assert.throws(() => new ToolAuditLog({ workspace, dataDir: path.join(workspace, ".pilink") }), /must not be stored/);
+    assert.throws(() => new ToolAuditLog({ workspace, dataDir, maximumBytes: 0 }), /positive safe integer/);
     const audit = new ToolAuditLog({ workspace, dataDir });
     for (const event of [
       { callId: "", tool: "read", startedAt: new Date().toISOString(), durationMs: 1, outcome: "success", accessMode: "workspace" },
