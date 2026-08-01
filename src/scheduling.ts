@@ -570,8 +570,8 @@ function normalizeTasks(value: readonly SchedulingTask[] | unknown): NormalizedT
     if (candidate.readySince !== undefined) {
       task.readySince = validateTimestamp(candidate.readySince, `tasks[${index}].readySince`);
     }
-    if (candidate.title !== undefined) task.title = validateUntrustedDisplayText(candidate.title, `tasks[${index}].title`, 256);
-    if (candidate.details !== undefined) task.details = validateUntrustedDisplayText(candidate.details, `tasks[${index}].details`, 8192);
+    if (candidate.title !== undefined) task.title = validateUntrustedTitle(candidate.title, `tasks[${index}].title`, 256);
+    if (candidate.details !== undefined) task.details = validateUntrustedDetails(candidate.details, `tasks[${index}].details`, 8192);
     if (candidate.ownerAgentId !== undefined) {
       task.ownerAgentId = validateIdentifier(candidate.ownerAgentId, `tasks[${index}].ownerAgentId`);
     }
@@ -1272,9 +1272,17 @@ function validateIdentifier(value: unknown, field: string): string {
   return text;
 }
 
-function validateUntrustedDisplayText(value: unknown, field: string, maximumBytes: number): string {
+function validateUntrustedTitle(value: unknown, field: string, maximumBytes: number): string {
   const text = validateText(value, field, maximumBytes);
   if (/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(text)) {
+    throw new Error(`${field} contains unsupported control or bidirectional formatting characters`);
+  }
+  return text;
+}
+
+function validateUntrustedDetails(value: unknown, field: string, maximumBytes: number): string {
+  const text = validateText(value, field, maximumBytes);
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(text)) {
     throw new Error(`${field} contains unsupported control or bidirectional formatting characters`);
   }
   return text;

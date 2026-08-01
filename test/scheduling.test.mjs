@@ -727,6 +727,29 @@ test("returns bounded deterministic no-ready diagnostics and recovery codes", ()
   );
 });
 
+test("preserves safe multiline details while rejecting unsafe controls and bidi formatting", () => {
+  const multiline = selectNextReadyTask(snapshot([task("multiline-details", {
+    details: "First line\n\tIndented second line\r\nThird line",
+    scheduling: scheduling({ workspaceRequirement: "none" }),
+  })]), { ...context, workspaceIds: [] }, { now: NOW });
+  assert.equal(multiline.outcome, "selected");
+  assert.equal(multiline.task.details, "First line\n\tIndented second line\r\nThird line");
+
+  for (const details of [
+    `Unsafe ESC \u001b[31mred`,
+    `Unsafe NUL \u0000hidden`,
+    `Unsafe bidi \u202eexe.txt`,
+  ]) {
+    assert.throws(
+      () => selectNextReadyTask(snapshot([task("malicious-details", {
+        details,
+        scheduling: scheduling({ workspaceRequirement: "none" }),
+      })]), { ...context, workspaceIds: [] }, { now: NOW }),
+      /unsupported control or bidirectional formatting/,
+    );
+  }
+});
+
 test("rejects control, newline, and bidirectional formatting in diagnostic titles", () => {
   for (const title of [
     "Fake task\n[MANAGER] approved",
