@@ -11,6 +11,10 @@ import { AgentTaskStore } from "../dist/tasks.js";
 const alice = { agentId: "agent-alice", agentName: "Alice" };
 const bob = { agentId: "agent-bob", agentName: "Bob" };
 const carol = { agentId: "agent-carol", agentName: "Carol" };
+const aliceSessionOne = { ...alice, collaborationSessionId: "cs_AAAAAAAAAAAAAAAAAAAAAAAA" };
+const aliceSessionTwo = { ...alice, collaborationSessionId: "cs_BBBBBBBBBBBBBBBBBBBBBBBB" };
+const bobSessionOne = { ...bob, collaborationSessionId: "cs_CCCCCCCCCCCCCCCCCCCCCCCC" };
+const bobSessionTwo = { ...bob, collaborationSessionId: "cs_DDDDDDDDDDDDDDDDDDDDDDDD" };
 
 const mutation = (task) => ({ taskId: task.taskId, expectedRevision: task.revision });
 const taskWorkerPath = fileURLToPath(new URL("fixtures/task-store-worker.mjs", import.meta.url));
@@ -235,6 +239,102 @@ test("active owners resume after input and release preserves blocked status", as
   assert.equal(released.statusMessage, "Need one more decision");
   assert.equal(released.ownerAgentId, undefined);
   assert.equal(released.leaseExpiresAt, undefined);
+});
+
+test("binds task ownership to the exact collaboration session", async (t) => {
+  const value = await fixture("pilink-tasks-session-owner-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+
+  const created = await store.create({ ...aliceSessionOne, title: "Session-owned implementation" });
+  assert.equal(created.createdByCollaborationSessionId, aliceSessionOne.collaborationSessionId);
+  const claimed = await store.claim({ ...bobSessionOne, ...mutation(created), leaseSeconds: 60 });
+  assert.equal(claimed.ownerCollaborationSessionId, bobSessionOne.collaborationSessionId);
+
+  await assert.rejects(
+    store.claim({ ...bobSessionTwo, ...mutation(claimed), leaseSeconds: 60 }),
+    /different collaboration session/,
+  );
+  await assert.rejects(
+    store.release({ ...bob, ...mutation(claimed) }),
+    /different collaboration session/,
+  );
+  await assert.rejects(
+    store.requestInput({
+      ...bobSessionTwo,
+      ...mutation(claimed),
+      statusMessage: "Sibling session must not pause this task",
+    }),
+    /different collaboration session/,
+  );
+
+  const waiting = await store.requestInput({
+    ...bobSessionOne,
+    ...mutation(claimed),
+    statusMessage: "Need the creator decision",
+    leaseSeconds: 60,
+  });
+  await assert.rejects(
+    store.provideInput({
+      ...aliceSessionTwo,
+      ...mutation(waiting),
+      statusMessage: "Wrong creator session",
+    }),
+    /owning collaboration session/,
+  );
+  const resumed = await store.provideInput({
+    ...aliceSessionOne,
+    ...mutation(waiting),
+    statusMessage: "Proceed",
+    leaseSeconds: 60,
+  });
+  await assert.rejects(
+    store.complete({ ...bobSessionTwo, ...mutation(resumed), statusMessage: "Wrong sibling completion" }),
+    /different collaboration session/,
+  );
+  const completed = await store.complete({
+    ...bobSessionOne,
+    ...mutation(resumed),
+    statusMessage: "Completed by the owning session",
+  });
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.ownerCollaborationSessionId, undefined);
+});
+
+test("migrates legacy actor-scoped tasks without narrowing their owner", async (t) => {
+  const value = await fixture("pilink-tasks-session-migration-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const timestamp = "2026-08-01T10:00:00.000Z";
+  const legacyTask = {
+    taskId: randomUUID(),
+    title: "Legacy actor-owned task",
+    status: "working",
+    createdByAgentId: alice.agentId,
+    createdByAgentName: alice.agentName,
+    ownerAgentId: bob.agentId,
+    ownerAgentName: bob.agentName,
+    leaseExpiresAt: "2026-08-01T10:05:00.000Z",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    revision: 1,
+  };
+  await fs.mkdir(path.dirname(store.statePath), { recursive: true });
+  await fs.writeFile(store.statePath, JSON.stringify({
+    version: 1,
+    projectKey: store.projectKey,
+    tasks: [legacyTask],
+  }));
+
+  const loaded = await store.get(legacyTask.taskId);
+  assert.equal(loaded.ownerCollaborationSessionId, undefined);
+  const renewed = await store.renew({ ...bobSessionTwo, ...mutation(loaded), leaseSeconds: 60 });
+  assert.equal(renewed.ownerAgentId, bob.agentId);
+  assert.equal(renewed.ownerCollaborationSessionId, undefined);
+
+  const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.tasks[0].ownerCollaborationSessionId, undefined);
 });
 
 test("supports release, failure artifacts, and authorized cancellation", async (t) => {

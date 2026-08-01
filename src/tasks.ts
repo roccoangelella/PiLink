@@ -28,6 +28,7 @@ export type AgentTaskStatus = typeof AGENT_TASK_STATUSES[number];
 export interface AgentTaskIdentity {
   agentId: string;
   agentName: string;
+  collaborationSessionId?: string;
 }
 
 export interface AgentTask {
@@ -39,8 +40,10 @@ export interface AgentTask {
   artifact?: string;
   createdByAgentId: string;
   createdByAgentName: string;
+  createdByCollaborationSessionId?: string;
   ownerAgentId?: string;
   ownerAgentName?: string;
+  ownerCollaborationSessionId?: string;
   leaseExpiresAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -85,7 +88,7 @@ export interface AgentTaskListOptions {
 }
 
 interface StoredAgentTaskState {
-  version: 1;
+  version: 2;
   projectKey: string;
   tasks: AgentTask[];
 }
@@ -144,6 +147,7 @@ export class AgentTaskStore {
         status: "open",
         createdByAgentId: identity.agentId,
         createdByAgentName: identity.agentName,
+        createdByCollaborationSessionId: identity.collaborationSessionId,
         createdAt: now,
         updatedAt: now,
         revision: 1,
@@ -197,9 +201,7 @@ export class AgentTaskStore {
       if (task.status === "input_required") {
         throw new Error("Task requires input before it can be claimed");
       }
-      if (task.status !== "open" && task.ownerAgentId !== identity.agentId) {
-        throw new Error(`Task is already claimed by ${task.ownerAgentName}`);
-      }
+      if (task.status !== "open") requireTaskOwner(task, identity);
       requireExpectedRevision(task, expectedRevision);
 
       const now = this.nowIso();
@@ -209,6 +211,7 @@ export class AgentTaskStore {
         statusMessage: task.status === "open" ? undefined : task.statusMessage,
         ownerAgentId: identity.agentId,
         ownerAgentName: identity.agentName,
+        ownerCollaborationSessionId: identity.collaborationSessionId,
         leaseExpiresAt: this.leaseExpiryIso(leaseSeconds),
         updatedAt: now,
         revision: task.revision + 1,
@@ -227,7 +230,7 @@ export class AgentTaskStore {
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
-      const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      const task = requireOwnedLeasedTask(state, taskId, identity);
       requireExpectedRevision(task, expectedRevision);
       const updated: AgentTask = {
         ...task,
@@ -250,7 +253,7 @@ export class AgentTaskStore {
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
-      const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      const task = requireOwnedLeasedTask(state, taskId, identity);
       requireExpectedRevision(task, expectedRevision);
       const updated: AgentTask = {
         ...task,
@@ -274,7 +277,7 @@ export class AgentTaskStore {
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
-      const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      const task = requireOwnedLeasedTask(state, taskId, identity);
       requireExpectedRevision(task, expectedRevision);
       const remainsBlocked = task.status === "input_required";
       const updated: AgentTask = {
@@ -283,6 +286,7 @@ export class AgentTaskStore {
         statusMessage: statusMessage ?? (remainsBlocked ? task.statusMessage : undefined),
         ownerAgentId: undefined,
         ownerAgentName: undefined,
+        ownerCollaborationSessionId: undefined,
         leaseExpiresAt: undefined,
         updatedAt: this.nowIso(),
         revision: task.revision + 1,
@@ -304,8 +308,8 @@ export class AgentTaskStore {
       const state = await this.loadFreshState();
       const task = requireTask(state, taskId);
       if (task.status !== "input_required") throw new Error("Task is not waiting for input");
-      const authorized = task.createdByAgentId === identity.agentId || task.ownerAgentId === identity.agentId;
-      if (!authorized) throw new Error("Only the task creator or current owner may provide input");
+      const authorized = isTaskCreator(task, identity) || isTaskOwner(task, identity);
+      if (!authorized) throw new Error("Only the task creator or current owner may provide input from the owning collaboration session");
       requireExpectedRevision(task, expectedRevision);
 
       const hasActiveOwner = task.ownerAgentId !== undefined;
@@ -341,8 +345,8 @@ export class AgentTaskStore {
       const state = await this.loadFreshState();
       const task = requireTask(state, taskId);
       if (terminalStatuses.has(task.status)) throw new Error(`Task is already ${task.status}`);
-      const authorized = task.createdByAgentId === identity.agentId || task.ownerAgentId === identity.agentId;
-      if (!authorized) throw new Error("Only the task creator or current owner may cancel it");
+      const authorized = isTaskCreator(task, identity) || isTaskOwner(task, identity);
+      if (!authorized) throw new Error("Only the task creator or current owner may cancel it from the owning collaboration session");
       requireExpectedRevision(task, expectedRevision);
 
       const updated = terminalTask(task, "cancelled", this.nowIso(), statusMessage);
@@ -361,7 +365,7 @@ export class AgentTaskStore {
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
-      const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      const task = requireOwnedLeasedTask(state, taskId, identity);
       requireExpectedRevision(task, expectedRevision);
       const updated = terminalTask(task, status, this.nowIso(), statusMessage, artifact);
       const next = replaceTask(state, updated);
@@ -390,6 +394,7 @@ export class AgentTaskStore {
         statusMessage: remainsBlocked ? task.statusMessage : "Lease expired; task returned to open",
         ownerAgentId: undefined,
         ownerAgentName: undefined,
+        ownerCollaborationSessionId: undefined,
         leaseExpiresAt: undefined,
         updatedAt: nowValue.toISOString(),
         revision: task.revision + 1,
@@ -402,7 +407,7 @@ export class AgentTaskStore {
   }
 
   private withTasks(tasks: AgentTask[]): StoredAgentTaskState {
-    return { version: 1, projectKey: this.projectKey, tasks };
+    return { version: 2, projectKey: this.projectKey, tasks };
   }
 
   private async enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
@@ -493,7 +498,9 @@ export class AgentTaskStore {
     } catch {
       throw new Error("Malformed agent task state: invalid JSON");
     }
-    return validateState(parsed, this.projectKey);
+    const state = validateState(parsed, this.projectKey);
+    if (isRecord(parsed) && parsed.version === 1) await this.persistState(state);
+    return state;
   }
 
   private async persistAndCache(state: StoredAgentTaskState): Promise<void> {
@@ -571,6 +578,7 @@ function terminalTask(
     artifact,
     ownerAgentId: undefined,
     ownerAgentName: undefined,
+    ownerCollaborationSessionId: undefined,
     leaseExpiresAt: undefined,
     updatedAt: now,
     revision: task.revision + 1,
@@ -597,22 +605,47 @@ function requireTask(state: StoredAgentTaskState, taskId: string): AgentTask {
   return task;
 }
 
-function requireOwnedLeasedTask(state: StoredAgentTaskState, taskId: string, agentId: string): AgentTask {
+function requireOwnedLeasedTask(
+  state: StoredAgentTaskState,
+  taskId: string,
+  identity: AgentTaskIdentity,
+): AgentTask {
   const task = requireTask(state, taskId);
   if (!leasedStatuses.has(task.status) || !task.ownerAgentId) throw new Error(`Task is not currently claimed`);
-  if (task.ownerAgentId !== agentId) throw new Error(`Task is claimed by ${task.ownerAgentName}`);
+  requireTaskOwner(task, identity);
   return task;
 }
 
+function requireTaskOwner(task: AgentTask, identity: AgentTaskIdentity): void {
+  if (task.ownerAgentId !== identity.agentId) throw new Error(`Task is already claimed by ${task.ownerAgentName}`);
+  if (task.ownerCollaborationSessionId !== undefined &&
+      task.ownerCollaborationSessionId !== identity.collaborationSessionId) {
+    throw new Error(`Task is claimed by a different collaboration session for ${task.ownerAgentName}`);
+  }
+}
+
+function isTaskCreator(task: AgentTask, identity: AgentTaskIdentity): boolean {
+  return task.createdByAgentId === identity.agentId &&
+    (task.createdByCollaborationSessionId === undefined ||
+      task.createdByCollaborationSessionId === identity.collaborationSessionId);
+}
+
+function isTaskOwner(task: AgentTask, identity: AgentTaskIdentity): boolean {
+  return task.ownerAgentId === identity.agentId &&
+    (task.ownerCollaborationSessionId === undefined ||
+      task.ownerCollaborationSessionId === identity.collaborationSessionId);
+}
+
 function validateState(value: unknown, expectedProjectKey: string): StoredAgentTaskState {
-  if (!isRecord(value) || value.version !== 1 || value.projectKey !== expectedProjectKey || !Array.isArray(value.tasks)) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) ||
+      value.projectKey !== expectedProjectKey || !Array.isArray(value.tasks)) {
     throw new Error("Malformed or mismatched agent task state");
   }
   if (value.tasks.length > AGENT_TASK_LIMIT) throw new Error("Malformed agent task state: task limit exceeded");
 
   const taskIds = new Set<string>();
   const tasks = value.tasks.map((candidate) => validateStoredTask(candidate, taskIds));
-  return { version: 1, projectKey: expectedProjectKey, tasks };
+  return { version: 2, projectKey: expectedProjectKey, tasks };
 }
 
 function validateStoredTask(value: unknown, taskIds: Set<string>): AgentTask {
@@ -631,8 +664,10 @@ function validateStoredTask(value: unknown, taskIds: Set<string>): AgentTask {
     artifact: validateOptionalText(value.artifact, "artifact", AGENT_TASK_ARTIFACT_MAX_BYTES),
     createdByAgentId: validateAgentId(value.createdByAgentId),
     createdByAgentName: validateRequiredText(value.createdByAgentName, "createdByAgentName", 100),
+    createdByCollaborationSessionId: validateOptionalCollaborationSessionId(value.createdByCollaborationSessionId),
     ownerAgentId: value.ownerAgentId === undefined ? undefined : validateAgentId(value.ownerAgentId),
     ownerAgentName: validateOptionalText(value.ownerAgentName, "ownerAgentName", 100),
+    ownerCollaborationSessionId: validateOptionalCollaborationSessionId(value.ownerCollaborationSessionId),
     leaseExpiresAt: validateOptionalDate(value.leaseExpiresAt, "leaseExpiresAt"),
     createdAt: validateDate(value.createdAt, "createdAt"),
     updatedAt: validateDate(value.updatedAt, "updatedAt"),
@@ -640,7 +675,12 @@ function validateStoredTask(value: unknown, taskIds: Set<string>): AgentTask {
   };
 
   const hasCompleteLease = Boolean(task.ownerAgentId && task.ownerAgentName && task.leaseExpiresAt);
-  const hasAnyLease = Boolean(task.ownerAgentId || task.ownerAgentName || task.leaseExpiresAt);
+  const hasAnyLease = Boolean(
+    task.ownerAgentId || task.ownerAgentName || task.ownerCollaborationSessionId || task.leaseExpiresAt,
+  );
+  if (task.ownerCollaborationSessionId !== undefined && task.ownerAgentId === undefined) {
+    throw new Error("Malformed agent task state: owner session lacks owner actor");
+  }
   if (status === "working" && !hasCompleteLease) {
     throw new Error("Malformed agent task state: claimed task lacks owner or lease");
   }
@@ -660,6 +700,7 @@ function validateIdentity(value: AgentTaskIdentity): AgentTaskIdentity {
   return {
     agentId: validateAgentId(value.agentId),
     agentName: validateRequiredText(value.agentName, "agentName", 100),
+    collaborationSessionId: validateOptionalCollaborationSessionId(value.collaborationSessionId),
   };
 }
 
@@ -667,6 +708,14 @@ function validateAgentId(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error("agentId must be non-empty");
   if (Buffer.byteLength(value.trim(), "utf8") > 256) throw new Error("agentId exceeds 256 UTF-8 bytes");
   return value.trim();
+}
+
+function validateOptionalCollaborationSessionId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^cs_[A-Za-z0-9_-]{24}$/.test(value)) {
+    throw new Error("collaborationSessionId must be a valid collaboration session ID");
+  }
+  return value;
 }
 
 function validateTaskId(value: unknown): string {
@@ -740,7 +789,7 @@ function requireExpectedRevision(task: AgentTask, expectedRevision: number): voi
 }
 
 function emptyState(projectKey: string): StoredAgentTaskState {
-  return { version: 1, projectKey, tasks: [] };
+  return { version: 2, projectKey, tasks: [] };
 }
 
 function copyTask(task: AgentTask): AgentTask {
