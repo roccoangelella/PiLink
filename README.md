@@ -58,6 +58,19 @@ Browser-origin MCP requests are accepted only from `SERVER_URL`'s own origin or 
 
 OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 2,592,000, or 30 days), and preserve their scopes for the lifetime of an MCP session. Tokens can be revoked at `POST /oauth/revoke` using the issuing client's credentials, the token itself as a Bearer credential, or the administrator bootstrap credential; revocations persist under `PI_DATA_DIR` until the token would naturally expire. `mcp:read` permits only read/search tools, `mcp:write` permits mutation and constrained execution (plus bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
 
+### OAuth client lifecycle
+
+OAuth client administration is local-only; PiLink does not expose a public client-management endpoint. Use the private configuration on the host machine:
+
+```bash
+pilink clients list
+pilink clients disable pi_example
+pilink clients enable pi_example
+pilink clients rotate-secret pi_example
+```
+
+`list` never displays stored secret hashes. Disabling a client immediately invalidates all of its access tokens and active MCP sessions. Re-enabling does not revive those old tokens. Secret rotation prints the replacement secret once and also invalidates every existing token and session for that client. Client-store mutations are serialized with a private lock and committed by atomic rename, so concurrent local administration cannot silently overwrite another lifecycle change. Registration, disable, enable, and rotation append metadata-only events—never secrets or hashes—to the private `PI_DATA_DIR/oauth-client-audit.jsonl` log.
+
 ## Tool audit log
 
 Every MCP tool call is recorded in a private, project-scoped JSONL audit log under `PI_DATA_DIR/projects/<workspace-hash>/tool-audit.jsonl`. Events contain only operational metadata: a generated call ID, OAuth agent ID, transport session ID when available, tool name, start time, duration, workspace/full-access mode, success/error outcome, and bounded execution outcome fields such as exit code, timeout, cancellation, or truncation. Tool arguments, file paths, command text, chat messages, tool results, file contents, and error text are deliberately excluded.

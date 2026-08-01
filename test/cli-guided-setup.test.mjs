@@ -313,6 +313,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   await fs.mkdir(path.join(root, "bin"));
   await fs.mkdir(dataPath);
   await fs.writeFile(path.join(dataPath, "clients.json"), "{}");
+  await fs.writeFile(path.join(dataPath, "clients.json.lock"), "stale lock");
+  await fs.writeFile(path.join(dataPath, "revoked-tokens.json"), "{}");
+  await fs.writeFile(path.join(dataPath, "oauth-client-audit.jsonl"), "{}\n");
   await fs.writeFile(path.join(dataPath, "keep.txt"), "unrelated data");
   await fs.writeFile(path.join(root, "bin", "cloudflared"), "managed binary");
   await fs.writeFile(path.join(root, "bin", "caddy"), "managed binary");
@@ -327,6 +330,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   assert.match(result.output, /PiLink state was reset/);
   await assert.rejects(fs.stat(configPath));
   await assert.rejects(fs.stat(path.join(dataPath, "clients.json")));
+  await assert.rejects(fs.stat(path.join(dataPath, "clients.json.lock")));
+  await assert.rejects(fs.stat(path.join(dataPath, "revoked-tokens.json")));
+  await assert.rejects(fs.stat(path.join(dataPath, "oauth-client-audit.jsonl")));
   await assert.rejects(fs.stat(path.join(root, "bin", "cloudflared")));
   await assert.rejects(fs.stat(path.join(root, "bin", "caddy")));
   await assert.rejects(fs.stat(path.join(root, "Caddyfile")));

@@ -156,6 +156,21 @@ Configure the OAuth settings as follows, replacing the example host:
 
 Save the connection, then use ChatGPT's **Connect/Authorize** action. PiLink shows a local consent page in the browser; approve only after checking that the client name and requested scope are correct.
 
+### Manage or replace OAuth client credentials
+
+Client administration is intentionally available only from the PiLink host, using the private configuration and client store:
+
+```bash
+pilink clients list
+pilink clients disable pi_example
+pilink clients enable pi_example
+pilink clients rotate-secret pi_example
+```
+
+Use `disable` immediately when a client secret, access token, or connected agent may be compromised. PiLink invalidates every token previously issued to that client and closes its active MCP sessions. `enable` allows the client to authenticate again with its current secret, but never revives pre-disable tokens. `rotate-secret` prints a new secret once; update the ChatGPT connection with it before reconnecting. Rotation also invalidates all earlier tokens and sessions. The list command shows client ID, status, token version, name, scope, and creation time, but never the secret or its stored hash.
+
+These commands update `clients.json` under `PI_DATA_DIR` through a private cross-process lock and atomic file replacement. They can be run while PiLink is serving; the server detects disabled or rotated clients and removes their existing transports. PiLink also appends metadata-only registration, disable, enable, and rotation events to `PI_DATA_DIR/oauth-client-audit.jsonl`; the audit log never contains client secrets or password hashes.
+
 ### Important compatibility note
 
 This server requires a registration access token (`PI_BOOTSTRAP_SECRET`) for web-based dynamic client registration. The guided local setup uses the same private client store directly, so it never exposes that bootstrap secret. If the ChatGPT UI does not let you supply a user-defined client ID, client secret, and redirect URL, it cannot connect to this protected configuration as-is. Use a ChatGPT connection flow that supports custom OAuth credentials rather than weakening the registration protection.
@@ -199,6 +214,7 @@ One OAuth client ID is one durable agent identity, not one ChatGPT conversation.
 - Press `Ctrl+C` in the launch terminal to stop the server and its public hosting process.
 - Restarting a Quick Tunnel creates a new URL and requires a new ChatGPT connector. Run `pilink start --setup`, configure the new connector with user-defined OAuth, then paste its callback URL into PiLink to register the matching OAuth client.
 - Restarting direct `nip.io` hosting keeps the connector and OAuth client valid while the configured public IPv4 address remains unchanged.
+- If a client credential may be exposed, run `pilink clients disable <client-id>` first. Rotate it with `pilink clients rotate-secret <client-id>`, update the client configuration, then run `pilink clients enable <client-id>` when ready to reconnect.
 - When an existing configuration is found, starting with `--setup` first asks whether to create a new separate instance (with a new config directory and port) or completely overwrite/reset the existing instance. To skip the prompt and force a complete reset: `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access --setup --yes`. It does not delete your repository or workspace.
 - To erase only PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state, then immediately run a fresh guided setup: `node /path/to/PiLink/dist/cli.js reset --yes --start --allow-unsafe-full-access`. It does not delete your repository or workspace.
 - If a preferred hosting binary is not on `PATH`, start with `PI_CLOUDFLARED_PATH=/path/to/cloudflared` or `PI_CADDY_PATH=/path/to/caddy` before the command.

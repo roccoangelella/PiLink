@@ -10,7 +10,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createMcpServer, type McpServerHandle } from "./mcp.js";
 import { createOAuthRouter } from "./oauth.js";
-import { authenticateBearer, findClient } from "./auth.js";
+import {
+  authenticateBearer,
+  effectiveClientTokenVersion,
+  findActiveClient,
+  isClientActive,
+  loadClients,
+} from "./auth.js";
 import { createHarnessPolicy } from "./harness.js";
 import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
 import { createCorsAndOriginProtection, createRateLimiter } from "./security.js";
@@ -80,6 +86,7 @@ interface ManagedTransport {
   transport: StreamableHTTPServerTransport | SSEServerTransport;
   handle: McpServerHandle;
   clientId: string;
+  clientVersion: number;
   scope: string;
   dispose: () => void;
 }
@@ -119,23 +126,32 @@ function getAgentTaskStore(): AgentTaskStore {
   return agentTaskStore;
 }
 
-function tokenFor(req: express.Request): { sub: string; scope: string } {
-  return (req as express.Request & { tokenPayload: { sub: string; scope: string } }).tokenPayload;
+function tokenFor(req: express.Request): { sub: string; scope: string; client_version?: number } {
+  return (req as express.Request & {
+    tokenPayload: { sub: string; scope: string; client_version?: number };
+  }).tokenPayload;
 }
 
 function resolveNewSessionClient(req: express.Request, res: express.Response): {
   clientId: string;
+  clientVersion: number;
   scope: string;
   identity: Readonly<{ agentId: string; agentName: string }>;
 } | null {
   const token = tokenFor(req);
-  const client = findClient(token.sub);
+  const client = findActiveClient(token.sub);
   if (!client) {
-    res.status(403).json({ error: "forbidden", error_description: "Authenticated OAuth client no longer exists" });
+    res.status(403).json({ error: "forbidden", error_description: "Authenticated OAuth client is disabled or missing" });
+    return null;
+  }
+  const clientVersion = effectiveClientTokenVersion(client);
+  if ((token.client_version ?? 1) !== clientVersion) {
+    res.status(403).json({ error: "forbidden", error_description: "OAuth client credentials changed" });
     return null;
   }
   return {
     clientId: client.client_id,
+    clientVersion,
     scope: token.scope,
     identity: Object.freeze({ agentId: client.client_id, agentName: client.client_name }),
   };
@@ -149,8 +165,11 @@ function effectiveCapabilities(scope: string): Set<"read" | "write"> {
   return capabilities;
 }
 
-function canReuseSession(managed: ManagedTransport, token: { sub: string; scope: string }): boolean {
-  if (managed.clientId !== token.sub) return false;
+function canReuseSession(
+  managed: ManagedTransport,
+  token: { sub: string; scope: string; client_version?: number }
+): boolean {
+  if (managed.clientId !== token.sub || managed.clientVersion !== (token.client_version ?? 1)) return false;
   const granted = effectiveCapabilities(token.scope);
   return [...effectiveCapabilities(managed.scope)].every((capability) => granted.has(capability));
 }
@@ -174,6 +193,45 @@ function disposeTransport(sessionId: string, expected?: ManagedTransport["transp
   delete transports[sessionId];
   managed.dispose();
 }
+
+async function closeTransportForClientLifecycle(sessionId: string, managed: ManagedTransport): Promise<void> {
+  try {
+    await managed.transport.close?.();
+  } catch (error) {
+    console.error(`[OAuth] Unable to close invalidated MCP session ${sessionId}:`, error);
+  } finally {
+    disposeTransport(sessionId, managed.transport);
+  }
+}
+
+async function sweepInvalidatedClientSessions(): Promise<void> {
+  let activeVersions = new Map<string, number>();
+  try {
+    activeVersions = new Map(
+      loadClients()
+        .filter(isClientActive)
+        .map((client) => [client.client_id, effectiveClientTokenVersion(client)]),
+    );
+  } catch (error) {
+    console.error("[OAuth] Client lifecycle state is unreadable; closing all MCP sessions:", error);
+  }
+
+  await Promise.all(Object.entries(transports).map(async ([sessionId, managed]) => {
+    if (activeVersions.get(managed.clientId) === managed.clientVersion) return;
+    console.error(`[OAuth] Closing MCP session ${sessionId} because client ${managed.clientId} was disabled or rotated.`);
+    await closeTransportForClientLifecycle(sessionId, managed);
+  }));
+}
+
+let clientLifecycleSweepRunning = false;
+const clientLifecycleSweep = setInterval(() => {
+  if (clientLifecycleSweepRunning) return;
+  clientLifecycleSweepRunning = true;
+  void sweepInvalidatedClientSessions().finally(() => {
+    clientLifecycleSweepRunning = false;
+  });
+}, 1_000);
+clientLifecycleSweep.unref();
 
 function ensureAcceptHeader(req: express.Request): void {
   const currentAccept = req.headers["accept"] || "";
@@ -247,6 +305,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       transport,
       handle,
       clientId: sessionClient.clientId,
+      clientVersion: sessionClient.clientVersion,
       scope: sessionClient.scope,
       dispose,
     };
@@ -325,6 +384,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     transport,
     handle,
     clientId: sessionClient.clientId,
+    clientVersion: sessionClient.clientVersion,
     scope: sessionClient.scope,
     dispose,
   };
@@ -439,6 +499,7 @@ server.once("error", (error: NodeJS.ErrnoException) => {
 // ── Graceful shutdown ────────────────────────────────────────
 process.on("SIGINT", async () => {
   console.error("Shutting down...");
+  clearInterval(clientLifecycleSweep);
   for (const sessionId in transports) {
     const managed = transports[sessionId];
     try {

@@ -6,11 +6,15 @@ export interface OAuthClient {
   grant_types: string[];
   scope: string;
   created_at: string;
+  disabled_at?: string;
+  secret_rotated_at?: string;
+  token_version?: number;
 }
 
 export interface AuthorizationCode {
   code: string;
   client_id: string;
+  client_version: number;
   redirect_uri: string;
   scope: string;
   code_challenge: string;
@@ -24,6 +28,7 @@ export interface TokenPayload {
   iss: string;
   aud: string;
   jti: string;
+  client_version?: number;
   iat?: number;
   exp?: number;
 }
