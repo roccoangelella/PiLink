@@ -21,6 +21,10 @@ test("runtime configuration validates MCP session resource limits", async () => 
       JWT_SECRET: "j".repeat(32),
       PI_BOOTSTRAP_SECRET: bootstrapSecret,
     };
+    const defaults = loadRuntimeConfig(base);
+    assert.equal(defaults.maxMcpSessionsTotal, 64);
+    assert.equal(defaults.maxMcpSessionsPerClient, 16);
+    assert.equal(defaults.mcpSessionIdleTimeoutSeconds, 600);
     const config = loadRuntimeConfig({
       ...base,
       PI_MAX_MCP_SESSIONS_TOTAL: "12",
