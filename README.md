@@ -22,7 +22,7 @@ Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `P
 
 ## Public hosting choices
 
-The first `pilink start` asks which public hosting mode to save. `pilink start --setup` deletes all PiLink-generated state (configuration, OAuth clients, managed hosting binaries, and Caddy TLS state), then runs the complete first-time setup again. It does not delete your repository or workspace:
+The first `pilink start` asks which public hosting mode to save. When an existing configuration is found, `pilink start --setup` interactively asks whether to overwrite/reset the existing instance (which deletes PiLink-generated state, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh) or create a new separate instance with a custom config directory and port (leaving the original instance untouched). It does not delete your repository or workspace:
 
 - **Cloudflare Quick Tunnel** is the default and needs no account, router change, or additional setup. Its hostname changes every restart. ChatGPT treats each hostname as a new connector, so create a new connector and OAuth client with `pilink start --setup` after every Quick Tunnel restart.
 - **Direct `nip.io` HTTPS hosting** keeps a hostname such as `https://pilink-203-0-113-10.nip.io` while your public IPv4 address remains unchanged. PiLink downloads and runs [Caddy](https://caddyserver.com/) on Linux to provide trusted HTTPS automatically, then, with explicit confirmation, tries UPnP and NAT-PMP to create temporary router mappings for public TCP `80` and `443`. It renews them while running and removes them on shutdown. This exposes your computer to the Internet; do not enable unsafe full access unless every authorized client is fully trusted.

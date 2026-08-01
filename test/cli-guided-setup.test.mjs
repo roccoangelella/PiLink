@@ -110,6 +110,8 @@ test("start --setup resets generated state before the first-time flow", async (t
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Select setup mode [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
@@ -153,6 +155,8 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Select setup mode [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Allow PiLink to request these temporary router mappings? [Y/n]:"));
@@ -405,15 +409,67 @@ test("first start downloads cloudflared from PI_CLOUDFLARED_URL when not preinst
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
 
+  await waitFor(() => output.includes("Select setup mode [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("cloudflared is not installed; downloading"));
+  const downloadedPath = path.join(root, "bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared");
+  await waitFor(async () => {
+    try {
+      const s = await fs.stat(downloadedPath);
+      return s.size > 0;
+    } catch {
+      return false;
+    }
+  });
   cliProcess.kill("SIGTERM");
   await once(cliProcess, "exit");
 
-  const downloadedPath = path.join(root, "bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared");
   const stat = await fs.stat(downloadedPath);
   assert.ok(stat.size > 0);
+});
+
+test("start --setup option 2 creates a separate instance without deleting existing config", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-setup-sep-"));
+  const configPath = path.join(root, ".env");
+  const newConfigPath = path.join(root, "instance2", ".env");
+  const dataPath = path.join(root, "data");
+  const fakeCloudflared = path.join(root, "cloudflared");
+  const port = await availablePort();
+  const newPort = port + 10;
+  await writeConfig(configPath, path.join(root, "original-repo"), port, dataPath);
+  await fs.mkdir(dataPath);
+  await fs.writeFile(path.join(dataPath, "clients.json"), JSON.stringify({ clients: [{ client_id: "original-client" }] }));
+  await fs.writeFile(fakeCloudflared, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho https://cli-test.trycloudflare.com\nexec sleep 30\n", { mode: 0o700 });
+
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath, PI_CLOUDFLARED_PATH: fakeCloudflared, PORT: String(port) });
+  t.after(async () => {
+    cliProcess.kill("SIGINT");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  let output = "";
+  cliProcess.stdout.on("data", (chunk) => { output += chunk; });
+  cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+
+  await waitFor(() => output.includes("Select setup mode [1/2]:"));
+  cliProcess.stdin.write("2\n");
+  await waitFor(() => output.includes("Enter configuration path"));
+  cliProcess.stdin.write(`${newConfigPath}\n`);
+  await waitFor(() => output.includes("Enter server port"));
+  cliProcess.stdin.write(`${newPort}\n`);
+  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  cliProcess.stdin.write("1\n");
+  await waitFor(() => output.includes("Paste callback URL here:"));
+  cliProcess.stdin.write("https://chatgpt.example/sep-callback\n");
+  await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+
+  const originalStore = JSON.parse(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"));
+  assert.equal(originalStore.clients[0].client_id, "original-client");
+
+  const newConfigContent = await fs.readFile(newConfigPath, "utf8");
+  assert.match(newConfigContent, new RegExp(`PORT=${newPort}`));
 });
 
 async function writeConfig(configPath, workspace, port, dataPath = path.join(path.dirname(configPath), "data")) {
