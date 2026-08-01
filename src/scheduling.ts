@@ -4,6 +4,7 @@ export const SCHEDULING_DEPENDENCY_CONDITIONS = ["completed", "terminal"] as con
 export const SCHEDULING_SCOPE_MODES = ["exclusive_write", "shared_review", "read_interest"] as const;
 export const SCHEDULING_SCOPE_KINDS = ["file", "directory", "component"] as const;
 export const SCHEDULING_START_GATES = ["none", "plan_required", "approval_required"] as const;
+export const SCHEDULING_WORKSPACE_REQUIREMENTS = ["none", "authorized"] as const;
 export const SCHEDULING_REVIEW_REQUIREMENTS = [
   "none",
   "self",
@@ -35,6 +36,7 @@ export type SchedulingDependencyCondition = typeof SCHEDULING_DEPENDENCY_CONDITI
 export type SchedulingScopeMode = typeof SCHEDULING_SCOPE_MODES[number];
 export type SchedulingScopeKind = typeof SCHEDULING_SCOPE_KINDS[number];
 export type SchedulingStartGate = typeof SCHEDULING_START_GATES[number];
+export type SchedulingWorkspaceRequirement = typeof SCHEDULING_WORKSPACE_REQUIREMENTS[number];
 export type SchedulingReviewRequirement = typeof SCHEDULING_REVIEW_REQUIREMENTS[number];
 export type SchedulingTaskStatus = typeof SCHEDULING_TASK_STATUSES[number];
 export type SchedulingProjectState = "running" | "paused" | "closed";
@@ -99,8 +101,8 @@ export interface SchedulingConflictOverride {
   issuedBy: string;
   issuedAt: string;
   expiresAt?: string;
-  scopeRevision?: number;
-  conflictingScopeRevision?: number;
+  scopeRevision: number;
+  conflictingScopeRevision: number;
 }
 
 export interface NormalizedTaskScheduling {
@@ -114,6 +116,7 @@ export interface NormalizedTaskScheduling {
   startGate: SchedulingStartGate;
   startGateSatisfiedRevision?: number;
   completionReview: SchedulingReviewRequirement;
+  workspaceRequirement: SchedulingWorkspaceRequirement;
   notBefore?: string;
   paused?: SchedulingPause;
   conflictOverrides: SchedulingConflictOverride[];
@@ -185,6 +188,7 @@ export interface SchedulingReadyEvaluation {
   reasonCodes: SchedulingReasonCode[];
   blockingTaskIds: string[];
   conflictingTaskIds: string[];
+  advisoryConflictTaskIds: string[];
   requiredRoleIds: string[];
   missingCapabilities: string[];
   notBefore?: string;
@@ -219,6 +223,7 @@ export interface SchedulingSkippedCandidate {
   reasonCodes: SchedulingReasonCode[];
   blockingTaskIds?: string[];
   conflictingTaskIds?: string[];
+  advisoryConflictTaskIds?: string[];
   requiredRoleIds?: string[];
   missingCapabilities?: string[];
   notBefore?: string;
@@ -305,6 +310,7 @@ const schedulingKeys = new Set([
   "startGate",
   "startGateSatisfiedRevision",
   "completionReview",
+  "workspaceRequirement",
   "notBefore",
   "paused",
   "conflictOverrides",
@@ -346,6 +352,7 @@ export function normalizeTaskScheduling(value: unknown): NormalizedTaskSchedulin
       risk: "medium",
       startGate: "none",
       completionReview: "none",
+      workspaceRequirement: "authorized",
       conflictOverrides: [],
       scopeRevision: 1,
       legacyDefaultsApplied: true,
@@ -377,6 +384,13 @@ export function normalizeTaskScheduling(value: unknown): NormalizedTaskSchedulin
           SCHEDULING_REVIEW_REQUIREMENTS,
           "scheduling.completionReview",
         ),
+    workspaceRequirement: value.workspaceRequirement === undefined
+      ? "authorized"
+      : validateEnum(
+          value.workspaceRequirement,
+          SCHEDULING_WORKSPACE_REQUIREMENTS,
+          "scheduling.workspaceRequirement",
+        ),
     conflictOverrides: validateConflictOverrides(value.conflictOverrides),
     scopeRevision: value.scopeRevision === undefined
       ? 1
@@ -396,6 +410,10 @@ export function normalizeTaskScheduling(value: unknown): NormalizedTaskSchedulin
     normalized.notBefore = validateTimestamp(value.notBefore, "scheduling.notBefore");
   }
   if (value.paused !== undefined) normalized.paused = validatePause(value.paused);
+  if (normalized.workspaceRequirement === "none" &&
+      normalized.scopes.some((scope) => scope.mode === "exclusive_write")) {
+    throw new Error("scheduling.workspaceRequirement must be authorized for exclusive_write scopes");
+  }
   return normalized;
 }
 
@@ -578,6 +596,9 @@ function normalizeTasks(value: readonly SchedulingTask[] | unknown): NormalizedT
     if (candidate.leaseExpiresAt !== undefined) {
       task.leaseExpiresAt = validateTimestamp(candidate.leaseExpiresAt, `tasks[${index}].leaseExpiresAt`);
     }
+    if (task.scheduling.conflictOverrides.some((override) => override.conflictingTaskId === task.taskId)) {
+      throw new Error(`tasks[${index}] contains a self conflict override`);
+    }
     validateOwnershipShape(task, `tasks[${index}]`);
     return task;
   });
@@ -697,6 +718,7 @@ function evaluateNormalizedTask(
   const reasons: SchedulingReasonCode[] = [];
   const blockingTaskIds = new Set<string>();
   const conflictingTaskIds = new Set<string>();
+  const advisoryConflictTaskIds = new Set<string>();
   const missingCapabilities: string[] = [];
   let nextRelevantAt: string | undefined;
 
@@ -756,15 +778,15 @@ function evaluateNormalizedTask(
 
   if (task.assignedWorkspaceId !== undefined && !context.workspaceIds.includes(task.assignedWorkspaceId)) {
     reasons.push("workspace_unavailable");
-  } else if (context.workspaceIds.length === 0) {
+  } else if (task.scheduling.workspaceRequirement === "authorized" && context.workspaceIds.length === 0) {
     reasons.push("workspace_unavailable");
   }
 
   for (const active of state.tasks) {
     if (active.taskId === task.taskId || !isConflictActive(active, now)) continue;
-    if (scopeConflictIsBlocking(task, active, state.projectPolicy, now)) {
-      conflictingTaskIds.add(active.taskId);
-    }
+    const disposition = scopeConflictDisposition(task, active, state.projectPolicy, now);
+    if (disposition === "blocking") conflictingTaskIds.add(active.taskId);
+    else if (disposition === "advisory") advisoryConflictTaskIds.add(active.taskId);
   }
   if (conflictingTaskIds.size > 0) reasons.push("scope_conflict");
 
@@ -775,6 +797,7 @@ function evaluateNormalizedTask(
     reasonCodes,
     blockingTaskIds: [...blockingTaskIds].sort(),
     conflictingTaskIds: [...conflictingTaskIds].sort(),
+    advisoryConflictTaskIds: [...advisoryConflictTaskIds].sort(),
     requiredRoleIds: [...task.scheduling.eligibleRoleIds],
     missingCapabilities: missingCapabilities.sort(),
     ...(task.scheduling.notBefore ? { notBefore: task.scheduling.notBefore } : {}),
@@ -791,20 +814,18 @@ function isConflictActive(task: NormalizedTask, now: string): boolean {
     task.leaseExpiresAt > now;
 }
 
-function scopeConflictIsBlocking(
+type ConflictDisposition = "none" | "blocking" | "advisory";
+
+function scopeConflictDisposition(
   candidate: NormalizedTask,
   active: NormalizedTask,
   policy: SchedulingProjectPolicy,
   now: string,
-): boolean {
-  if (candidate.scheduling.scopes.length === 0 || active.scheduling.scopes.length === 0) return false;
-  if (hasValidConflictOverride(candidate, active, now)) return false;
+): ConflictDisposition {
+  if (candidate.scheduling.scopes.length === 0 || active.scheduling.scopes.length === 0) return "none";
+  if (hasValidConflictOverride(candidate, active, now)) return "none";
 
-  const distinctWorkspaces = candidate.assignedWorkspaceId !== undefined &&
-    active.assignedWorkspaceId !== undefined &&
-    candidate.assignedWorkspaceId !== active.assignedWorkspaceId;
-  if (distinctWorkspaces && policy.isolatedParallelWrites === true) return false;
-
+  let hasBlockingOverlap = false;
   for (const left of candidate.scheduling.scopes) {
     for (const right of active.scheduling.scopes) {
       if (!schedulingScopesOverlap(left, right)) continue;
@@ -812,19 +833,27 @@ function scopeConflictIsBlocking(
       if (left.mode === "shared_review" && right.mode === "shared_review") continue;
       if ((left.mode === "shared_review" || right.mode === "shared_review") &&
           policy.blockSharedReviewWithExclusiveWrite !== true) continue;
-      if (left.mode === "exclusive_write" || right.mode === "exclusive_write") return true;
+      if (left.mode === "exclusive_write" || right.mode === "exclusive_write") {
+        hasBlockingOverlap = true;
+      }
     }
   }
-  return false;
+  if (!hasBlockingOverlap) return "none";
+
+  const distinctWorkspaces = candidate.assignedWorkspaceId !== undefined &&
+    active.assignedWorkspaceId !== undefined &&
+    candidate.assignedWorkspaceId !== active.assignedWorkspaceId;
+  if (distinctWorkspaces && policy.isolatedParallelWrites === true) return "advisory";
+  return "blocking";
 }
 
 function hasValidConflictOverride(candidate: NormalizedTask, active: NormalizedTask, now: string): boolean {
   return candidate.scheduling.conflictOverrides.some((override) =>
     override.conflictingTaskId === active.taskId &&
+    override.issuedAt <= now &&
     (!override.expiresAt || override.expiresAt > now) &&
-    (override.scopeRevision === undefined || override.scopeRevision === candidate.scheduling.scopeRevision) &&
-    (override.conflictingScopeRevision === undefined ||
-      override.conflictingScopeRevision === active.scheduling.scopeRevision));
+    override.scopeRevision === candidate.scheduling.scopeRevision &&
+    override.conflictingScopeRevision === active.scheduling.scopeRevision);
 }
 
 function rankInfo(task: NormalizedTask, state: NormalizedSnapshot, now: string): SchedulingRankInfo {
@@ -905,6 +934,9 @@ function buildNoReadyWork(
     reasonCodes: [...evaluation.reasonCodes],
     ...(evaluation.blockingTaskIds.length ? { blockingTaskIds: [...evaluation.blockingTaskIds] } : {}),
     ...(evaluation.conflictingTaskIds.length ? { conflictingTaskIds: [...evaluation.conflictingTaskIds] } : {}),
+    ...(evaluation.advisoryConflictTaskIds.length
+      ? { advisoryConflictTaskIds: [...evaluation.advisoryConflictTaskIds] }
+      : {}),
     ...(evaluation.requiredRoleIds.length ? { requiredRoleIds: [...evaluation.requiredRoleIds] } : {}),
     ...(evaluation.missingCapabilities.length ? { missingCapabilities: [...evaluation.missingCapabilities] } : {}),
     ...(evaluation.notBefore ? { notBefore: evaluation.notBefore } : {}),
@@ -1071,6 +1103,14 @@ function validateConflictOverrides(value: unknown): SchedulingConflictOverride[]
       reason: validateText(candidate.reason, `scheduling.conflictOverrides[${index}].reason`, 1024),
       issuedBy: validateIdentifier(candidate.issuedBy, `scheduling.conflictOverrides[${index}].issuedBy`),
       issuedAt: validateTimestamp(candidate.issuedAt, `scheduling.conflictOverrides[${index}].issuedAt`),
+      scopeRevision: validatePositiveInteger(
+        candidate.scopeRevision,
+        `scheduling.conflictOverrides[${index}].scopeRevision`,
+      ),
+      conflictingScopeRevision: validatePositiveInteger(
+        candidate.conflictingScopeRevision,
+        `scheduling.conflictOverrides[${index}].conflictingScopeRevision`,
+      ),
     };
     if (seen.has(override.conflictingTaskId)) {
       throw new Error(`Duplicate conflict override: ${override.conflictingTaskId}`);
@@ -1082,17 +1122,8 @@ function validateConflictOverrides(value: unknown): SchedulingConflictOverride[]
         `scheduling.conflictOverrides[${index}].expiresAt`,
       );
     }
-    if (candidate.scopeRevision !== undefined) {
-      override.scopeRevision = validatePositiveInteger(
-        candidate.scopeRevision,
-        `scheduling.conflictOverrides[${index}].scopeRevision`,
-      );
-    }
-    if (candidate.conflictingScopeRevision !== undefined) {
-      override.conflictingScopeRevision = validatePositiveInteger(
-        candidate.conflictingScopeRevision,
-        `scheduling.conflictOverrides[${index}].conflictingScopeRevision`,
-      );
+    if (override.expiresAt !== undefined && override.issuedAt > override.expiresAt) {
+      throw new Error(`scheduling.conflictOverrides[${index}] expires before it is issued`);
     }
     return override;
   });
@@ -1195,6 +1226,7 @@ function copyEvaluation(value: SchedulingReadyEvaluation): SchedulingReadyEvalua
     reasonCodes: [...value.reasonCodes],
     blockingTaskIds: [...value.blockingTaskIds],
     conflictingTaskIds: [...value.conflictingTaskIds],
+    advisoryConflictTaskIds: [...value.advisoryConflictTaskIds],
     requiredRoleIds: [...value.requiredRoleIds],
     missingCapabilities: [...value.missingCapabilities],
     recovery: [...value.recovery],
@@ -1242,8 +1274,8 @@ function validateIdentifier(value: unknown, field: string): string {
 
 function validateUntrustedDisplayText(value: unknown, field: string, maximumBytes: number): string {
   const text = validateText(value, field, maximumBytes);
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
-    throw new Error(`${field} contains unsupported control characters`);
+  if (/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(text)) {
+    throw new Error(`${field} contains unsupported control or bidirectional formatting characters`);
   }
   return text;
 }
