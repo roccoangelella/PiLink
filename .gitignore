@@ -4,18 +4,3 @@ dist/
 data/
 bin/cloudflared
 *.log
-
-# Ephemeral local multi-agent coordination/runtime state.
-/.agents/
-/.agent-work/
-/.agent-swarm/
-/.pilink/
-/.swarm/
-
-# Local agent-produced research, planning, and review artifacts.
-# Keep product documentation, source code, and tests tracked.
-/docs/AUTONOMOUS_PULL_PROTOCOL.md
-/docs/COLLABORATION_*.md
-/docs/*_ACCEPTANCE_REVIEW.md
-/docs/AGENT_*_DESIGN.md
-/docs/ENFORCED_COLLABORATION_DESIGN.md

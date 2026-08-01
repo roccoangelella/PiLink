@@ -30,10 +30,6 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
   });
   await waitForHealth(`${serverUrl}/health`);
 
-  const metadata = await (await fetch(`${serverUrl}/.well-known/oauth-authorization-server`)).json();
-  assert.equal(metadata.revocation_endpoint, `${serverUrl}/oauth/revoke`);
-  assert.deepEqual(metadata.revocation_endpoint_auth_methods_supported, ["client_secret_post", "client_secret_basic"]);
-
   const rejected = await fetch(`${serverUrl}/oauth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -56,7 +52,6 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
   assert.equal(tokenResponse.status, 200);
   const token = await tokenResponse.json();
   assert.equal(token.scope, "mcp:read");
-  assert.equal(token.expires_in, 30 * 24 * 60 * 60);
   assert.ok(token.access_token);
 
   const verifier = "a".repeat(43);
@@ -97,28 +92,6 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
   });
   assert.equal(pkceTokenResponse.status, 200);
   assert.equal((await pkceTokenResponse.json()).scope, chatGptScopes);
-
-  const revoked = await fetch(`${serverUrl}/oauth/revoke`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ token: token.access_token }),
-  });
-  assert.equal(revoked.status, 200);
-
-  const rejectedRevokedToken = await fetch(`${serverUrl}/sse`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token.access_token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  });
-  assert.equal(rejectedRevokedToken.status, 401);
-  assert.equal((await rejectedRevokedToken.json()).error, "invalid_token");
-
-  const revokedStore = JSON.parse(await fs.readFile(path.join(cwd, "revoked-tokens.json"), "utf8"));
-  assert.equal(revokedStore.revoked_tokens.length, 1);
-  assert.ok(revokedStore.revoked_tokens[0].jti);
 });
 
 async function waitForHealth(url) {

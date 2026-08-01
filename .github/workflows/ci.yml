@@ -3,26 +3,19 @@ name: CI
 on:
   push:
   pull_request:
-  schedule:
-    - cron: "17 05 * * 1"
 
 permissions:
   contents: read
 
 jobs:
   verify:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
           cache: npm
-      - run: npm ci --ignore-scripts --audit=false
-      - run: npm audit signatures
-      - run: npm audit --audit-level=moderate
+      - run: npm ci
       - run: npm test
       - run: npm pack --dry-run

@@ -8,21 +8,12 @@ import { randomUUID } from "node:crypto";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { createMcpServer, type McpServerHandle } from "./mcp.js";
+import { createMcpServer } from "./mcp.js";
 import { createOAuthRouter } from "./oauth.js";
-import {
-  authenticateBearer,
-  effectiveClientTokenVersion,
-  findActiveClient,
-  isClientActive,
-  loadClients,
-} from "./auth.js";
+import { authenticateBearer } from "./auth.js";
 import { createHarnessPolicy } from "./harness.js";
 import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
-import { createCorsAndOriginProtection, createRateLimiter } from "./security.js";
-import { AgentChatBroker, AgentChatStore } from "./chat.js";
-import { ToolAuditLog } from "./audit.js";
-import { AgentTaskStore } from "./tasks.js";
+import { createRateLimiter } from "./security.js";
 
 loadEnvironment();
 const config = loadRuntimeConfig();
@@ -31,6 +22,27 @@ const { port: PORT, host: HOST, serverUrl: SERVER_URL } = config;
 
 const app = express();
 app.set("trust proxy", config.trustProxy);
+
+// ── Body parsing ─────────────────────────────────────────────
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true, limit: "256kb" }));
+
+// ── CORS (opt-in: browser clients only) ───────────────────────
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && config.corsOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+  }
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
 
 // ── Request logging ──────────────────────────────────────────
 app.use((req, res, next) => {
@@ -48,18 +60,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Browser-origin protection and CORS ───────────────────────
-// A present Origin header on an MCP transport request must be explicitly allowed.
-// This runs before body parsing so rejected browser requests consume minimal work.
-app.use(createCorsAndOriginProtection(config.corsOrigins));
-
-// ── Body parsing ─────────────────────────────────────────────
-app.use(express.json({ limit: "256kb" }));
-app.use(express.urlencoded({ extended: true, limit: "256kb" }));
-
 // ── Mount OAuth routes (public, no Bearer required) ──────────
 const oauthRouter = createOAuthRouter();
-app.use(["/oauth/token", "/oauth/revoke", "/oauth/register", "/oauth/authorize"], createRateLimiter(20, 60_000));
+app.use(["/oauth/token", "/oauth/register", "/oauth/authorize"], createRateLimiter(20, 60_000));
 app.use(oauthRouter);
 
 // ── Health / status endpoint ─────────────────────────────────
@@ -69,7 +72,6 @@ app.get("/health", (_req, res) => {
     server: "pilink",
     version: VERSION,
     harness: "pi-agent",
-    sessions: publicSessionStatus(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -85,280 +87,14 @@ app.get("/", (_req, res) => {
 
 interface ManagedTransport {
   transport: StreamableHTTPServerTransport | SSEServerTransport;
-  handle: McpServerHandle;
   clientId: string;
-  clientVersion: number;
-  scope: string;
-  createdAtMs: number;
-  lastActivityAtMs: number;
-  inFlightRequests: number;
-  dispose: () => void;
 }
 
 const transports: Record<string, ManagedTransport> = {};
-let pendingMcpSessionsTotal = 0;
-const pendingMcpSessionsByClient = new Map<string, number>();
-let agentChatBroker: AgentChatBroker | undefined;
-let toolAuditLog: ToolAuditLog | undefined;
-let agentTaskStore: AgentTaskStore | undefined;
 
-function getAgentChatBroker(): AgentChatBroker {
-  if (!agentChatBroker) {
-    agentChatBroker = new AgentChatBroker(new AgentChatStore({
-      workspace: config.workspace,
-      dataDir: config.dataDir,
-    }));
-  }
-  return agentChatBroker;
+function tokenFor(req: express.Request): { sub: string; scope: string } {
+  return (req as express.Request & { tokenPayload: { sub: string; scope: string } }).tokenPayload;
 }
-
-function getToolAuditLog(): ToolAuditLog {
-  if (!toolAuditLog) {
-    toolAuditLog = new ToolAuditLog({
-      workspace: config.workspace,
-      dataDir: config.dataDir,
-    });
-  }
-  return toolAuditLog;
-}
-
-function getAgentTaskStore(): AgentTaskStore {
-  if (!agentTaskStore) {
-    agentTaskStore = new AgentTaskStore({
-      workspace: config.workspace,
-      dataDir: config.dataDir,
-    });
-  }
-  return agentTaskStore;
-}
-
-function tokenFor(req: express.Request): { sub: string; scope: string; client_version?: number } {
-  return (req as express.Request & {
-    tokenPayload: { sub: string; scope: string; client_version?: number };
-  }).tokenPayload;
-}
-
-function resolveNewSessionClient(req: express.Request, res: express.Response): {
-  clientId: string;
-  clientVersion: number;
-  scope: string;
-  identity: Readonly<{ agentId: string; agentName: string }>;
-} | null {
-  const token = tokenFor(req);
-  const client = findActiveClient(token.sub);
-  if (!client) {
-    res.status(403).json({ error: "forbidden", error_description: "Authenticated OAuth client is disabled or missing" });
-    return null;
-  }
-  const clientVersion = effectiveClientTokenVersion(client);
-  if ((token.client_version ?? 1) !== clientVersion) {
-    res.status(403).json({ error: "forbidden", error_description: "OAuth client credentials changed" });
-    return null;
-  }
-  return {
-    clientId: client.client_id,
-    clientVersion,
-    scope: token.scope,
-    identity: Object.freeze({ agentId: client.client_id, agentName: client.client_name }),
-  };
-}
-
-function effectiveCapabilities(scope: string): Set<"read" | "write"> {
-  const granted = new Set(scope.split(" ").filter(Boolean));
-  const capabilities = new Set<"read" | "write">();
-  if (granted.has("mcp:tools") || granted.has("mcp:read")) capabilities.add("read");
-  if (granted.has("mcp:tools") || granted.has("mcp:write")) capabilities.add("write");
-  return capabilities;
-}
-
-function canReuseSession(
-  managed: ManagedTransport,
-  token: { sub: string; scope: string; client_version?: number }
-): boolean {
-  if (managed.clientId !== token.sub || managed.clientVersion !== (token.client_version ?? 1)) return false;
-  const granted = effectiveCapabilities(token.scope);
-  return [...effectiveCapabilities(managed.scope)].every((capability) => granted.has(capability));
-}
-
-function rejectSessionReuse(res: express.Response): void {
-  res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
-}
-
-function once(callback: () => void): () => void {
-  let called = false;
-  return () => {
-    if (called) return;
-    called = true;
-    callback();
-  };
-}
-
-function activeSessionsForClient(clientId: string): number {
-  return Object.values(transports).filter((managed) => managed.clientId === clientId).length;
-}
-
-function publicSessionStatus() {
-  return {
-    active: Object.keys(transports).length,
-    pending: pendingMcpSessionsTotal,
-    max_total: config.maxMcpSessionsTotal,
-    max_per_client: config.maxMcpSessionsPerClient,
-    idle_timeout_seconds: config.mcpSessionIdleTimeoutSeconds,
-  };
-}
-
-function reserveSessionSlot(clientId: string, res: express.Response): (() => void) | null {
-  const totalInUse = Object.keys(transports).length + pendingMcpSessionsTotal;
-  const clientInUse = activeSessionsForClient(clientId) + (pendingMcpSessionsByClient.get(clientId) || 0);
-  const totalExceeded = totalInUse >= config.maxMcpSessionsTotal;
-  const clientExceeded = clientInUse >= config.maxMcpSessionsPerClient;
-  if (totalExceeded || clientExceeded) {
-    res.setHeader("Retry-After", "5");
-    res.status(429).json({
-      error: "too_many_sessions",
-      error_description: clientExceeded
-        ? "OAuth client has reached its MCP session limit"
-        : "PiLink has reached its total MCP session limit",
-      limits: {
-        total: config.maxMcpSessionsTotal,
-        per_client: config.maxMcpSessionsPerClient,
-      },
-      active: {
-        total: Object.keys(transports).length,
-        client: activeSessionsForClient(clientId),
-      },
-    });
-    return null;
-  }
-
-  pendingMcpSessionsTotal += 1;
-  pendingMcpSessionsByClient.set(clientId, (pendingMcpSessionsByClient.get(clientId) || 0) + 1);
-  return once(() => {
-    pendingMcpSessionsTotal = Math.max(0, pendingMcpSessionsTotal - 1);
-    const remaining = Math.max(0, (pendingMcpSessionsByClient.get(clientId) || 1) - 1);
-    if (remaining === 0) pendingMcpSessionsByClient.delete(clientId);
-    else pendingMcpSessionsByClient.set(clientId, remaining);
-  });
-}
-
-function createManagedTransport(
-  transport: ManagedTransport["transport"],
-  handle: McpServerHandle,
-  clientId: string,
-  clientVersion: number,
-  scope: string,
-  dispose: () => void,
-): ManagedTransport {
-  const now = Date.now();
-  return {
-    transport,
-    handle,
-    clientId,
-    clientVersion,
-    scope,
-    createdAtMs: now,
-    lastActivityAtMs: now,
-    inFlightRequests: 0,
-    dispose,
-  };
-}
-
-function touchTransport(managed: ManagedTransport): void {
-  managed.lastActivityAtMs = Date.now();
-}
-
-async function withManagedRequest<T>(managed: ManagedTransport, operation: () => Promise<T>): Promise<T> {
-  touchTransport(managed);
-  managed.inFlightRequests += 1;
-  try {
-    return await operation();
-  } finally {
-    managed.inFlightRequests = Math.max(0, managed.inFlightRequests - 1);
-    touchTransport(managed);
-  }
-}
-
-function rejectExpiredOrUnknownSession(res: express.Response): void {
-  res.status(404).json({ error: "Session not found or expired" });
-}
-
-function disposeTransport(sessionId: string, expected?: ManagedTransport["transport"]): void {
-  const managed = transports[sessionId];
-  if (!managed || (expected && managed.transport !== expected)) return;
-  delete transports[sessionId];
-  managed.dispose();
-}
-
-async function closeManagedTransport(
-  sessionId: string,
-  managed: ManagedTransport,
-  context: string,
-): Promise<void> {
-  try {
-    await managed.transport.close?.();
-  } catch (error) {
-    console.error(`[${context}] Unable to close MCP session ${sessionId}:`, error);
-  } finally {
-    disposeTransport(sessionId, managed.transport);
-  }
-}
-
-async function closeTransportForClientLifecycle(sessionId: string, managed: ManagedTransport): Promise<void> {
-  await closeManagedTransport(sessionId, managed, "OAuth");
-}
-
-async function sweepInvalidatedClientSessions(): Promise<void> {
-  let activeVersions = new Map<string, number>();
-  try {
-    activeVersions = new Map(
-      loadClients()
-        .filter(isClientActive)
-        .map((client) => [client.client_id, effectiveClientTokenVersion(client)]),
-    );
-  } catch (error) {
-    console.error("[OAuth] Client lifecycle state is unreadable; closing all MCP sessions:", error);
-  }
-
-  await Promise.all(Object.entries(transports).map(async ([sessionId, managed]) => {
-    if (activeVersions.get(managed.clientId) === managed.clientVersion) return;
-    console.error(`[OAuth] Closing MCP session ${sessionId} because client ${managed.clientId} was disabled or rotated.`);
-    await closeTransportForClientLifecycle(sessionId, managed);
-  }));
-}
-
-let clientLifecycleSweepRunning = false;
-const clientLifecycleSweep = setInterval(() => {
-  if (clientLifecycleSweepRunning) return;
-  clientLifecycleSweepRunning = true;
-  void sweepInvalidatedClientSessions().finally(() => {
-    clientLifecycleSweepRunning = false;
-  });
-}, 1_000);
-clientLifecycleSweep.unref();
-
-let idleSessionSweepRunning = false;
-const idleSessionTimeoutMs = config.mcpSessionIdleTimeoutSeconds * 1_000;
-const idleSessionSweepIntervalMs = Math.min(30_000, Math.max(250, Math.floor(idleSessionTimeoutMs / 4)));
-async function sweepIdleMcpSessions(): Promise<void> {
-  const now = Date.now();
-  await Promise.all(Object.entries(transports).map(async ([sessionId, managed]) => {
-    if (managed.inFlightRequests > 0) return;
-    if (now - managed.lastActivityAtMs < idleSessionTimeoutMs) return;
-    console.error(
-      `[MCP] Expiring idle session ${sessionId} for client ${managed.clientId} ` +
-      `after ${config.mcpSessionIdleTimeoutSeconds}s without activity.`,
-    );
-    await closeManagedTransport(sessionId, managed, "MCP");
-  }));
-}
-const idleSessionSweep = setInterval(() => {
-  if (idleSessionSweepRunning) return;
-  idleSessionSweepRunning = true;
-  void sweepIdleMcpSessions().finally(() => {
-    idleSessionSweepRunning = false;
-  });
-}, idleSessionSweepIntervalMs);
-idleSessionSweep.unref();
 
 function ensureAcceptHeader(req: express.Request): void {
   const currentAccept = req.headers["accept"] || "";
@@ -382,24 +118,15 @@ app.post("/sse", authenticateBearer, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   try {
-    if (sessionId) {
+    if (sessionId && transports[sessionId]) {
       const managed = transports[sessionId];
-      if (!managed) {
-        rejectExpiredOrUnknownSession(res);
-        return;
-      }
-      if (!canReuseSession(managed, tokenFor(req))) {
-        rejectSessionReuse(res);
+      if (managed.clientId !== tokenFor(req).sub) {
+        res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
         return;
       }
       const transport = managed.transport;
       if (transport instanceof StreamableHTTPServerTransport) {
-        try {
-          await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
-        } catch (error) {
-          disposeTransport(sessionId, transport);
-          throw error;
-        }
+        await transport.handleRequest(req, res, req.body);
       } else {
         res.status(400).json({
           jsonrpc: "2.0",
@@ -411,63 +138,25 @@ app.post("/sse", authenticateBearer, async (req, res) => {
     }
 
     console.error("[MCP] New Streamable HTTP session initializing...");
-    const sessionClient = resolveNewSessionClient(req, res);
-    if (!sessionClient) return;
-    const releaseReservation = reserveSessionSlot(sessionClient.clientId, res);
-    if (!releaseReservation) return;
-    const handle = createMcpServer(
-      policy,
-      sessionClient.scope,
-      sessionClient.identity,
-      getAgentChatBroker(),
-      getToolAuditLog(),
-      undefined,
-      getAgentTaskStore(),
-    );
-    const dispose = once(handle.dispose);
-    let managed: ManagedTransport | undefined;
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
         console.error(`[MCP] Streamable HTTP session created: ${sid}`);
-        if (managed) {
-          transports[sid] = managed;
-          releaseReservation();
-        }
+        transports[sid] = { transport, clientId: tokenFor(req).sub };
       },
     });
 
-    managed = createManagedTransport(
-      transport,
-      handle,
-      sessionClient.clientId,
-      sessionClient.clientVersion,
-      sessionClient.scope,
-      dispose,
-    );
-    const cleanup = () => {
+    transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid && transports[sid]) {
         console.error(`[MCP] Streamable HTTP session closed: ${sid}`);
-        disposeTransport(sid, transport);
-      } else {
-        dispose();
+        delete transports[sid];
       }
-      releaseReservation();
     };
-    transport.onclose = cleanup;
-    transport.onerror = cleanup;
 
-    try {
-      await handle.server.connect(transport);
-      await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
-    } catch (error) {
-      cleanup();
-      throw error;
-    } finally {
-      releaseReservation();
-      if (!transport.sessionId) dispose();
-    }
+    const mcpServer = createMcpServer(policy, tokenFor(req).scope);
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, req.body);
   } catch (error) {
     console.error("[MCP] Error handling Streamable HTTP request:", error);
     if (!res.headersSent) {
@@ -484,80 +173,32 @@ app.post("/sse", authenticateBearer, async (req, res) => {
 app.get("/sse", authenticateBearer, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-  if (sessionId) {
+  if (sessionId && transports[sessionId]) {
     const managed = transports[sessionId];
-    if (!managed) {
-      rejectExpiredOrUnknownSession(res);
-      return;
-    }
-    if (!canReuseSession(managed, tokenFor(req))) {
-      rejectSessionReuse(res);
+    if (managed.clientId !== tokenFor(req).sub) {
+      res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
       return;
     }
     const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
-      touchTransport(managed);
       console.error(`[MCP] Streamable HTTP SSE stream opened for session: ${sessionId}`);
-      try {
-        await transport.handleRequest(req, res);
-      } catch (error) {
-        disposeTransport(sessionId, transport);
-        console.error("[MCP] Error handling Streamable HTTP SSE stream:", error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "internal_error", error_description: "Unable to handle MCP session" });
-        }
-      }
+      await transport.handleRequest(req, res);
       return;
     }
-    res.status(400).json({ error: "Session uses legacy SSE transport, not Streamable HTTP" });
-    return;
   }
 
   console.error("[MCP] Legacy SSE session starting...");
-  const sessionClient = resolveNewSessionClient(req, res);
-  if (!sessionClient) return;
-  const releaseReservation = reserveSessionSlot(sessionClient.clientId, res);
-  if (!releaseReservation) return;
   const transport = new SSEServerTransport("/messages", res);
-  const handle = createMcpServer(
-    policy,
-    sessionClient.scope,
-    sessionClient.identity,
-    getAgentChatBroker(),
-    getToolAuditLog(),
-    undefined,
-    getAgentTaskStore(),
-  );
-  const dispose = once(handle.dispose);
-  const managed = createManagedTransport(
-    transport,
-    handle,
-    sessionClient.clientId,
-    sessionClient.clientVersion,
-    sessionClient.scope,
-    dispose,
-  );
-  transports[transport.sessionId] = managed;
-  releaseReservation();
+  transports[transport.sessionId] = { transport, clientId: tokenFor(req).sub };
   console.error(`[MCP] Legacy SSE session created: ${transport.sessionId}`);
 
   res.on("close", () => {
     console.error(`[MCP] Legacy SSE session closed: ${transport.sessionId}`);
-    disposeTransport(transport.sessionId, transport);
+    delete transports[transport.sessionId];
   });
-  transport.onerror = () => disposeTransport(transport.sessionId, transport);
 
-  try {
-    await handle.server.connect(transport);
-  } catch (error) {
-    disposeTransport(transport.sessionId, transport);
-    console.error("[MCP] Error starting legacy SSE session:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "internal_error", error_description: "Unable to start MCP session" });
-    }
-  } finally {
-    releaseReservation();
-  }
+  const mcpServer = createMcpServer(policy, tokenFor(req).scope);
+  await mcpServer.connect(transport);
 });
 
 // ── Streamable HTTP: DELETE /sse (session teardown) ──────────
@@ -566,18 +207,15 @@ app.delete("/sse", authenticateBearer, async (req, res) => {
 
   if (sessionId && transports[sessionId]) {
     const managed = transports[sessionId];
-    if (!canReuseSession(managed, tokenFor(req))) {
-      rejectSessionReuse(res);
+    if (managed.clientId !== tokenFor(req).sub) {
+      res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
       return;
     }
     const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
       console.error(`[MCP] Streamable HTTP session deleted: ${sessionId}`);
-      try {
-        await withManagedRequest(managed, () => transport.handleRequest(req, res));
-      } finally {
-        disposeTransport(sessionId, transport);
-      }
+      await transport.handleRequest(req, res);
+      delete transports[sessionId];
       return;
     }
   }
@@ -595,30 +233,12 @@ app.post("/messages", authenticateBearer, async (req, res) => {
   }
 
   const managed = transports[sessionId];
-  if (!managed || !(managed.transport instanceof SSEServerTransport)) {
+  if (!managed || managed.clientId !== tokenFor(req).sub || !(managed.transport instanceof SSEServerTransport)) {
     res.status(404).json({ error: "Session not found or expired" });
-    return;
-  }
-  const transport = managed.transport;
-  const token = tokenFor(req);
-  if (managed.clientId !== token.sub) {
-    res.status(404).json({ error: "Session not found or expired" });
-    return;
-  }
-  if (!canReuseSession(managed, token)) {
-    rejectSessionReuse(res);
     return;
   }
 
-  try {
-    await withManagedRequest(managed, () => transport.handlePostMessage(req, res, req.body));
-  } catch (error) {
-    disposeTransport(sessionId, transport);
-    console.error("[MCP] Error handling legacy SSE message:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "internal_error", error_description: "Unable to handle MCP session" });
-    }
-  }
+  await managed.transport.handlePostMessage(req, res);
 });
 
 // ── Start server ─────────────────────────────────────────────
@@ -653,18 +273,12 @@ server.once("error", (error: NodeJS.ErrnoException) => {
 // ── Graceful shutdown ────────────────────────────────────────
 process.on("SIGINT", async () => {
   console.error("Shutting down...");
-  clearInterval(clientLifecycleSweep);
-  clearInterval(idleSessionSweep);
   for (const sessionId in transports) {
-    const managed = transports[sessionId];
     try {
-      await managed.transport.close?.();
+      await transports[sessionId].transport.close?.();
+      delete transports[sessionId];
     } catch { /* ignore */ }
-    disposeTransport(sessionId, managed.transport);
   }
-  try {
-    await toolAuditLog?.flush();
-  } catch { /* audit writes are best effort */ }
   process.exit(0);
 });
 
