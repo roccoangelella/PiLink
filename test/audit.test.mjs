@@ -20,6 +20,7 @@ test("writes private project-scoped metadata-only JSONL events", async () => {
     await audit.record({
       callId: "call-1",
       agentId: "agent-1",
+      sessionId: "session-1",
       tool: "read",
       startedAt: "2026-08-01T10:00:00.000Z",
       durationMs: 12,
@@ -36,6 +37,7 @@ test("writes private project-scoped metadata-only JSONL events", async () => {
       event: "tool_call",
       callId: "call-1",
       agentId: "agent-1",
+      sessionId: "session-1",
       tool: "read",
       startedAt: "2026-08-01T10:00:00.000Z",
       durationMs: 12,

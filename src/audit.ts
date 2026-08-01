@@ -8,6 +8,7 @@ export type ToolAuditAccessMode = "workspace" | "full-access";
 export interface ToolAuditEventInput {
   callId: string;
   agentId?: string;
+  sessionId?: string;
   tool: string;
   startedAt: string;
   durationMs: number;
@@ -23,6 +24,7 @@ export interface ToolAuditEvent {
   event: "tool_call";
   callId: string;
   agentId?: string;
+  sessionId?: string;
   tool: string;
   startedAt: string;
   durationMs: number;
@@ -133,6 +135,7 @@ function normalizeEvent(input: ToolAuditEventInput): ToolAuditEvent {
   };
 
   if (input.agentId !== undefined) event.agentId = validateText(input.agentId, "agentId", 200);
+  if (input.sessionId !== undefined) event.sessionId = validateText(input.sessionId, "sessionId", 200);
   if (input.exitCode !== undefined) event.exitCode = validateExitCode(input.exitCode);
   if (input.timedOut !== undefined) event.timedOut = validateBoolean(input.timedOut, "timedOut");
   if (input.truncated !== undefined) event.truncated = validateBoolean(input.truncated, "truncated");
