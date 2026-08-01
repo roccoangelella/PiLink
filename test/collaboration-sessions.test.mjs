@@ -238,6 +238,14 @@ test("requires a validated server key and persists only versioned HMAC verifiers
     }),
     /key material does not match persisted state/,
   );
+  await assert.rejects(
+    wrongMaterial.resume({
+      ...alice,
+      collaborationSessionHandle: credential.collaborationSessionHandle,
+      resumeRequestId: "wrong-material-0001",
+    }),
+    /key material does not match persisted state/,
+  );
   assert.equal(await fs.readFile(store.statePath, "utf8"), stateBeforeWrongMaterial);
   assert.equal((await store.listByActor(alice.agentId)).length, 1);
 });
