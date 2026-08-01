@@ -54,13 +54,16 @@ export interface AgentTaskCreateInput extends AgentTaskIdentity {
   details?: string;
 }
 
-export interface AgentTaskClaimInput extends AgentTaskIdentity {
+export interface AgentTaskMutationInput extends AgentTaskIdentity {
   taskId: string;
+  expectedRevision: number;
+}
+
+export interface AgentTaskClaimInput extends AgentTaskMutationInput {
   leaseSeconds?: number;
 }
 
-export interface AgentTaskUpdateInput extends AgentTaskIdentity {
-  taskId: string;
+export interface AgentTaskUpdateInput extends AgentTaskMutationInput {
   statusMessage?: string;
 }
 
@@ -180,6 +183,7 @@ export class AgentTaskStore {
   public async claim(input: AgentTaskClaimInput): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
 
     return this.enqueueMutation(async () => {
@@ -192,6 +196,7 @@ export class AgentTaskStore {
       if (task.status !== "open" && task.ownerAgentId !== identity.agentId) {
         throw new Error(`Task is already claimed by ${task.ownerAgentName}`);
       }
+      requireExpectedRevision(task, expectedRevision);
 
       const now = this.nowIso();
       const updated: AgentTask = {
@@ -213,11 +218,13 @@ export class AgentTaskStore {
   public async renew(input: AgentTaskClaimInput): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
       const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      requireExpectedRevision(task, expectedRevision);
       const updated: AgentTask = {
         ...task,
         leaseExpiresAt: this.leaseExpiryIso(leaseSeconds),
@@ -233,12 +240,14 @@ export class AgentTaskStore {
   public async requestInput(input: AgentTaskUpdateInput & { leaseSeconds?: number }): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const statusMessage = validateRequiredText(input.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES);
     const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
       const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      requireExpectedRevision(task, expectedRevision);
       const updated: AgentTask = {
         ...task,
         status: "input_required",
@@ -256,11 +265,13 @@ export class AgentTaskStore {
   public async release(input: AgentTaskUpdateInput): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const statusMessage = validateOptionalText(input.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES);
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
       const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      requireExpectedRevision(task, expectedRevision);
       const remainsBlocked = task.status === "input_required";
       const updated: AgentTask = {
         ...task,
@@ -281,6 +292,7 @@ export class AgentTaskStore {
   public async provideInput(input: AgentTaskProvideInputInput): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const statusMessage = validateRequiredText(input.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES);
     const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
 
@@ -290,6 +302,7 @@ export class AgentTaskStore {
       if (task.status !== "input_required") throw new Error("Task is not waiting for input");
       const authorized = task.createdByAgentId === identity.agentId || task.ownerAgentId === identity.agentId;
       if (!authorized) throw new Error("Only the task creator or current owner may provide input");
+      requireExpectedRevision(task, expectedRevision);
 
       const hasActiveOwner = task.ownerAgentId !== undefined;
       const updated: AgentTask = {
@@ -317,6 +330,7 @@ export class AgentTaskStore {
   public async cancel(input: AgentTaskUpdateInput): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const statusMessage = validateOptionalText(input.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES);
 
     return this.enqueueMutation(async () => {
@@ -325,6 +339,7 @@ export class AgentTaskStore {
       if (terminalStatuses.has(task.status)) throw new Error(`Task is already ${task.status}`);
       const authorized = task.createdByAgentId === identity.agentId || task.ownerAgentId === identity.agentId;
       if (!authorized) throw new Error("Only the task creator or current owner may cancel it");
+      requireExpectedRevision(task, expectedRevision);
 
       const updated = terminalTask(task, "cancelled", this.nowIso(), statusMessage);
       const next = replaceTask(state, updated);
@@ -336,12 +351,14 @@ export class AgentTaskStore {
   private async finish(input: AgentTaskCompleteInput, status: "completed" | "failed"): Promise<AgentTask> {
     const identity = validateIdentity(input);
     const taskId = validateTaskId(input.taskId);
+    const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const statusMessage = validateOptionalText(input.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES);
     const artifact = validateOptionalText(input.artifact, "artifact", AGENT_TASK_ARTIFACT_MAX_BYTES);
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
       const task = requireOwnedLeasedTask(state, taskId, identity.agentId);
+      requireExpectedRevision(task, expectedRevision);
       const updated = terminalTask(task, status, this.nowIso(), statusMessage, artifact);
       const next = replaceTask(state, updated);
       await this.persistAndCache(next);
@@ -643,6 +660,21 @@ function validateOptionalDate(value: unknown, field: string): string | undefined
 function validateRevision(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error("revision must be a positive integer");
   return value as number;
+}
+
+function validateExpectedRevision(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new Error("expectedRevision must be a positive integer");
+  }
+  return value as number;
+}
+
+function requireExpectedRevision(task: AgentTask, expectedRevision: number): void {
+  if (task.revision !== expectedRevision) {
+    throw new Error(
+      `Task revision changed: expected ${expectedRevision}, current ${task.revision}; read the task again before retrying`,
+    );
+  }
 }
 
 function emptyState(projectKey: string): StoredAgentTaskState {

@@ -10,6 +10,8 @@ const alice = { agentId: "agent-alice", agentName: "Alice" };
 const bob = { agentId: "agent-bob", agentName: "Bob" };
 const carol = { agentId: "agent-carol", agentName: "Carol" };
 
+const mutation = (task) => ({ taskId: task.taskId, expectedRevision: task.revision });
+
 async function fixture(prefix = "pilink-tasks-") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   const workspace = path.join(root, "workspace");
@@ -39,7 +41,7 @@ test("persists a typed task lifecycle with private project-scoped state", async 
   assert.equal(created.status, "open");
   assert.equal(created.revision, 1);
 
-  const claimed = await store.claim({ ...bob, taskId: created.taskId, leaseSeconds: 60 });
+  const claimed = await store.claim({ ...bob, ...mutation(created), leaseSeconds: 60 });
   assert.equal(claimed.status, "working");
   assert.equal(claimed.ownerAgentId, bob.agentId);
   assert.equal(claimed.leaseExpiresAt, "2026-08-01T10:01:00.000Z");
@@ -47,7 +49,7 @@ test("persists a typed task lifecycle with private project-scoped state", async 
   value.advance(10);
   const waiting = await store.requestInput({
     ...bob,
-    taskId: created.taskId,
+    ...mutation(claimed),
     statusMessage: "Need lease-semantics review",
     leaseSeconds: 120,
   });
@@ -57,7 +59,7 @@ test("persists a typed task lifecycle with private project-scoped state", async 
   value.advance(5);
   const completed = await store.complete({
     ...bob,
-    taskId: created.taskId,
+    ...mutation(waiting),
     statusMessage: "Reviewed and merged",
     artifact: "commit deadbeef",
   });
@@ -83,14 +85,15 @@ test("leases prevent duplicate work and expired claims can be reclaimed", async 
   const store = value.store();
   const task = await store.create({ ...alice, title: "Audit OAuth" });
 
-  await store.claim({ ...alice, taskId: task.taskId, leaseSeconds: 30 });
+  const firstClaim = await store.claim({ ...alice, ...mutation(task), leaseSeconds: 30 });
   await assert.rejects(
-    store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 30 }),
+    store.claim({ ...bob, ...mutation(firstClaim), leaseSeconds: 30 }),
     /already claimed by Alice/,
   );
 
   value.advance(31);
-  const reclaimed = await store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 45 });
+  const expired = await store.get(task.taskId);
+  const reclaimed = await store.claim({ ...bob, ...mutation(expired), leaseSeconds: 45 });
   assert.equal(reclaimed.status, "working");
   assert.equal(reclaimed.ownerAgentId, bob.agentId);
   assert.equal(reclaimed.revision, 4);
@@ -105,10 +108,10 @@ test("input-required survives lease expiry and resumes only after authorized inp
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
   const store = value.store();
   const task = await store.create({ ...alice, title: "Resolve deployment choice" });
-  await store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 30 });
+  const claimed = await store.claim({ ...bob, ...mutation(task), leaseSeconds: 30 });
   await store.requestInput({
     ...bob,
-    taskId: task.taskId,
+    ...mutation(claimed),
     statusMessage: "Which hosting mode should be used?",
     leaseSeconds: 30,
   });
@@ -120,24 +123,24 @@ test("input-required survives lease expiry and resumes only after authorized inp
   assert.equal(expired.ownerAgentId, undefined);
   assert.equal(expired.leaseExpiresAt, undefined);
   await assert.rejects(
-    store.claim({ ...carol, taskId: task.taskId }),
+    store.claim({ ...carol, ...mutation(expired) }),
     /requires input before it can be claimed/,
   );
   await assert.rejects(
-    store.provideInput({ ...carol, taskId: task.taskId, statusMessage: "Use a tunnel" }),
+    store.provideInput({ ...carol, ...mutation(expired), statusMessage: "Use a tunnel" }),
     /creator or current owner/,
   );
 
   const resumedOpen = await store.provideInput({
     ...alice,
-    taskId: task.taskId,
+    ...mutation(expired),
     statusMessage: "Use the quick tunnel",
   });
   assert.equal(resumedOpen.status, "open");
   assert.equal(resumedOpen.statusMessage, "Use the quick tunnel");
   assert.equal(resumedOpen.ownerAgentId, undefined);
 
-  const reclaimed = await store.claim({ ...carol, taskId: task.taskId, leaseSeconds: 45 });
+  const reclaimed = await store.claim({ ...carol, ...mutation(resumedOpen), leaseSeconds: 45 });
   assert.equal(reclaimed.status, "working");
   assert.equal(reclaimed.ownerAgentId, carol.agentId);
 });
@@ -147,21 +150,21 @@ test("active owners resume after input and release preserves blocked status", as
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
   const store = value.store();
   const task = await store.create({ ...alice, title: "Review task semantics" });
-  await store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 60 });
-  await store.requestInput({
+  const claimed = await store.claim({ ...bob, ...mutation(task), leaseSeconds: 60 });
+  const waiting = await store.requestInput({
     ...bob,
-    taskId: task.taskId,
+    ...mutation(claimed),
     statusMessage: "Need creator confirmation",
     leaseSeconds: 60,
   });
   await assert.rejects(
-    store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 60 }),
+    store.claim({ ...bob, ...mutation(waiting), leaseSeconds: 60 }),
     /requires input before it can be claimed/,
   );
 
   const resumedWorking = await store.provideInput({
     ...alice,
-    taskId: task.taskId,
+    ...mutation(waiting),
     statusMessage: "Proceed with durable input state",
     leaseSeconds: 120,
   });
@@ -169,13 +172,13 @@ test("active owners resume after input and release preserves blocked status", as
   assert.equal(resumedWorking.ownerAgentId, bob.agentId);
   assert.equal(resumedWorking.leaseExpiresAt, "2026-08-01T10:02:00.000Z");
 
-  await store.requestInput({
+  const waitingAgain = await store.requestInput({
     ...bob,
-    taskId: task.taskId,
+    ...mutation(resumedWorking),
     statusMessage: "Need one more decision",
     leaseSeconds: 60,
   });
-  const released = await store.release({ ...bob, taskId: task.taskId });
+  const released = await store.release({ ...bob, ...mutation(waitingAgain) });
   assert.equal(released.status, "input_required");
   assert.equal(released.statusMessage, "Need one more decision");
   assert.equal(released.ownerAgentId, undefined);
@@ -188,24 +191,24 @@ test("supports release, failure artifacts, and authorized cancellation", async (
   const store = value.store();
 
   const cancellable = await store.create({ ...alice, title: "Replace tunnel" });
-  await store.claim({ ...bob, taskId: cancellable.taskId });
+  const cancellableClaim = await store.claim({ ...bob, ...mutation(cancellable) });
   await assert.rejects(
-    store.cancel({ ...carol, taskId: cancellable.taskId }),
+    store.cancel({ ...carol, ...mutation(cancellableClaim) }),
     /creator or current owner/,
   );
-  const cancelled = await store.cancel({ ...alice, taskId: cancellable.taskId, statusMessage: "No longer needed" });
+  const cancelled = await store.cancel({ ...alice, ...mutation(cancellableClaim), statusMessage: "No longer needed" });
   assert.equal(cancelled.status, "cancelled");
 
   const releasable = await store.create({ ...alice, title: "Improve docs" });
-  await store.claim({ ...bob, taskId: releasable.taskId });
-  const released = await store.release({ ...bob, taskId: releasable.taskId, statusMessage: "Available for reassignment" });
+  const releasableClaim = await store.claim({ ...bob, ...mutation(releasable) });
+  const released = await store.release({ ...bob, ...mutation(releasableClaim), statusMessage: "Available for reassignment" });
   assert.equal(released.status, "open");
   assert.equal(released.ownerAgentId, undefined);
 
-  await store.claim({ ...carol, taskId: releasable.taskId });
+  const carolClaim = await store.claim({ ...carol, ...mutation(released) });
   const failed = await store.fail({
     ...carol,
-    taskId: releasable.taskId,
+    ...mutation(carolClaim),
     statusMessage: "Blocked by upstream format",
     artifact: "investigation notes",
   });
@@ -221,13 +224,57 @@ test("serializes competing claims across store instances", async (t) => {
   const task = await first.create({ ...alice, title: "Claim once" });
 
   const claims = await Promise.allSettled([
-    first.claim({ ...alice, taskId: task.taskId }),
-    second.claim({ ...bob, taskId: task.taskId }),
+    first.claim({ ...alice, ...mutation(task) }),
+    second.claim({ ...bob, ...mutation(task) }),
   ]);
   assert.equal(claims.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(claims.filter((result) => result.status === "rejected").length, 1);
   const stored = await first.get(task.taskId);
   assert.ok([alice.agentId, bob.agentId].includes(stored.ownerAgentId));
+});
+
+test("rejects stale mutations from parallel sessions sharing one agent identity", async (t) => {
+  const value = await fixture("pilink-tasks-revision-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const first = value.store();
+  const second = value.store();
+  const created = await first.create({ ...alice, title: "Coordinate shared identity" });
+
+  const claimed = await first.claim({ ...alice, ...mutation(created), leaseSeconds: 60 });
+  await assert.rejects(
+    second.claim({ ...alice, ...mutation(created), leaseSeconds: 120 }),
+    /revision changed: expected 1, current 2/,
+  );
+
+  const waiting = await first.requestInput({
+    ...alice,
+    ...mutation(claimed),
+    statusMessage: "Choose the final interface",
+    leaseSeconds: 60,
+  });
+  await assert.rejects(
+    second.release({ ...alice, ...mutation(claimed) }),
+    /revision changed: expected 2, current 3/,
+  );
+
+  const resumed = await second.provideInput({
+    ...alice,
+    ...mutation(waiting),
+    statusMessage: "Use the compact interface",
+    leaseSeconds: 60,
+  });
+  await assert.rejects(
+    first.complete({ ...alice, ...mutation(waiting), statusMessage: "stale completion" }),
+    /revision changed: expected 3, current 4/,
+  );
+
+  const completed = await first.complete({
+    ...alice,
+    ...mutation(resumed),
+    statusMessage: "Completed after refreshing",
+  });
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.revision, 5);
 });
 
 test("bounds retained tasks by pruning the oldest terminal entry", async (t) => {

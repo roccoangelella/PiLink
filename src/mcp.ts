@@ -443,9 +443,10 @@ export function createMcpServer(
 
       server.registerTool("agent_task_claim", {
         title: "Claim or Renew Task",
-        description: "Claim an open coordination task before working on it. Repeating this for a task already owned by the same OAuth agent renews its working lease; tasks waiting for input must be resumed with agent_task_provide_input instead.",
+        description: "Claim an open coordination task before working on it. Repeating this for a task already owned by the same OAuth agent renews its working lease; tasks waiting for input must be resumed with agent_task_provide_input instead. Pass the latest revision returned by agent_task_read to prevent stale-session overwrites.",
         inputSchema: z.object({
           task_id: z.string().min(1).max(256).describe("Task ID to claim or renew."),
+          expected_revision: z.number().int().positive().describe("Latest task revision returned by agent_task_read; stale values are rejected."),
           lease_seconds: z.number().int().min(1).max(86400).optional().describe("Ownership lease duration in seconds; defaults to 900 and is capped at 86400."),
         }).strict(),
         outputSchema: taskSchema,
@@ -456,6 +457,7 @@ export function createMcpServer(
           return taskResult(await taskStore.claim({
             ...identityInput,
             taskId: args.task_id,
+            expectedRevision: args.expected_revision,
             leaseSeconds: args.lease_seconds,
           }));
         } catch (error) {
@@ -465,9 +467,10 @@ export function createMcpServer(
 
       server.registerTool("agent_task_request_input", {
         title: "Request Task Input",
-        description: "Pause a task owned by the authenticated agent when a concrete decision or missing fact is required. The blocked state remains durable even if the ownership lease later expires.",
+        description: "Pause a task owned by the authenticated agent when a concrete decision or missing fact is required. The blocked state remains durable even if the ownership lease later expires. Pass the latest revision returned by agent_task_read.",
         inputSchema: z.object({
           task_id: z.string().min(1).max(256).describe("Owned task that cannot proceed without input."),
+          expected_revision: z.number().int().positive().describe("Latest task revision returned by agent_task_read; stale values are rejected."),
           status_message: z.string().min(1).max(8192).describe("Specific question or missing information required to resume the task."),
           lease_seconds: z.number().int().min(1).max(86400).optional().describe("How long to retain the current owner while waiting, in seconds."),
         }).strict(),
@@ -479,6 +482,7 @@ export function createMcpServer(
           return taskResult(await taskStore.requestInput({
             ...identityInput,
             taskId: args.task_id,
+            expectedRevision: args.expected_revision,
             statusMessage: args.status_message,
             leaseSeconds: args.lease_seconds,
           }));
@@ -489,9 +493,10 @@ export function createMcpServer(
 
       server.registerTool("agent_task_provide_input", {
         title: "Provide Task Input",
-        description: "Provide the concrete answer needed by an input-required task. The creator or active owner may resume it; an active owner returns to working, while an ownerless task returns to open for claiming.",
+        description: "Provide the concrete answer needed by an input-required task. The creator or active owner may resume it; an active owner returns to working, while an ownerless task returns to open for claiming. Pass the latest revision returned by agent_task_read.",
         inputSchema: z.object({
           task_id: z.string().min(1).max(256).describe("Input-required task to resume."),
+          expected_revision: z.number().int().positive().describe("Latest task revision returned by agent_task_read; stale values are rejected."),
           status_message: z.string().min(1).max(8192).describe("Answer, decision, or new information that resolves the pending request."),
           lease_seconds: z.number().int().min(1).max(86400).optional().describe("Renewed owner lease when the task still has an active owner."),
         }).strict(),
@@ -503,6 +508,7 @@ export function createMcpServer(
           return taskResult(await taskStore.provideInput({
             ...identityInput,
             taskId: args.task_id,
+            expectedRevision: args.expected_revision,
             statusMessage: args.status_message,
             leaseSeconds: args.lease_seconds,
           }));
@@ -513,9 +519,10 @@ export function createMcpServer(
 
       server.registerTool("agent_task_release", {
         title: "Release Task Ownership",
-        description: "Release a task owned by the authenticated agent so another agent can take it. Working tasks return to open; input-required tasks stay blocked and only lose their owner lease.",
+        description: "Release a task owned by the authenticated agent so another agent can take it. Working tasks return to open; input-required tasks stay blocked and only lose their owner lease. Pass the latest revision returned by agent_task_read.",
         inputSchema: z.object({
           task_id: z.string().min(1).max(256).describe("Owned task whose lease should be released."),
+          expected_revision: z.number().int().positive().describe("Latest task revision returned by agent_task_read; stale values are rejected."),
           status_message: z.string().min(1).max(8192).optional().describe("Optional handoff note explaining current progress or why the task is being released."),
         }).strict(),
         outputSchema: taskSchema,
@@ -526,6 +533,7 @@ export function createMcpServer(
           return taskResult(await taskStore.release({
             ...identityInput,
             taskId: args.task_id,
+            expectedRevision: args.expected_revision,
             statusMessage: args.status_message,
           }));
         } catch (error) {
@@ -535,9 +543,10 @@ export function createMcpServer(
 
       server.registerTool("agent_task_finish", {
         title: "Finish or Cancel Task",
-        description: "Mark an owned task completed or failed, or cancel a non-terminal task as its creator or owner. Completed and failed tasks may include a concise artifact such as a commit hash or report path.",
+        description: "Mark an owned task completed or failed, or cancel a non-terminal task as its creator or owner. Completed and failed tasks may include a concise artifact such as a commit hash or report path. Pass the latest revision returned by agent_task_read.",
         inputSchema: z.object({
           task_id: z.string().min(1).max(256).describe("Task to transition to a terminal state."),
+          expected_revision: z.number().int().positive().describe("Latest task revision returned by agent_task_read; stale values are rejected."),
           outcome: z.enum(["completed", "failed", "cancelled"]).describe("Terminal outcome to record."),
           status_message: z.string().min(1).max(8192).optional().describe("Concise completion, failure, or cancellation explanation."),
           artifact: z.string().min(1).max(16384).optional().describe("Commit hash, file path, report summary, or other result reference; invalid for cancelled tasks."),
@@ -553,6 +562,7 @@ export function createMcpServer(
           const base = {
             ...identityInput,
             taskId: args.task_id,
+            expectedRevision: args.expected_revision,
             statusMessage: args.status_message,
           };
           const task = args.outcome === "completed"

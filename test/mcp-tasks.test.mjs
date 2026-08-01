@@ -93,6 +93,10 @@ test("advertises a compact namespaced coordination-task surface", async (t) => {
     assert.equal(tool.annotations.destructiveHint, false);
     assert.equal(tool.outputSchema.additionalProperties, false);
     assert.ok(tool.outputSchema.required.includes("task_id"));
+    if (name !== "agent_task_create") {
+      assert.ok(tool.inputSchema.required.includes("expected_revision"));
+      assert.ok(tool.inputSchema.properties.expected_revision.description.includes("stale"));
+    }
   }
 });
 
@@ -111,6 +115,12 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
     { agentId: "agent-bob", agentName: "Bob" },
     "bob-instance",
   );
+  const bobTwin = await connected(
+    value,
+    "mcp:tools",
+    { agentId: "agent-bob", agentName: "Bob" },
+    "bob-second-instance",
+  );
   const reader = await connected(
     value,
     "mcp:read",
@@ -124,7 +134,7 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
     "writer-instance",
   );
   t.after(async () => {
-    await Promise.all([close(alice), close(bob), close(reader), close(writerOnly)]);
+    await Promise.all([close(alice), close(bob), close(bobTwin), close(reader), close(writerOnly)]);
   });
 
   const deniedCreate = await reader.client.callTool({
@@ -164,15 +174,22 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
 
   const claimed = structured(await bob.client.callTool({
     name: "agent_task_claim",
-    arguments: { task_id: created.task_id, lease_seconds: 120 },
+    arguments: { task_id: created.task_id, expected_revision: created.revision, lease_seconds: 120 },
   }));
   assert.equal(claimed.status, "working");
   assert.equal(claimed.owner_agent_id, "agent-bob");
   assert.equal(claimed.owner_agent_name, "Bob");
 
+  const staleSameIdentity = await bobTwin.client.callTool({
+    name: "agent_task_claim",
+    arguments: { task_id: created.task_id, expected_revision: created.revision, lease_seconds: 120 },
+  });
+  assert.equal(staleSameIdentity.isError, true);
+  assert.match(staleSameIdentity.content[0].text, /revision changed: expected 1, current 2/);
+
   const duplicateClaim = await alice.client.callTool({
     name: "agent_task_claim",
-    arguments: { task_id: created.task_id },
+    arguments: { task_id: created.task_id, expected_revision: claimed.revision },
   });
   assert.equal(duplicateClaim.isError, true);
 
@@ -180,6 +197,7 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
     name: "agent_task_request_input",
     arguments: {
       task_id: created.task_id,
+      expected_revision: claimed.revision,
       status_message: "Should completion include the commit hash?",
       lease_seconds: 120,
     },
@@ -189,13 +207,13 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
 
   const bypass = await bob.client.callTool({
     name: "agent_task_claim",
-    arguments: { task_id: created.task_id },
+    arguments: { task_id: created.task_id, expected_revision: waiting.revision },
   });
   assert.equal(bypass.isError, true);
 
   const unauthorizedInput = await reader.client.callTool({
     name: "agent_task_provide_input",
-    arguments: { task_id: created.task_id, status_message: "No" },
+    arguments: { task_id: created.task_id, expected_revision: waiting.revision, status_message: "No" },
   });
   assert.equal(unauthorizedInput.isError, true);
 
@@ -203,6 +221,7 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
     name: "agent_task_provide_input",
     arguments: {
       task_id: created.task_id,
+      expected_revision: waiting.revision,
       status_message: "Yes, include the commit hash",
       lease_seconds: 120,
     },
@@ -213,7 +232,7 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
 
   const renewed = structured(await bob.client.callTool({
     name: "agent_task_claim",
-    arguments: { task_id: created.task_id, lease_seconds: 180 },
+    arguments: { task_id: created.task_id, expected_revision: resumed.revision, lease_seconds: 180 },
   }));
   assert.equal(renewed.status, "working");
   assert.equal(renewed.owner_agent_id, "agent-bob");
@@ -223,6 +242,7 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
     name: "agent_task_finish",
     arguments: {
       task_id: created.task_id,
+      expected_revision: renewed.revision,
       outcome: "completed",
       status_message: "Implemented and tested",
       artifact: "commit 0123456",
@@ -234,7 +254,7 @@ test("enforces task scopes and binds lifecycle mutations to OAuth identities", a
 
   const completedAgain = await bob.client.callTool({
     name: "agent_task_finish",
-    arguments: { task_id: created.task_id, outcome: "completed" },
+    arguments: { task_id: created.task_id, expected_revision: completed.revision, outcome: "completed" },
   });
   assert.equal(completedAgain.isError, true);
 
@@ -266,12 +286,16 @@ test("creator cancellation is terminal and rejects cancellation artifacts", asyn
     name: "agent_task_create",
     arguments: { title: "Obsolete work" },
   }));
-  await bob.client.callTool({ name: "agent_task_claim", arguments: { task_id: created.task_id } });
+  const claimed = structured(await bob.client.callTool({
+    name: "agent_task_claim",
+    arguments: { task_id: created.task_id, expected_revision: created.revision },
+  }));
 
   const invalid = await alice.client.callTool({
     name: "agent_task_finish",
     arguments: {
       task_id: created.task_id,
+      expected_revision: claimed.revision,
       outcome: "cancelled",
       artifact: "must not be accepted",
     },
@@ -282,6 +306,7 @@ test("creator cancellation is terminal and rejects cancellation artifacts", asyn
     name: "agent_task_finish",
     arguments: {
       task_id: created.task_id,
+      expected_revision: claimed.revision,
       outcome: "cancelled",
       status_message: "Requirement was withdrawn",
     },
@@ -292,7 +317,7 @@ test("creator cancellation is terminal and rejects cancellation artifacts", asyn
 
   const staleOwnerFinish = await bob.client.callTool({
     name: "agent_task_finish",
-    arguments: { task_id: created.task_id, outcome: "completed" },
+    arguments: { task_id: created.task_id, expected_revision: cancelled.revision, outcome: "completed" },
   });
   assert.equal(staleOwnerFinish.isError, true);
 });
