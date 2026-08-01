@@ -81,7 +81,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   assert.ok(promptIndex !== -1, "Paste callback URL prompt should be printed");
   assert.ok(bannerIndex < promptIndex, "Server banner box must be printed before Paste callback URL prompt");
   cliProcess.stdin.write("https://chatgpt.example/callback\n");
-  await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+  await waitFor(() => output.includes("Client ID: pi_"));
   assert.match(output, /Client ID: pi_[a-f0-9]{16}/);
   assert.match(output, /Client secret: [A-Za-z0-9_-]{40,}/);
   assert.match(output, /Token endpoint auth method: client_secret_post/);
@@ -501,7 +501,7 @@ async function availablePort() {
 
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Timed out waiting for CLI output");
