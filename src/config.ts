@@ -15,7 +15,12 @@ export interface RuntimeConfig {
   bootstrapSecret: string;
   tokenExpirySeconds: number;
   unsafeFullAccess: boolean;
+  allowWorkspaceExecution: boolean;
+  requireExecutionApproval: boolean;
   maxBashTimeoutSeconds: number;
+  maxMcpSessionsTotal: number;
+  maxMcpSessionsPerClient: number;
+  mcpSessionIdleTimeoutSeconds: number;
   corsOrigins: string[];
   trustProxy: boolean;
 }
@@ -33,8 +38,14 @@ export function loadEnvironment(): void {
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const port = positiveInteger(env.PORT, 3200, "PORT");
-  const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 360000000000, "TOKEN_EXPIRY");
+  const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 30 * 24 * 60 * 60, "TOKEN_EXPIRY");
   const maxBashTimeoutSeconds = positiveInteger(env.PI_MAX_BASH_TIMEOUT, 120, "PI_MAX_BASH_TIMEOUT");
+  const maxMcpSessionsTotal = positiveInteger(env.PI_MAX_MCP_SESSIONS_TOTAL, 64, "PI_MAX_MCP_SESSIONS_TOTAL");
+  const maxMcpSessionsPerClient = positiveInteger(env.PI_MAX_MCP_SESSIONS_PER_CLIENT, 8, "PI_MAX_MCP_SESSIONS_PER_CLIENT");
+  const mcpSessionIdleTimeoutSeconds = positiveInteger(env.PI_MCP_SESSION_IDLE_TIMEOUT, 60 * 60, "PI_MCP_SESSION_IDLE_TIMEOUT");
+  if (maxMcpSessionsPerClient > maxMcpSessionsTotal) {
+    throw new Error("PI_MAX_MCP_SESSIONS_PER_CLIENT cannot exceed PI_MAX_MCP_SESSIONS_TOTAL");
+  }
   let workspace = path.resolve(env.PI_WORK_DIR || process.cwd());
   if (!fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
     const cwd = process.cwd();
@@ -68,10 +79,41 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     bootstrapSecret,
     tokenExpirySeconds,
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
+    allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
+    requireExecutionApproval: env.PI_REQUIRE_EXECUTION_APPROVAL === "true",
     maxBashTimeoutSeconds,
-    corsOrigins: (env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
+    maxMcpSessionsTotal,
+    maxMcpSessionsPerClient,
+    mcpSessionIdleTimeoutSeconds,
+    corsOrigins: parseAllowedOrigins(serverUrl, env.CORS_ORIGINS),
     trustProxy: env.TRUST_PROXY === "true",
   };
+}
+
+export function parseAllowedOrigins(serverUrl: string, configuredOrigins?: string): string[] {
+  const origins = new Set<string>([new URL(serverUrl).origin]);
+  for (const configuredOrigin of (configuredOrigins || "").split(",")) {
+    const trimmed = configuredOrigin.trim();
+    if (!trimmed) continue;
+    origins.add(normalizeHttpOrigin(trimmed, "CORS_ORIGINS"));
+  }
+  return [...origins];
+}
+
+export function normalizeHttpOrigin(value: string, field = "Origin"): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${field} entries must be absolute http(s) origins`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${field} entries must use http or https`);
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new Error(`${field} entries must contain only scheme, host, and optional port`);
+  }
+  return url.origin;
 }
 
 function requiredSecret(value: string | undefined, name: string): string {

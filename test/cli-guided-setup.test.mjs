@@ -81,7 +81,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   assert.ok(promptIndex !== -1, "Paste callback URL prompt should be printed");
   assert.ok(bannerIndex < promptIndex, "Server banner box must be printed before Paste callback URL prompt");
   cliProcess.stdin.write("https://chatgpt.example/callback\n");
-  await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+  await waitFor(() => output.includes("Client ID: pi_"));
   assert.match(output, /Client ID: pi_[a-f0-9]{16}/);
   assert.match(output, /Client secret: [A-Za-z0-9_-]{40,}/);
   assert.match(output, /Token endpoint auth method: client_secret_post/);
@@ -313,6 +313,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   await fs.mkdir(path.join(root, "bin"));
   await fs.mkdir(dataPath);
   await fs.writeFile(path.join(dataPath, "clients.json"), "{}");
+  await fs.writeFile(path.join(dataPath, "clients.json.lock"), "stale lock");
+  await fs.writeFile(path.join(dataPath, "revoked-tokens.json"), "{}");
+  await fs.writeFile(path.join(dataPath, "oauth-client-audit.jsonl"), "{}\n");
   await fs.writeFile(path.join(dataPath, "keep.txt"), "unrelated data");
   await fs.writeFile(path.join(root, "bin", "cloudflared"), "managed binary");
   await fs.writeFile(path.join(root, "bin", "caddy"), "managed binary");
@@ -327,6 +330,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   assert.match(result.output, /PiLink state was reset/);
   await assert.rejects(fs.stat(configPath));
   await assert.rejects(fs.stat(path.join(dataPath, "clients.json")));
+  await assert.rejects(fs.stat(path.join(dataPath, "clients.json.lock")));
+  await assert.rejects(fs.stat(path.join(dataPath, "revoked-tokens.json")));
+  await assert.rejects(fs.stat(path.join(dataPath, "oauth-client-audit.jsonl")));
   await assert.rejects(fs.stat(path.join(root, "bin", "cloudflared")));
   await assert.rejects(fs.stat(path.join(root, "bin", "caddy")));
   await assert.rejects(fs.stat(path.join(root, "Caddyfile")));
@@ -530,7 +536,7 @@ async function availablePort() {
 
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Timed out waiting for CLI output");

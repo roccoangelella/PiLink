@@ -10,7 +10,14 @@ import { Readable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.js";
-import { loadClients, registerClient } from "./auth.js";
+import {
+  effectiveClientTokenVersion,
+  isClientActive,
+  loadClients,
+  registerClient,
+  rotateClientSecret,
+  setClientDisabled,
+} from "./auth.js";
 import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublicIpv4, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
 
 const [, , command = "start", ...args] = process.argv;
@@ -28,9 +35,88 @@ if (command === "init") {
   startServer(args.includes("--allow-unsafe-full-access"));
 } else if (command === "reset") {
   void reset(args);
+} else if (command === "clients") {
+  void manageClients(args).catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 } else {
-  console.error("Usage: pilink <init|start|serve|reset> [--allow-unsafe-full-access] [--setup] [--yes] [--start]");
+  printUsage();
   process.exitCode = 1;
+}
+
+function printUsage(): void {
+  console.error("Usage: pilink <init|start|serve|reset|clients> [options]");
+  console.error("  pilink clients list");
+  console.error("  pilink clients disable <client-id>");
+  console.error("  pilink clients enable <client-id>");
+  console.error("  pilink clients rotate-secret <client-id>");
+}
+
+async function manageClients(args: string[]): Promise<void> {
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`PiLink configuration does not exist: ${configPath}. Run 'pilink init' first.`);
+  }
+  loadEnvironment();
+  loadRuntimeConfig();
+
+  const [action = "list", clientId, ...extra] = args;
+  if (extra.length > 0 || (action !== "list" && !clientId)) {
+    printUsage();
+    process.exitCode = 1;
+    return;
+  }
+
+  if (action === "list") {
+    if (clientId) {
+      printUsage();
+      process.exitCode = 1;
+      return;
+    }
+    const clients = loadClients();
+    if (clients.length === 0) {
+      console.log("No OAuth clients are registered.");
+      return;
+    }
+    console.log("CLIENT_ID\tSTATUS\tTOKEN_VERSION\tNAME\tSCOPE\tCREATED_AT");
+    for (const client of clients) {
+      console.log([
+        terminalField(client.client_id),
+        isClientActive(client) ? "active" : terminalField(`disabled:${client.disabled_at}`),
+        effectiveClientTokenVersion(client),
+        terminalField(client.client_name),
+        terminalField(client.scope),
+        terminalField(client.created_at),
+      ].join("\t"));
+    }
+    return;
+  }
+
+  if (action === "disable" || action === "enable") {
+    const disabled = action === "disable";
+    const client = await setClientDisabled(clientId, disabled);
+    if (!client) throw new Error(`Unknown OAuth client: ${terminalField(clientId)}`);
+    console.error(`${disabled ? "Disabled" : "Enabled"} OAuth client ${terminalField(client.client_id)} (${terminalField(client.client_name)}).`);
+    if (disabled) console.error("Its existing access tokens and MCP sessions are now invalid.");
+    return;
+  }
+
+  if (action === "rotate-secret") {
+    const rotated = await rotateClientSecret(clientId);
+    if (!rotated) throw new Error(`Unknown OAuth client: ${terminalField(clientId)}`);
+    console.error(`Rotated the secret for OAuth client ${terminalField(rotated.client.client_id)} (${terminalField(rotated.client.client_name)}).`);
+    console.error("Existing access tokens and MCP sessions are now invalid.");
+    console.error("Store this new secret now; PiLink will not display it again:");
+    console.log(rotated.client_secret);
+    return;
+  }
+
+  printUsage();
+  process.exitCode = 1;
+}
+
+function terminalField(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
 }
 
 function initialize(portOverride?: number): void {
@@ -48,7 +134,13 @@ function initialize(portOverride?: number): void {
     `JWT_SECRET=${secret()}`,
     `PI_BOOTSTRAP_SECRET=${secret()}`,
     "PI_MAX_BASH_TIMEOUT=120",
+    "PI_MAX_MCP_SESSIONS_TOTAL=64",
+    "PI_MAX_MCP_SESSIONS_PER_CLIENT=8",
+    "PI_MCP_SESSION_IDLE_TIMEOUT=3600",
+    "# PI_ALLOW_WORKSPACE_EXECUTION=false",
+    "# PI_REQUIRE_EXECUTION_APPROVAL=false",
     "# PI_UNSAFE_FULL_ACCESS=false",
+    "# Additional exact browser origins for MCP requests; SERVER_URL's own origin is always allowed.",
     "# CORS_ORIGINS=https://chatgpt.com",
     "",
   ].join("\n");
@@ -93,6 +185,9 @@ function resetTargets(): string[] {
   const targets = new Set<string>([
     configPath,
     path.join(dataDirectory, "clients.json"),
+    path.join(dataDirectory, "clients.json.lock"),
+    path.join(dataDirectory, "revoked-tokens.json"),
+    path.join(dataDirectory, "oauth-client-audit.jsonl"),
     path.join(configDirectory, "bin", cloudflaredFileName()),
     path.join(configDirectory, "bin", caddyFileName()),
     path.join(configDirectory, "Caddyfile"),
