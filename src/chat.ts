@@ -292,9 +292,12 @@ function validateState(value: unknown, expectedProjectKey: string): StoredAgentC
   }
 
   const messages: AgentChatMessage[] = [];
-  let previousCursor = 0;
+  let previousCursor: number | undefined;
   for (const candidate of value.messages) {
-    if (!isRecord(candidate) || !Number.isSafeInteger(candidate.cursor) || candidate.cursor <= previousCursor) {
+    if (!isRecord(candidate) ||
+        !Number.isSafeInteger(candidate.cursor) ||
+        candidate.cursor < 1 ||
+        (previousCursor !== undefined && candidate.cursor !== previousCursor + 1)) {
       throw new Error("Malformed agent chat state: invalid cursors");
     }
     const message: AgentChatMessage = {

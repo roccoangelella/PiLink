@@ -72,6 +72,39 @@ test("retries a failed state load after the persisted file is repaired", async (
   }
 });
 
+test("rejects gaps within the retained cursor window", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const store = new AgentChatStore({ workspace, dataDir });
+    await fs.mkdir(path.dirname(store.statePath), { recursive: true });
+    await fs.writeFile(store.statePath, `${JSON.stringify({
+      version: 2,
+      projectKey: store.projectKey,
+      nextCursor: 4,
+      messages: [
+        {
+          cursor: 1,
+          agentId: "agent-a",
+          agentInstanceId: "instance-a",
+          agentName: "Agent A",
+          agentMessage: "first",
+        },
+        {
+          cursor: 3,
+          agentId: "agent-b",
+          agentInstanceId: "instance-b",
+          agentName: "Agent B",
+          agentMessage: "third",
+        },
+      ],
+    })}\n`, { mode: 0o600 });
+
+    await assert.rejects(() => store.read(), /invalid cursors/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("serializes concurrent posts and retains only the newest messages", async () => {
   const { root, workspace, dataDir } = await fixture();
   try {
