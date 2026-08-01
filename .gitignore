@@ -4,3 +4,16 @@ dist/
 data/
 bin/cloudflared
 *.log
+
+# Local multi-agent/swarm coordination artifacts. These are working state,
+# reviews, handoffs, and generated design notes—not distributable project files.
+/.agents/
+/.agent-work/
+/.agent-swarm/
+/.pilink/
+/.swarm/
+/docs/AGENT_*.md
+/docs/AUTONOMOUS_PULL_PROTOCOL.md
+/docs/COLLABORATION_*.md
+/docs/ENFORCED_COLLABORATION_*.md
+/docs/SESSION_ACTIVITY_*.md
