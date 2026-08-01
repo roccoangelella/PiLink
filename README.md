@@ -37,6 +37,8 @@ The default mode is deliberately restrictive: file tools are jailed to `PI_WORK_
 
 `npm_build` and `npm_test` are also fixed `run` profiles, but they execute arbitrary code from the repository and are disabled by default. Set `PI_ALLOW_WORKSPACE_EXECUTION=true` only for a trusted workspace. PiLink gives these child processes a filtered environment without its OAuth/JWT secrets, but this is not an OS sandbox: workspace code still runs as the PiLink user and may access that user's files or network.
 
+Set `PI_REQUIRE_EXECUTION_APPROVAL=true` to require a fresh MCP form-elicitation approval before each unrestricted `bash`, `npm_build`, or `npm_test` call. The gate fails closed when the client lacks form elicitation or the user declines, cancels, or leaves approval unchecked. Read-only Git profiles and ordinary workspace file edits are not prompted, avoiding repetitive approval fatigue. Approval text escapes control and bidirectional characters, and commands longer than 4,000 characters must be split before they can be reviewed.
+
 `--allow-unsafe-full-access` enables unrestricted shell and filesystem access for every authorized MCP client. It is remote code execution by design; only use it with a private configuration, a trusted ChatGPT profile, and a machine/account you are willing to expose. PiLink cannot make arbitrary shell commands safe without an OS-level sandbox.
 
 Client registration requires the generated `PI_BOOTSTRAP_SECRET` as an RFC 7591 registration access token:

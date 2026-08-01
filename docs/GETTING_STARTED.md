@@ -118,6 +118,8 @@ Agent chat uses the same configured `PI_WORK_DIR` as the project scope. It is st
 
 Use full mode only with a private, trusted client. Anyone able to obtain an authorized OAuth token can execute commands as your local user.
 
+For an additional interactive gate, set `PI_REQUIRE_EXECUTION_APPROVAL=true`. PiLink then requires a fresh MCP form-elicitation approval for every unrestricted `bash` call and every `npm_build` or `npm_test` profile. Clients without form elicitation fail closed, as do decline, cancel, or unchecked responses. Read-only Git inspection and normal file edits are not prompted. This reduces accidental execution but is not a sandbox and does not make an untrusted OAuth client safe.
+
 ## 5. Start the server
 
 For the full coding-agent mode requested above:

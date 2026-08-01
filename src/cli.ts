@@ -135,6 +135,7 @@ function initialize(portOverride?: number): void {
     `PI_BOOTSTRAP_SECRET=${secret()}`,
     "PI_MAX_BASH_TIMEOUT=120",
     "# PI_ALLOW_WORKSPACE_EXECUTION=false",
+    "# PI_REQUIRE_EXECUTION_APPROVAL=false",
     "# PI_UNSAFE_FULL_ACCESS=false",
     "# Additional exact browser origins for MCP requests; SERVER_URL's own origin is always allowed.",
     "# CORS_ORIGINS=https://chatgpt.com",

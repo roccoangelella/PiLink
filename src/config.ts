@@ -16,6 +16,7 @@ export interface RuntimeConfig {
   tokenExpirySeconds: number;
   unsafeFullAccess: boolean;
   allowWorkspaceExecution: boolean;
+  requireExecutionApproval: boolean;
   maxBashTimeoutSeconds: number;
   corsOrigins: string[];
   trustProxy: boolean;
@@ -70,6 +71,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     tokenExpirySeconds,
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
     allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
+    requireExecutionApproval: env.PI_REQUIRE_EXECUTION_APPROVAL === "true",
     maxBashTimeoutSeconds,
     corsOrigins: parseAllowedOrigins(serverUrl, env.CORS_ORIGINS),
     trustProxy: env.TRUST_PROXY === "true",

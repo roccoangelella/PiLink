@@ -8,6 +8,7 @@ export interface HarnessPolicy {
   workspace: string;
   unsafeFullAccess: boolean;
   allowWorkspaceExecution?: boolean;
+  requireExecutionApproval?: boolean;
   maxBashTimeoutSeconds: number;
 }
 
@@ -16,6 +17,7 @@ export function createHarnessPolicy(config: RuntimeConfig): HarnessPolicy {
     workspace: path.resolve(config.workspace),
     unsafeFullAccess: config.unsafeFullAccess,
     allowWorkspaceExecution: config.allowWorkspaceExecution,
+    requireExecutionApproval: config.requireExecutionApproval,
     maxBashTimeoutSeconds: config.maxBashTimeoutSeconds,
   };
 }

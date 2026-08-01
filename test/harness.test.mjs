@@ -60,9 +60,13 @@ test("runtime configuration propagates the workspace execution opt-in", async ()
       JWT_SECRET: "j".repeat(32),
       PI_BOOTSTRAP_SECRET: "b".repeat(32),
       PI_ALLOW_WORKSPACE_EXECUTION: "true",
+      PI_REQUIRE_EXECUTION_APPROVAL: "true",
     });
     assert.equal(runtime.allowWorkspaceExecution, true);
-    assert.equal(createHarnessPolicy(runtime).allowWorkspaceExecution, true);
+    assert.equal(runtime.requireExecutionApproval, true);
+    const policy = createHarnessPolicy(runtime);
+    assert.equal(policy.allowWorkspaceExecution, true);
+    assert.equal(policy.requireExecutionApproval, true);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }
