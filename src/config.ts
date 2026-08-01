@@ -33,7 +33,7 @@ export function loadEnvironment(): void {
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const port = positiveInteger(env.PORT, 3200, "PORT");
-  const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 360000000000, "TOKEN_EXPIRY");
+  const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 30 * 24 * 60 * 60, "TOKEN_EXPIRY");
   const maxBashTimeoutSeconds = positiveInteger(env.PI_MAX_BASH_TIMEOUT, 120, "PI_MAX_BASH_TIMEOUT");
   let workspace = path.resolve(env.PI_WORK_DIR || process.cwd());
   if (!fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {

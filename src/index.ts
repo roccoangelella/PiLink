@@ -63,7 +63,7 @@ app.use((req, res, next) => {
 
 // ── Mount OAuth routes (public, no Bearer required) ──────────
 const oauthRouter = createOAuthRouter();
-app.use(["/oauth/token", "/oauth/register", "/oauth/authorize"], createRateLimiter(20, 60_000));
+app.use(["/oauth/token", "/oauth/revoke", "/oauth/register", "/oauth/authorize"], createRateLimiter(20, 60_000));
 app.use(oauthRouter);
 
 // ── Health / status endpoint ─────────────────────────────────

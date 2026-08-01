@@ -14,8 +14,21 @@ import { loadRuntimeConfig } from "./config.js";
 
 const authCodes = new Map<string, AuthorizationCode>();
 
+interface RevokedTokenRecord {
+  jti: string;
+  exp: number;
+}
+
+interface RevokedTokenStore {
+  revoked_tokens: RevokedTokenRecord[];
+}
+
 function clientStorePath(): string {
   return path.join(loadRuntimeConfig().dataDir, "clients.json");
+}
+
+function revokedTokenStorePath(): string {
+  return path.join(loadRuntimeConfig().dataDir, "revoked-tokens.json");
 }
 
 function ensureDataDir(): void {
@@ -43,10 +56,38 @@ export function saveClients(clients: OAuthClient[]): void {
   ensureDataDir();
   const clientsFile = clientStorePath();
   const store: ClientStore = { clients };
-  const temporaryFile = `${clientsFile}.${process.pid}.tmp`;
-  fs.writeFileSync(temporaryFile, JSON.stringify(store, null, 2), { mode: 0o600 });
-  fs.renameSync(temporaryFile, clientsFile);
-  fs.chmodSync(clientsFile, 0o600);
+  writePrivateJsonAtomically(clientsFile, store);
+}
+
+function loadRevokedTokens(nowSeconds = Math.floor(Date.now() / 1000)): RevokedTokenRecord[] {
+  ensureDataDir();
+  const storeFile = revokedTokenStorePath();
+  if (!fs.existsSync(storeFile)) return [];
+
+  const data = JSON.parse(fs.readFileSync(storeFile, "utf-8")) as RevokedTokenStore;
+  if (!Array.isArray(data.revoked_tokens)) throw new Error("Revoked token store is malformed");
+  if (data.revoked_tokens.some((record) =>
+    !record || typeof record.jti !== "string" || !record.jti ||
+    !Number.isSafeInteger(record.exp) || record.exp <= 0
+  )) {
+    throw new Error("Revoked token store is malformed");
+  }
+
+  const activeRecords = data.revoked_tokens.filter((record) => record.exp > nowSeconds);
+  if (activeRecords.length !== data.revoked_tokens.length) saveRevokedTokens(activeRecords);
+  return activeRecords;
+}
+
+function saveRevokedTokens(records: RevokedTokenRecord[]): void {
+  ensureDataDir();
+  writePrivateJsonAtomically(revokedTokenStorePath(), { revoked_tokens: records });
+}
+
+function writePrivateJsonAtomically(filePath: string, value: unknown): void {
+  const temporaryFile = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  fs.writeFileSync(temporaryFile, JSON.stringify(value, null, 2), { mode: 0o600 });
+  fs.renameSync(temporaryFile, filePath);
+  fs.chmodSync(filePath, 0o600);
 }
 
 export function findClient(clientId: string): OAuthClient | undefined {
@@ -159,14 +200,49 @@ export function createAccessToken(
   };
 }
 
-export function verifyAccessToken(token: string): TokenPayload | null {
+function verifySignedAccessToken(token: string, ignoreExpiration = false): TokenPayload | null {
   const config = loadRuntimeConfig();
   try {
-    return jwt.verify(token, config.jwtSecret, {
+    const payload = jwt.verify(token, config.jwtSecret, {
       issuer: config.serverUrl,
       audience: config.serverUrl,
+      ignoreExpiration,
     }) as TokenPayload;
+    if (
+      !payload || typeof payload.sub !== "string" || typeof payload.scope !== "string" ||
+      typeof payload.jti !== "string" || !payload.jti || !Number.isSafeInteger(payload.exp)
+    ) {
+      return null;
+    }
+    return payload;
   } catch {
+    return null;
+  }
+}
+
+export function inspectAccessTokenForRevocation(token: string): TokenPayload | null {
+  return verifySignedAccessToken(token, true);
+}
+
+export function revokeAccessToken(payload: TokenPayload): void {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!payload.exp || payload.exp <= nowSeconds) return;
+
+  const records = loadRevokedTokens(nowSeconds);
+  if (records.some((record) => record.jti === payload.jti)) return;
+  records.push({ jti: payload.jti, exp: payload.exp });
+  saveRevokedTokens(records);
+}
+
+export function verifyAccessToken(token: string): TokenPayload | null {
+  const payload = verifySignedAccessToken(token);
+  if (!payload) return null;
+
+  try {
+    if (loadRevokedTokens().some((record) => record.jti === payload.jti)) return null;
+    return payload;
+  } catch (error) {
+    console.error("[OAuth] Refusing access because the revocation store could not be read:", error);
     return null;
   }
 }

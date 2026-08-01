@@ -13,6 +13,8 @@ import {
   consumeAuthorizationCode,
   peekAuthorizationCode,
   createAccessToken,
+  inspectAccessTokenForRevocation,
+  revokeAccessToken,
   verifyPKCE,
 } from "./auth.js";
 import { loadRuntimeConfig } from "./config.js";
@@ -33,6 +35,8 @@ export function createOAuthRouter(): Router {
       issuer: serverUrl,
       authorization_endpoint: `${serverUrl}/oauth/authorize`,
       token_endpoint: `${serverUrl}/oauth/token`,
+      revocation_endpoint: `${serverUrl}/oauth/revoke`,
+      revocation_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
       registration_endpoint: `${serverUrl}/oauth/register`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "client_credentials"],
@@ -278,6 +282,54 @@ export function createOAuthRouter(): Router {
       error: "unsupported_grant_type",
       error_description: `Grant type '${grant_type}' is not supported`,
     });
+  });
+
+  // ── Token Revocation (RFC 7009) ────────────────────────────
+  router.post("/oauth/revoke", async (req: Request, res: Response) => {
+    const token = typeof req.body.token === "string" ? req.body.token : "";
+    if (!token) {
+      res.status(400).json({ error: "invalid_request", error_description: "token is required" });
+      return;
+    }
+
+    const payload = inspectAccessTokenForRevocation(token);
+    const bearerToken = req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7)
+      : "";
+    let authenticatedClientId: string | null = null;
+
+    if (payload && bearerToken === token) {
+      authenticatedClientId = payload.sub;
+    } else if (!hasBootstrapAccess(req)) {
+      const { client_id, client_secret } = extractClientCredentials(req);
+      if (!client_id || !client_secret) {
+        res.status(401).json({ error: "invalid_client", error_description: "Client credentials or the token itself are required" });
+        return;
+      }
+
+      const client = findClient(client_id);
+      if (!client || !(await verifyClientSecret(client, client_secret))) {
+        res.status(401).json({ error: "invalid_client" });
+        return;
+      }
+      authenticatedClientId = client_id;
+    }
+
+    if (payload && authenticatedClientId && payload.sub !== authenticatedClientId) {
+      res.status(403).json({ error: "invalid_token", error_description: "Token belongs to another client" });
+      return;
+    }
+
+    try {
+      if (payload) revokeAccessToken(payload);
+    } catch (error) {
+      log(`Unable to persist token revocation: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(500).json({ error: "server_error", error_description: "Unable to persist token revocation" });
+      return;
+    }
+
+    // RFC 7009 intentionally returns success for unknown or already-invalid tokens.
+    res.sendStatus(200);
   });
 
   // ── Dynamic Client Registration (RFC 7591) ────────────────
