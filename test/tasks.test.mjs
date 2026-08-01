@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { AgentTaskStore } from "../dist/tasks.js";
 
 const alice = { agentId: "agent-alice", agentName: "Alice" };
@@ -11,6 +13,56 @@ const bob = { agentId: "agent-bob", agentName: "Bob" };
 const carol = { agentId: "agent-carol", agentName: "Carol" };
 
 const mutation = (task) => ({ taskId: task.taskId, expectedRevision: task.revision });
+const taskWorkerPath = fileURLToPath(new URL("fixtures/task-store-worker.mjs", import.meta.url));
+
+async function runTaskWorker({ workspace, dataDir, agentId, title, readyPath = "", gatePath = "" }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      taskWorkerPath,
+      workspace,
+      dataDir,
+      agentId,
+      title,
+      readyPath,
+      gatePath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code !== 0) {
+        reject(new Error(`Task worker exited with code ${code} signal ${signal || "none"}: ${stderr}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (error) {
+        reject(new Error(`Task worker returned invalid JSON: ${stdout}\n${stderr}`, { cause: error }));
+      }
+    });
+  });
+}
+
+async function waitForFiles(paths, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const present = await Promise.all(paths.map(async (candidate) => {
+      try {
+        await fs.access(candidate);
+        return true;
+      } catch {
+        return false;
+      }
+    }));
+    if (present.every(Boolean)) return;
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for task workers");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 async function fixture(prefix = "pilink-tasks-") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -231,6 +283,53 @@ test("serializes competing claims across store instances", async (t) => {
   assert.equal(claims.filter((result) => result.status === "rejected").length, 1);
   const stored = await first.get(task.taskId);
   assert.ok([alice.agentId, bob.agentId].includes(stored.ownerAgentId));
+});
+
+test("observes task updates written by another PiLink process", async (t) => {
+  const value = await fixture("pilink-tasks-process-refresh-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  assert.deepEqual(await store.list(), []);
+
+  const created = await runTaskWorker({
+    workspace: value.workspace,
+    dataDir: value.dataDir,
+    agentId: "external-agent",
+    title: "Created in another process",
+  });
+
+  const visible = await store.get(created.taskId);
+  assert.equal(visible.title, "Created in another process");
+  assert.equal(visible.createdByAgentId, "external-agent");
+});
+
+test("serializes synchronized task creation across PiLink processes", async (t) => {
+  const value = await fixture("pilink-tasks-process-lock-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const gatePath = path.join(value.root, "start-workers");
+  const workerCount = 8;
+  const readyPaths = Array.from({ length: workerCount }, (_, index) => path.join(value.root, `ready-${index}`));
+  const workers = readyPaths.map((readyPath, index) => runTaskWorker({
+    workspace: value.workspace,
+    dataDir: value.dataDir,
+    agentId: `process-${index}`,
+    title: `Cross-process task ${index}`,
+    readyPath,
+    gatePath,
+  }));
+
+  await waitForFiles(readyPaths);
+  await fs.writeFile(gatePath, "go\n", { mode: 0o600 });
+  const created = await Promise.all(workers);
+  assert.equal(new Set(created.map((task) => task.taskId)).size, workerCount);
+
+  const persisted = await value.store().list({ limit: 200 });
+  assert.equal(persisted.length, workerCount);
+  assert.deepEqual(
+    new Set(persisted.map((task) => task.title)),
+    new Set(Array.from({ length: workerCount }, (_, index) => `Cross-process task ${index}`)),
+  );
+  await assert.rejects(fs.access(`${value.store().statePath}.lock`), /ENOENT/);
 });
 
 test("rejects stale mutations from parallel sessions sharing one agent identity", async (t) => {

@@ -10,6 +10,10 @@ export const AGENT_TASK_ARTIFACT_MAX_BYTES = 16 * 1024;
 export const AGENT_TASK_DEFAULT_LEASE_SECONDS = 15 * 60;
 export const AGENT_TASK_MAX_LEASE_SECONDS = 24 * 60 * 60;
 
+const AGENT_TASK_LOCK_TIMEOUT_MS = 5_000;
+const AGENT_TASK_STALE_LOCK_MS = 30_000;
+const AGENT_TASK_LOCK_RETRY_MS = 25;
+
 export const AGENT_TASK_STATUSES = [
   "open",
   "working",
@@ -87,8 +91,6 @@ interface StoredAgentTaskState {
 }
 
 interface SharedAgentTaskState {
-  state?: StoredAgentTaskState;
-  stateLoad?: Promise<StoredAgentTaskState>;
   mutationQueue: Promise<void>;
 }
 
@@ -103,6 +105,7 @@ export class AgentTaskStore {
   public readonly statePath: string;
 
   private readonly dataDir: string;
+  private readonly lockPath: string;
   private readonly projectDir: string;
   private readonly now: () => Date;
   private readonly sharedState: SharedAgentTaskState;
@@ -121,6 +124,7 @@ export class AgentTaskStore {
     this.projectKey = createHash("sha256").update(this.workspace).digest("hex");
     this.projectDir = path.join(this.dataDir, "projects", this.projectKey);
     this.statePath = path.join(this.projectDir, "agent-tasks.json");
+    this.lockPath = `${this.statePath}.lock`;
     this.sharedState = sharedStates.get(this.statePath) || { mutationQueue: Promise.resolve() };
     sharedStates.set(this.statePath, this.sharedState);
   }
@@ -367,7 +371,10 @@ export class AgentTaskStore {
   }
 
   private async loadFreshState(): Promise<StoredAgentTaskState> {
-    const current = await this.loadState();
+    // Always re-read while holding the cross-process lock. Another PiLink
+    // process may have updated the same project task board since this store
+    // instance last ran, so an in-memory cache is not authoritative.
+    const current = await this.readStateFile();
     const nowValue = this.now();
     if (!(nowValue instanceof Date) || !Number.isFinite(nowValue.getTime())) throw new Error("now must return a valid Date");
     const nowMs = nowValue.getTime();
@@ -399,21 +406,64 @@ export class AgentTaskStore {
   }
 
   private async enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
-    const operation = this.sharedState.mutationQueue.then(mutation);
+    const operation = this.sharedState.mutationQueue.then(() => this.withStateLock(mutation));
     this.sharedState.mutationQueue = operation.then(() => undefined, () => undefined);
     return operation;
   }
 
-  private async loadState(): Promise<StoredAgentTaskState> {
-    if (this.sharedState.state) return this.sharedState.state;
-    const stateLoad = this.sharedState.stateLoad || this.readStateFile();
-    this.sharedState.stateLoad = stateLoad;
+  private async withStateLock<T>(operation: () => Promise<T>): Promise<T> {
+    await this.ensureDirectories();
+    const token = `${process.pid}:${randomBytes(16).toString("hex")}`;
+    const deadline = Date.now() + AGENT_TASK_LOCK_TIMEOUT_MS;
+
+    while (true) {
+      try {
+        const handle = await fs.promises.open(this.lockPath, "wx", 0o600);
+        let initializationError: unknown;
+        try {
+          await handle.writeFile(`${token}\n`, "utf8");
+          await handle.sync();
+        } catch (error) {
+          initializationError = error;
+        } finally {
+          try {
+            await handle.close();
+          } catch (error) {
+            initializationError ??= error;
+          }
+        }
+        if (initializationError !== undefined) {
+          await fs.promises.rm(this.lockPath, { force: true });
+          throw initializationError;
+        }
+        break;
+      } catch (error) {
+        if (!isNodeError(error, "EEXIST")) throw error;
+        await this.removeStaleLock();
+        if (Date.now() >= deadline) throw new Error("Timed out waiting for the agent task store lock");
+        await delay(AGENT_TASK_LOCK_RETRY_MS);
+      }
+    }
+
     try {
-      const state = await stateLoad;
-      this.sharedState.state = state;
-      return state;
+      return await operation();
     } finally {
-      if (this.sharedState.stateLoad === stateLoad) this.sharedState.stateLoad = undefined;
+      try {
+        const owner = (await fs.promises.readFile(this.lockPath, "utf8")).trim();
+        if (owner === token) await fs.promises.rm(this.lockPath, { force: true });
+      } catch (error) {
+        if (!isNodeError(error, "ENOENT")) throw error;
+      }
+    }
+  }
+
+  private async removeStaleLock(): Promise<void> {
+    try {
+      const lock = await fs.promises.stat(this.lockPath);
+      if (Date.now() - lock.mtimeMs <= AGENT_TASK_STALE_LOCK_MS) return;
+      await fs.promises.rm(this.lockPath, { force: true });
+    } catch (error) {
+      if (!isNodeError(error, "ENOENT")) throw error;
     }
   }
 
@@ -438,7 +488,6 @@ export class AgentTaskStore {
 
   private async persistAndCache(state: StoredAgentTaskState): Promise<void> {
     await this.persistState(state);
-    this.sharedState.state = state;
   }
 
   private async persistState(state: StoredAgentTaskState): Promise<void> {
@@ -582,8 +631,11 @@ function validateStoredTask(value: unknown, taskIds: Set<string>): AgentTask {
 
   const hasCompleteLease = Boolean(task.ownerAgentId && task.ownerAgentName && task.leaseExpiresAt);
   const hasAnyLease = Boolean(task.ownerAgentId || task.ownerAgentName || task.leaseExpiresAt);
-  if (leasedStatuses.has(status) && !hasCompleteLease) {
+  if (status === "working" && !hasCompleteLease) {
     throw new Error("Malformed agent task state: claimed task lacks owner or lease");
+  }
+  if (status === "input_required" && hasAnyLease && !hasCompleteLease) {
+    throw new Error("Malformed agent task state: blocked task has an incomplete owner lease");
   }
   if (!leasedStatuses.has(status) && hasAnyLease) {
     throw new Error("Malformed agent task state: unclaimed task has owner or lease");
@@ -696,6 +748,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function syncDirectory(directory: string): Promise<void> {
