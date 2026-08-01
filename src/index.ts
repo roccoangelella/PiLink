@@ -16,6 +16,7 @@ import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
 import { createRateLimiter } from "./security.js";
 import { AgentChatBroker, AgentChatStore } from "./chat.js";
 import { ToolAuditLog } from "./audit.js";
+import { AgentTaskStore } from "./tasks.js";
 
 loadEnvironment();
 const config = loadRuntimeConfig();
@@ -98,6 +99,7 @@ interface ManagedTransport {
 const transports: Record<string, ManagedTransport> = {};
 let agentChatBroker: AgentChatBroker | undefined;
 let toolAuditLog: ToolAuditLog | undefined;
+let agentTaskStore: AgentTaskStore | undefined;
 
 function getAgentChatBroker(): AgentChatBroker {
   if (!agentChatBroker) {
@@ -117,6 +119,16 @@ function getToolAuditLog(): ToolAuditLog {
     });
   }
   return toolAuditLog;
+}
+
+function getAgentTaskStore(): AgentTaskStore {
+  if (!agentTaskStore) {
+    agentTaskStore = new AgentTaskStore({
+      workspace: config.workspace,
+      dataDir: config.dataDir,
+    });
+  }
+  return agentTaskStore;
 }
 
 function tokenFor(req: express.Request): { sub: string; scope: string } {
@@ -230,6 +242,8 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       sessionClient.identity,
       getAgentChatBroker(),
       getToolAuditLog(),
+      undefined,
+      getAgentTaskStore(),
     );
     const dispose = once(handle.dispose);
     let managed: ManagedTransport | undefined;
@@ -315,6 +329,8 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     sessionClient.identity,
     getAgentChatBroker(),
     getToolAuditLog(),
+    undefined,
+    getAgentTaskStore(),
   );
   const dispose = once(handle.dispose);
   transports[transport.sessionId] = {

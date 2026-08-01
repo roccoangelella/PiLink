@@ -10,6 +10,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ToolAuditLog } from "../dist/audit.js";
 import { AgentChatBroker, AgentChatStore } from "../dist/chat.js";
 import { createMcpServer } from "../dist/mcp.js";
+import { AgentTaskStore } from "../dist/tasks.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,12 +24,15 @@ test("audits every MCP tool category without recording arguments or results", as
 
   const audit = new ToolAuditLog({ workspace, dataDir });
   const broker = new AgentChatBroker(new AgentChatStore({ workspace, dataDir }));
+  const tasks = new AgentTaskStore({ workspace, dataDir });
   const handle = createMcpServer(
     { workspace, unsafeFullAccess: false, allowWorkspaceExecution: false, maxBashTimeoutSeconds: 10 },
     "mcp:tools",
     Object.freeze({ agentId: "audit-agent", agentName: "Audit Agent" }),
     broker,
     audit,
+    "audit-instance",
+    tasks,
   );
   const client = new Client({ name: "mcp-audit-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -43,6 +47,10 @@ test("audits every MCP tool category without recording arguments or results", as
     const run = await client.callTool({ name: "run", arguments: { profile: "git_status" } });
     assert.notEqual(run.isError, true);
     await client.callTool({ name: "agent_chat_post", arguments: { agent_message: "coordinate privately" } });
+    await client.callTool({
+      name: "agent_task_create",
+      arguments: { title: "sensitive coordination task", details: "private acceptance criteria" },
+    });
 
     await audit.flush();
     const events = (await fs.readFile(audit.logPath, "utf8")).trim().split("\n").map(JSON.parse);
@@ -52,8 +60,9 @@ test("audits every MCP tool category without recording arguments or results", as
       "read",
       "run",
       "agent_chat_post",
+      "agent_task_create",
     ]);
-    assert.deepEqual(events.map((event) => event.outcome), ["success", "success", "error", "success", "success"]);
+    assert.deepEqual(events.map((event) => event.outcome), ["success", "success", "error", "success", "success", "success"]);
     assert.ok(events.every((event) => event.agentId === "audit-agent"));
     assert.ok(events.every((event) => event.accessMode === "workspace"));
     assert.equal(new Set(events.map((event) => event.callId)).size, events.length);
@@ -71,7 +80,14 @@ test("audits every MCP tool category without recording arguments or results", as
     );
 
     const serialized = JSON.stringify(events);
-    for (const sensitive of ["note.txt", "missing.txt", "sensitive file contents", "coordinate privately"]) {
+    for (const sensitive of [
+      "note.txt",
+      "missing.txt",
+      "sensitive file contents",
+      "coordinate privately",
+      "sensitive coordination task",
+      "private acceptance criteria",
+    ]) {
       assert.doesNotMatch(serialized, new RegExp(sensitive.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }
     assert.ok(events.every((event) => !Object.hasOwn(event, "input") && !Object.hasOwn(event, "result") && !Object.hasOwn(event, "error")));

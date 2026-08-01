@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { AgentChatBroker, AgentChatStore } from "../dist/chat.js";
 import { createMcpServer } from "../dist/mcp.js";
+import { AgentTaskStore } from "../dist/tasks.js";
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-tool-contract-"));
@@ -20,6 +21,7 @@ test("every advertised tool has an agent-readable strict contract", async (t) =>
   const value = await fixture();
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
   const broker = new AgentChatBroker(new AgentChatStore({ workspace: value.workspace, dataDir: value.dataDir }));
+  const tasks = new AgentTaskStore({ workspace: value.workspace, dataDir: value.dataDir });
   const handle = createMcpServer(
     { workspace: value.workspace, unsafeFullAccess: false, allowWorkspaceExecution: false, maxBashTimeoutSeconds: 30 },
     "mcp:tools",
@@ -27,6 +29,7 @@ test("every advertised tool has an agent-readable strict contract", async (t) =>
     broker,
     undefined,
     "contract-instance",
+    tasks,
   );
   const client = new Client({ name: "tool-contract-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -37,7 +40,7 @@ test("every advertised tool has an agent-readable strict contract", async (t) =>
   });
 
   const tools = (await client.listTools()).tools;
-  assert.ok(tools.length >= 10, "expected the native, run, guidance, and coordination tools");
+  assert.ok(tools.length >= 18, "expected the native, run, guidance, chat, and task-coordination tools");
   assert.equal(new Set(tools.map((tool) => tool.name)).size, tools.length, "tool names must be unique");
 
   for (const tool of tools) {

@@ -84,6 +84,21 @@ Agents that subscribe to `pilink://agent-chat` receive standard MCP resource-upd
 
 One OAuth client ID represents one durable agent identity, not one ChatGPT conversation. PiLink distinguishes concurrent connections with `agent_instance_id`, so parallel sessions sharing a client remain visible to one another. Separate OAuth clients with unique `client_name` values are still recommended when agents need distinct durable authorship, scopes, or credentials. This is coordination support, not chat-only authorization; the normal OAuth and remote-code-execution warnings above still apply.
 
+## Agent task board
+
+PiLink also provides a durable, project-scoped task board for work that needs ownership, blocking states, or terminal results. It is intentionally exposed through namespaced `agent_task_*` tools rather than claiming compatibility with the evolving MCP Tasks extension. Task state is stored privately beside agent chat under `PI_DATA_DIR`, with a maximum of 200 retained tasks and oldest-terminal-task pruning when space is needed.
+
+The compact task surface is:
+
+- `agent_task_create`: create an `open` task with a title and optional acceptance criteria.
+- `agent_task_read`: retrieve one task by `task_id`, or list recently updated tasks with optional status filters.
+- `agent_task_claim`: claim an open task or renew a task already owned by the same OAuth agent. Ownership uses a renewable lease, defaulting to 15 minutes and capped at 24 hours.
+- `agent_task_request_input` / `agent_task_provide_input`: preserve a durable `input_required` blocker and resume it only after an authorized answer. Lease expiry clears stale ownership but does not erase the pending question.
+- `agent_task_release`: return working tasks to `open`; blocked tasks remain `input_required` while relinquishing their owner.
+- `agent_task_finish`: record `completed`, `failed`, or `cancelled`, with an optional artifact for completed or failed work.
+
+Task reads require `mcp:read` or `mcp:tools`; mutations require `mcp:write` or `mcp:tools`. The authenticated OAuth identity is always used as creator or owner—callers cannot select another agent ID. A task creator may cancel its task, while completion and failure require the current unexpired owner. Agents should read the board before substantial work, claim before editing, renew long-running leases, and record a useful artifact such as a commit hash or report path when finished.
+
 ## Development and publishing
 
 ```bash

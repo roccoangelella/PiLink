@@ -186,7 +186,7 @@ export class AgentTaskStore {
       const state = await this.loadFreshState();
       const task = requireTask(state, taskId);
       if (terminalStatuses.has(task.status)) throw new Error(`Task is already ${task.status}`);
-      if (task.status === "input_required" && task.ownerAgentId !== identity.agentId) {
+      if (task.status === "input_required") {
         throw new Error("Task requires input before it can be claimed");
       }
       if (task.status !== "open" && task.ownerAgentId !== identity.agentId) {
@@ -197,7 +197,7 @@ export class AgentTaskStore {
       const updated: AgentTask = {
         ...task,
         status: "working",
-        statusMessage: undefined,
+        statusMessage: task.status === "open" ? undefined : task.statusMessage,
         ownerAgentId: identity.agentId,
         ownerAgentName: identity.agentName,
         leaseExpiresAt: this.leaseExpiryIso(leaseSeconds),

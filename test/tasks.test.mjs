@@ -154,6 +154,10 @@ test("active owners resume after input and release preserves blocked status", as
     statusMessage: "Need creator confirmation",
     leaseSeconds: 60,
   });
+  await assert.rejects(
+    store.claim({ ...bob, taskId: task.taskId, leaseSeconds: 60 }),
+    /requires input before it can be claimed/,
+  );
 
   const resumedWorking = await store.provideInput({
     ...alice,

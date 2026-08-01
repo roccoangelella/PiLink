@@ -16,6 +16,11 @@ import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextp
 import { AGENT_CHAT_URI, type AgentChatBroker, type AgentChatMessage, type AgentChatReadResult } from "./chat.js";
 import type { ToolAuditEventInput } from "./audit.js";
 import { executeRunProfile, RUN_PROFILES, type RunProfileResult } from "./run.js";
+import {
+  AGENT_TASK_STATUSES,
+  type AgentTask,
+  type AgentTaskStore,
+} from "./tasks.js";
 
 export interface AuthenticatedAgentIdentity {
   agentId: string;
@@ -50,6 +55,7 @@ export function createMcpServer(
   broker?: AgentChatBroker,
   audit?: ToolAuditSink,
   agentInstanceId: string = randomUUID(),
+  taskStore?: AgentTaskStore,
 ): McpServerHandle {
   const connectionAgentInstanceId = normalizeAgentInstanceId(agentInstanceId);
   const systemPromptText = buildSystemPrompt(policy);
@@ -292,6 +298,23 @@ export function createMcpServer(
       next_cursor: z.number().int().nonnegative(),
       gap: z.boolean(),
     }).strict();
+    const taskSchema = z.object({
+      task_id: z.string(),
+      title: z.string(),
+      details: z.string().optional(),
+      status: z.enum(AGENT_TASK_STATUSES),
+      status_message: z.string().optional(),
+      artifact: z.string().optional(),
+      created_by_agent_id: z.string(),
+      created_by_agent_name: z.string(),
+      owner_agent_id: z.string().optional(),
+      owner_agent_name: z.string().optional(),
+      lease_expires_at: z.string().optional(),
+      created_at: z.string(),
+      updated_at: z.string(),
+      revision: z.number().int().positive(),
+    }).strict();
+    const taskListSchema = z.object({ tasks: z.array(taskSchema) }).strict();
     server.registerTool("agent_chat_post", {
       title: "Post Agent Coordination",
       description: `Post a concise status, claim, question, or completion to the shared project chat. The authenticated OAuth identity is always used as the author. ${chatGuidance}`,
@@ -343,6 +366,194 @@ export function createMcpServer(
       }
     }));
 
+    if (taskStore) {
+      const identityInput = {
+        agentId: authenticatedIdentity.agentId,
+        agentName: authenticatedIdentity.agentName,
+      };
+      const taskResult = (task: AgentTask) => {
+        const mapped = toAgentTask(task);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(mapped) }],
+          structuredContent: mapped,
+        };
+      };
+      const taskFailure = (error: unknown, fallback: string) =>
+        toolError(error instanceof Error ? error.message : fallback);
+
+      server.registerTool("agent_task_create", {
+        title: "Create Coordination Task",
+        description: "Create a durable project-coordination task before delegating or starting substantial work. The authenticated OAuth identity is recorded as the creator.",
+        inputSchema: z.object({
+          title: z.string().min(1).max(256).describe("Short, concrete task title describing the intended outcome."),
+          details: z.string().min(1).max(8192).optional().describe("Acceptance criteria, constraints, file boundaries, or context needed by another agent."),
+        }).strict(),
+        outputSchema: taskSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_create", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_create'");
+        try {
+          return taskResult(await taskStore.create({ ...identityInput, title: args.title, details: args.details }));
+        } catch (error) {
+          return taskFailure(error, "Agent task creation failed");
+        }
+      }));
+
+      server.registerTool("agent_task_read", {
+        title: "Read Coordination Tasks",
+        description: "Read one durable coordination task by ID, or omit task_id to list recently updated tasks with optional status filters. Use this before claiming work to avoid duplication.",
+        inputSchema: z.object({
+          task_id: z.string().min(1).max(256).optional().describe("Exact task ID to retrieve; omit to list tasks."),
+          statuses: z.array(z.enum(AGENT_TASK_STATUSES)).min(1).max(AGENT_TASK_STATUSES.length).optional().describe("Optional statuses to include when listing tasks; invalid with task_id."),
+          limit: z.number().int().min(1).max(200).optional().describe("Maximum listed tasks, from 1 to 200; invalid with task_id."),
+        }).strict(),
+        outputSchema: taskListSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_read", extra, async () => {
+        if (!canChatRead(scopes)) return toolError("Token scope does not permit 'agent_task_read'");
+        if (args.task_id && (args.statuses !== undefined || args.limit !== undefined)) {
+          return toolError("statuses and limit cannot be used with task_id");
+        }
+        try {
+          const tasks = args.task_id
+            ? [await taskStore.get(args.task_id)]
+            : await taskStore.list({ statuses: args.statuses, limit: args.limit });
+          const result = { tasks: tasks.map(toAgentTask) };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
+        } catch (error) {
+          return taskFailure(error, "Agent task read failed");
+        }
+      }));
+
+      server.registerTool("agent_task_claim", {
+        title: "Claim or Renew Task",
+        description: "Claim an open coordination task before working on it. Repeating this for a task already owned by the same OAuth agent renews its working lease; tasks waiting for input must be resumed with agent_task_provide_input instead.",
+        inputSchema: z.object({
+          task_id: z.string().min(1).max(256).describe("Task ID to claim or renew."),
+          lease_seconds: z.number().int().min(1).max(86400).optional().describe("Ownership lease duration in seconds; defaults to 900 and is capped at 86400."),
+        }).strict(),
+        outputSchema: taskSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_claim", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_claim'");
+        try {
+          return taskResult(await taskStore.claim({
+            ...identityInput,
+            taskId: args.task_id,
+            leaseSeconds: args.lease_seconds,
+          }));
+        } catch (error) {
+          return taskFailure(error, "Agent task claim failed");
+        }
+      }));
+
+      server.registerTool("agent_task_request_input", {
+        title: "Request Task Input",
+        description: "Pause a task owned by the authenticated agent when a concrete decision or missing fact is required. The blocked state remains durable even if the ownership lease later expires.",
+        inputSchema: z.object({
+          task_id: z.string().min(1).max(256).describe("Owned task that cannot proceed without input."),
+          status_message: z.string().min(1).max(8192).describe("Specific question or missing information required to resume the task."),
+          lease_seconds: z.number().int().min(1).max(86400).optional().describe("How long to retain the current owner while waiting, in seconds."),
+        }).strict(),
+        outputSchema: taskSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_request_input", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_request_input'");
+        try {
+          return taskResult(await taskStore.requestInput({
+            ...identityInput,
+            taskId: args.task_id,
+            statusMessage: args.status_message,
+            leaseSeconds: args.lease_seconds,
+          }));
+        } catch (error) {
+          return taskFailure(error, "Agent task input request failed");
+        }
+      }));
+
+      server.registerTool("agent_task_provide_input", {
+        title: "Provide Task Input",
+        description: "Provide the concrete answer needed by an input-required task. The creator or active owner may resume it; an active owner returns to working, while an ownerless task returns to open for claiming.",
+        inputSchema: z.object({
+          task_id: z.string().min(1).max(256).describe("Input-required task to resume."),
+          status_message: z.string().min(1).max(8192).describe("Answer, decision, or new information that resolves the pending request."),
+          lease_seconds: z.number().int().min(1).max(86400).optional().describe("Renewed owner lease when the task still has an active owner."),
+        }).strict(),
+        outputSchema: taskSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_provide_input", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_provide_input'");
+        try {
+          return taskResult(await taskStore.provideInput({
+            ...identityInput,
+            taskId: args.task_id,
+            statusMessage: args.status_message,
+            leaseSeconds: args.lease_seconds,
+          }));
+        } catch (error) {
+          return taskFailure(error, "Agent task input update failed");
+        }
+      }));
+
+      server.registerTool("agent_task_release", {
+        title: "Release Task Ownership",
+        description: "Release a task owned by the authenticated agent so another agent can take it. Working tasks return to open; input-required tasks stay blocked and only lose their owner lease.",
+        inputSchema: z.object({
+          task_id: z.string().min(1).max(256).describe("Owned task whose lease should be released."),
+          status_message: z.string().min(1).max(8192).optional().describe("Optional handoff note explaining current progress or why the task is being released."),
+        }).strict(),
+        outputSchema: taskSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_release", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_release'");
+        try {
+          return taskResult(await taskStore.release({
+            ...identityInput,
+            taskId: args.task_id,
+            statusMessage: args.status_message,
+          }));
+        } catch (error) {
+          return taskFailure(error, "Agent task release failed");
+        }
+      }));
+
+      server.registerTool("agent_task_finish", {
+        title: "Finish or Cancel Task",
+        description: "Mark an owned task completed or failed, or cancel a non-terminal task as its creator or owner. Completed and failed tasks may include a concise artifact such as a commit hash or report path.",
+        inputSchema: z.object({
+          task_id: z.string().min(1).max(256).describe("Task to transition to a terminal state."),
+          outcome: z.enum(["completed", "failed", "cancelled"]).describe("Terminal outcome to record."),
+          status_message: z.string().min(1).max(8192).optional().describe("Concise completion, failure, or cancellation explanation."),
+          artifact: z.string().min(1).max(16384).optional().describe("Commit hash, file path, report summary, or other result reference; invalid for cancelled tasks."),
+        }).strict(),
+        outputSchema: taskSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_task_finish", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_finish'");
+        if (args.outcome === "cancelled" && args.artifact !== undefined) {
+          return toolError("artifact cannot be supplied when outcome is cancelled");
+        }
+        try {
+          const base = {
+            ...identityInput,
+            taskId: args.task_id,
+            statusMessage: args.status_message,
+          };
+          const task = args.outcome === "completed"
+            ? await taskStore.complete({ ...base, artifact: args.artifact })
+            : args.outcome === "failed"
+              ? await taskStore.fail({ ...base, artifact: args.artifact })
+              : await taskStore.cancel(base);
+          return taskResult(task);
+        } catch (error) {
+          return taskFailure(error, "Agent task terminal update failed");
+        }
+      }));
+    }
+
     server.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
       requireChatReadScope(scopes);
       if (request.params.uri !== AGENT_CHAT_URI) throw new Error("Unsupported resource URI");
@@ -371,8 +582,8 @@ export function createMcpServer(
       unsubscribeBroker();
       subscriptions.clear();
     };
-  } else if (identity || broker) {
-    throw new Error("Authenticated identity and AgentChatBroker must be provided together");
+  } else if (identity || broker || taskStore) {
+    throw new Error("Authenticated identity and AgentChatBroker must be provided together; AgentTaskStore requires both");
   }
 
   return { server, agentInstanceId: connectionAgentInstanceId, dispose, connect: (transport) => server.connect(transport) };
@@ -412,6 +623,25 @@ function toChatSnapshot(result: AgentChatReadResult) {
   };
 }
 
+function toAgentTask(task: AgentTask) {
+  return {
+    task_id: task.taskId,
+    title: task.title,
+    details: task.details,
+    status: task.status,
+    status_message: task.statusMessage,
+    artifact: task.artifact,
+    created_by_agent_id: task.createdByAgentId,
+    created_by_agent_name: task.createdByAgentName,
+    owner_agent_id: task.ownerAgentId,
+    owner_agent_name: task.ownerAgentName,
+    lease_expires_at: task.leaseExpiresAt,
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
+    revision: task.revision,
+  };
+}
+
 function normalizeAgentInstanceId(value: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error("agentInstanceId must be non-empty");
@@ -426,6 +656,8 @@ Tools are available only when permitted by the OAuth token. In workspace mode, f
 
 Guidelines:
 - Inspect before changing files and keep edits targeted.
+- When coordination tools are available, read agent chat and durable tasks before substantial work, then claim or create a task to avoid duplication.
+- Renew active task leases, preserve input-required blockers, and record a terminal outcome with a useful artifact when work finishes.
 - Use the provided paths in results.
 - Prefer fixed run profiles over bash; npm_build and npm_test still execute trusted workspace code.
 - Run relevant tests after edits.
