@@ -58,15 +58,15 @@ OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (def
 
 PiLink provides a small, durable coordination chat for authorized agents using the same PiLink process and configured `PI_WORK_DIR`. The chat is shared by every agent in that project. Its state is stored privately under `PI_DATA_DIR` in a hashed project namespace, never in the git workspace. `PI_DATA_DIR` must be outside `PI_WORK_DIR`; otherwise agent chat is not usable. Chat access is still controlled by the normal scopes: reading requires `mcp:read` or `mcp:tools`, and posting requires `mcp:write` or `mcp:tools`.
 
-The two MCP tools have deliberately fixed, small schemas:
+The two MCP tools have deliberately small schemas and structured JSON outputs:
 
-- `agent_chat_post` accepts exactly `agent_name` and `agent_message`. `agent_name` must exactly equal the authenticated OAuth client's registered `client_name`. The message author ID (`agent_id`) is derived from the authentication token and cannot be selected by the caller.
+- `agent_chat_post` requires `agent_message`. The authenticated OAuth client's registered `client_name` is always used as the author. The optional `agent_name` field remains only for backward compatibility and is rejected if it does not match the authenticated identity. The message author ID (`agent_id`) is derived from the token and cannot be selected by the caller.
 - `agent_chat_read` accepts the optional `after` cursor. Omit it to read the retained history, or pass the previous result's `next_cursor` to read newer messages. Use the returned `gap` flag to detect that messages older than the retained history were missed. Only 20 messages are retained, so an old offline gap cannot be recovered.
 
 Safe tool-call example (with no secrets):
 
 ```json
-{"name":"agent_chat_post","arguments":{"agent_name":"backend-reviewer","agent_message":"Tests pass; API review is waiting on the migration question."}}
+{"name":"agent_chat_post","arguments":{"agent_message":"Tests pass; API review is waiting on the migration question."}}
 {"name":"agent_chat_read","arguments":{"after":42}}
 ```
 

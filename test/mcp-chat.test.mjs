@@ -39,23 +39,38 @@ async function closeConnection(connection) {
   await connection.client.close();
 }
 
-test("discovers native and chat tools with exact chat schemas", async () => {
+test("discovers tools with precise schemas, annotations, and server instructions", async () => {
   const value = await fixture();
   const connection = await connected(value, "mcp:tools", { agentId: "agent-a", agentName: "Agent A" });
   try {
     const tools = (await connection.client.listTools()).tools;
     assert.deepEqual(tools.filter((tool) => ["read", "bash", "edit", "write", "grep", "find", "ls", "agent_chat_post", "agent_chat_read"].includes(tool.name)).map((tool) => tool.name), ["read", "bash", "edit", "write", "grep", "find", "ls", "agent_chat_post", "agent_chat_read"]);
 
+    assert.match(connection.client.getInstructions(), /Inspect before changing files/);
+
+    const nativeRead = tools.find((tool) => tool.name === "read");
+    assert.equal(nativeRead.annotations.readOnlyHint, true);
+    assert.equal(nativeRead.annotations.openWorldHint, false);
+    assert.match(nativeRead.inputSchema.properties.offset.description, /One-based text line/);
+    const bash = tools.find((tool) => tool.name === "bash");
+    assert.equal(bash.annotations.destructiveHint, true);
+    assert.equal(bash.annotations.openWorldHint, true);
+
     const post = tools.find((tool) => tool.name === "agent_chat_post");
-    assert.deepEqual(post.inputSchema.required, ["agent_name", "agent_message"]);
+    assert.deepEqual(post.inputSchema.required, ["agent_message"]);
     assert.equal(post.inputSchema.additionalProperties, false);
     assert.deepEqual(Object.keys(post.inputSchema.properties).sort(), ["agent_message", "agent_name"]);
+    assert.equal(post.annotations.destructiveHint, false);
+    assert.equal(post.outputSchema.additionalProperties, false);
+    assert.deepEqual(post.outputSchema.required, ["cursor", "agent_id", "agent_name", "agent_message"]);
     const read = tools.find((tool) => tool.name === "agent_chat_read");
     assert.equal(read.inputSchema.additionalProperties, false);
     assert.deepEqual(read.inputSchema.required, undefined);
+    assert.equal(read.annotations.readOnlyHint, true);
+    assert.equal(read.outputSchema.additionalProperties, false);
 
     assert.equal((await connection.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Agent A" } })).isError, true);
-    assert.equal((await connection.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Agent A", agent_message: "do this", extra: true } })).isError, true);
+    assert.equal((await connection.client.callTool({ name: "agent_chat_post", arguments: { agent_message: "do this", extra: true } })).isError, true);
   } finally {
     await closeConnection(connection);
     await fs.rm(value.root, { recursive: true, force: true });
@@ -74,10 +89,13 @@ test("enforces scopes, binds posts to the authenticated identity, and maps resul
 
     const wrongName = await writer.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Forged Name", agent_message: "action" } });
     assert.equal(wrongName.isError, true);
-    const posted = text(await writer.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Authenticated Name", agent_message: "action" } }));
+    const postedResult = await writer.client.callTool({ name: "agent_chat_post", arguments: { agent_message: "action" } });
+    const posted = text(postedResult);
     assert.deepEqual(posted, { cursor: 1, agent_id: "authenticated-id", agent_name: "Authenticated Name", agent_message: "action" });
+    assert.deepEqual(postedResult.structuredContent, posted);
 
-    const read = text(await reader.client.callTool({ name: "agent_chat_read", arguments: { after: 0 } }));
+    const readResult = await reader.client.callTool({ name: "agent_chat_read", arguments: { after: 0 } });
+    const read = text(readResult);
     assert.deepEqual(read, {
       messages: [posted],
       oldest_cursor: 1,
@@ -85,6 +103,7 @@ test("enforces scopes, binds posts to the authenticated identity, and maps resul
       next_cursor: 1,
       gap: false,
     });
+    assert.deepEqual(readResult.structuredContent, read);
   } finally {
     await closeConnection(writer);
     await closeConnection(reader);
