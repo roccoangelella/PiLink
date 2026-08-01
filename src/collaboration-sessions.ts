@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -12,13 +12,28 @@ export const COLLABORATION_SESSION_MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const COLLABORATION_SESSION_DEFAULT_RESUME_GRACE_SECONDS = 7 * 24 * 60 * 60;
 export const COLLABORATION_SESSION_MAX_RESUME_GRACE_SECONDS = 90 * 24 * 60 * 60;
 export const COLLABORATION_SESSION_LIMIT = 200;
+export const COLLABORATION_SESSION_DEFAULT_MAX_LIVE_PER_ACTOR = 8;
+export const COLLABORATION_SESSION_MAX_LIVE_PER_ACTOR = 100;
+export const COLLABORATION_SESSION_DEFAULT_RECOVERY_SECONDS = 5 * 60;
+export const COLLABORATION_SESSION_MAX_RECOVERY_SECONDS = 60 * 60;
+export const COLLABORATION_SESSION_DEFAULT_TOUCH_INTERVAL_SECONDS = 60;
+export const COLLABORATION_SESSION_MAX_TOUCH_INTERVAL_SECONDS = 60 * 60;
+export const COLLABORATION_SESSION_RESUME_REQUEST_ID_MAX_BYTES = 128;
+export const COLLABORATION_SESSION_CREDENTIAL_VERSION = 1;
 
 const SESSION_LOCK_TIMEOUT_MS = 5_000;
 const SESSION_STALE_LOCK_MS = 30_000;
 const SESSION_LOCK_RETRY_MS = 25;
 const SESSION_ID_PATTERN = /^cs_[A-Za-z0-9_-]{24}$/;
 const SESSION_HANDLE_PATTERN = /^(cs_[A-Za-z0-9_-]{24})\.([A-Za-z0-9_-]{43})$/;
-const SESSION_HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const SESSION_MAC_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const SESSION_KEY_ID_MAX_BYTES = 64;
+const SESSION_KEY_MATERIAL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const CREDENTIAL_MAC_DOMAIN = "pilink/collaboration-session/credential-mac/v1";
+const RESUME_REQUEST_MAC_DOMAIN = "pilink/collaboration-session/resume-request-mac/v1";
+const RESUME_SECRET_DOMAIN = "pilink/collaboration-session/resume-secret/v1";
+const LEGACY_TOMBSTONE_DOMAIN = "pilink/collaboration-session/legacy-tombstone/v1";
+const STATE_KEY_BINDING_DOMAIN = "pilink/collaboration-session/state-key-binding/v1";
 
 export interface CollaborationSessionIdentity {
   agentId: string;
@@ -38,6 +53,8 @@ export interface CollaborationSession {
   lastSeenAt: string;
   expiresAt: string;
   resumeUntil: string;
+  credentialGeneration: number;
+  lastCredentialRotatedAt?: string;
   releasedAt?: string;
   revokedAt?: string;
   revision: number;
@@ -48,13 +65,22 @@ export interface CollaborationSessionCredential {
   collaborationSessionHandle: string;
 }
 
+export interface CollaborationSessionCredentialKey {
+  keyId: string;
+  keyMaterial: string;
+}
+
 export interface CollaborationSessionStoreOptions {
   workspace: string;
   dataDir?: string;
   now?: () => Date;
   defaultTtlSeconds?: number;
   resumeGraceSeconds?: number;
+  resumeRecoverySeconds?: number;
+  touchIntervalSeconds?: number;
   maxSessions?: number;
+  maxLiveSessionsPerActor?: number;
+  credentialKey: CollaborationSessionCredentialKey;
 }
 
 export interface CollaborationSessionStartInput extends CollaborationSessionIdentity {
@@ -70,21 +96,77 @@ export interface CollaborationSessionHandleInput {
 
 export interface CollaborationSessionResumeInput extends CollaborationSessionHandleInput {
   agentName: string;
+  resumeRequestId: string;
   ttlSeconds?: number;
 }
 
+interface StoredCredentialVerifier {
+  version: 1;
+  keyId: string;
+  generation: number;
+  mac: string;
+}
+
+interface StoredResumeRecovery {
+  sourceGeneration: number;
+  targetGeneration: number;
+  previousCredentialVerifier: StoredCredentialVerifier;
+  requestIdMac: string;
+  ttlSeconds: number;
+  recoveryUntil: string;
+  rotatedAt: string;
+}
+
 interface StoredCollaborationSession extends CollaborationSession {
-  credentialHash: string;
+  credentialVerifier: StoredCredentialVerifier;
+  resumeRecovery?: StoredResumeRecovery;
+}
+
+interface StoredCredentialKeyBinding {
+  version: 1;
+  keyId: string;
+  mac: string;
 }
 
 interface StoredCollaborationSessionState {
+  version: 2;
+  projectKey: string;
+  credentialKeyBinding: StoredCredentialKeyBinding;
+  sessions: StoredCollaborationSession[];
+}
+
+interface LegacyStoredCollaborationSession {
+  collaborationSessionId: string;
+  projectKey: string;
+  agentId: string;
+  agentName: string;
+  label?: string;
+  requestedRoleId?: string;
+  status: CollaborationSessionStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  resumeUntil: string;
+  releasedAt?: string;
+  revokedAt?: string;
+  revision: number;
+  credentialHash: string;
+}
+
+interface LegacyStoredCollaborationSessionState {
   version: 1;
   projectKey: string;
-  sessions: StoredCollaborationSession[];
+  sessions: LegacyStoredCollaborationSession[];
 }
 
 interface SharedSessionState {
   queue: Promise<void>;
+}
+
+interface ValidatedCredentialKey {
+  keyId: string;
+  keyMaterial: Buffer;
 }
 
 const sharedStates = new Map<string, SharedSessionState>();
@@ -94,8 +176,10 @@ const sharedStates = new Map<string, SharedSessionState>();
  *
  * The public collaborationSessionId is safe to expose in task/activity views.
  * The collaborationSessionHandle is a separate bearer capability whose safe
- * delivery is the responsibility of a trusted caller boundary. Only its
- * SHA-256 hash is persisted; public transport exposure is intentionally out of scope here.
+ * delivery is the responsibility of a trusted caller boundary. Only a
+ * versioned, domain-separated HMAC verifier is persisted; public/model-visible
+ * transport exposure remains intentionally blocked because same-OAuth sibling
+ * sessions would otherwise share the bearer-recovery risk.
  */
 export class CollaborationSessionStore {
   public readonly workspace: string;
@@ -108,7 +192,11 @@ export class CollaborationSessionStore {
   private readonly now: () => Date;
   private readonly defaultTtlSeconds: number;
   private readonly resumeGraceSeconds: number;
+  private readonly resumeRecoverySeconds: number;
+  private readonly touchIntervalSeconds: number;
   private readonly maxSessions: number;
+  private readonly maxLiveSessionsPerActor: number;
+  private readonly credentialKey: ValidatedCredentialKey;
   private readonly sharedState: SharedSessionState;
 
   public constructor(options: CollaborationSessionStoreOptions) {
@@ -129,11 +217,30 @@ export class CollaborationSessionStore {
     this.resumeGraceSeconds = validateResumeGraceSeconds(
       options.resumeGraceSeconds ?? COLLABORATION_SESSION_DEFAULT_RESUME_GRACE_SECONDS,
     );
+    this.resumeRecoverySeconds = validateBoundedSeconds(
+      options.resumeRecoverySeconds ?? COLLABORATION_SESSION_DEFAULT_RECOVERY_SECONDS,
+      "resumeRecoverySeconds",
+      COLLABORATION_SESSION_MAX_RECOVERY_SECONDS,
+    );
+    this.touchIntervalSeconds = validateBoundedSeconds(
+      options.touchIntervalSeconds ?? COLLABORATION_SESSION_DEFAULT_TOUCH_INTERVAL_SECONDS,
+      "touchIntervalSeconds",
+      COLLABORATION_SESSION_MAX_TOUCH_INTERVAL_SECONDS,
+    );
     const selectedMaxSessions = options.maxSessions ?? COLLABORATION_SESSION_LIMIT;
     if (!Number.isSafeInteger(selectedMaxSessions) || selectedMaxSessions < 1 || selectedMaxSessions > 10_000) {
       throw new Error("maxSessions must be an integer between 1 and 10000");
     }
     this.maxSessions = selectedMaxSessions;
+    const selectedActorLimit = options.maxLiveSessionsPerActor ?? COLLABORATION_SESSION_DEFAULT_MAX_LIVE_PER_ACTOR;
+    if (!Number.isSafeInteger(selectedActorLimit) || selectedActorLimit < 1 ||
+        selectedActorLimit > COLLABORATION_SESSION_MAX_LIVE_PER_ACTOR) {
+      throw new Error(
+        `maxLiveSessionsPerActor must be an integer between 1 and ${COLLABORATION_SESSION_MAX_LIVE_PER_ACTOR}`,
+      );
+    }
+    this.maxLiveSessionsPerActor = selectedActorLimit;
+    this.credentialKey = validateCredentialKey(options.credentialKey);
 
     this.projectKey = createHash("sha256").update(this.workspace).digest("hex");
     this.projectDir = path.join(this.dataDir, "projects", this.projectKey);
@@ -158,9 +265,16 @@ export class CollaborationSessionStore {
     return this.enqueue(async () => {
       const now = this.nowDate();
       const state = await this.readAndExpire(now);
+      requireActorSessionCapacity(
+        state.sessions,
+        identity.agentId,
+        this.maxLiveSessionsPerActor,
+        now.getTime(),
+      );
       const sessionId = generateSessionId();
       const secret = randomBytes(32).toString("base64url");
       const expiresAt = new Date(now.getTime() + ttlSeconds * 1_000);
+      const credentialGeneration = 1;
       const session: StoredCollaborationSession = {
         collaborationSessionId: sessionId,
         projectKey: this.projectKey,
@@ -174,30 +288,26 @@ export class CollaborationSessionStore {
         lastSeenAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
         resumeUntil: new Date(expiresAt.getTime() + this.resumeGraceSeconds * 1_000).toISOString(),
+        credentialGeneration,
         revision: 1,
-        credentialHash: hashSecret(secret),
+        credentialVerifier: createCredentialVerifier(
+          this.credentialKey,
+          this.projectKey,
+          sessionId,
+          identity.agentId,
+          credentialGeneration,
+          secret,
+        ),
       };
       const sessions = makeRoomForSession(state.sessions, this.maxSessions, now.getTime());
-      const next = withSessions(this.projectKey, [...sessions, session]);
+      const next = withSessions(state, [...sessions, session]);
       await this.persistState(next);
       return { session: publicSession(session), collaborationSessionHandle: `${sessionId}.${secret}` };
     });
   }
 
-  /** Validate an active handle for a collaboration mutation and update last_seen_at. */
+  /** Validate an active handle and return a short-lived verified snapshot. */
   public async authenticate(input: CollaborationSessionHandleInput): Promise<CollaborationSession> {
-    return (await this.withActiveSession(input, async () => undefined)).session;
-  }
-
-  /**
-   * Run one coordination mutation while the actor-bound session remains locked
-   * and active. Release, resume, or administrative revocation in another
-   * process cannot interleave between authorization and the protected update.
-   */
-  public async withActiveSession<T>(
-    input: CollaborationSessionHandleInput,
-    operation: (session: CollaborationSession) => T | Promise<T>,
-  ): Promise<{ session: CollaborationSession; result: T }> {
     const agentId = validateAgentId(input.agentId);
     const handle = parseHandle(input.collaborationSessionHandle);
 
@@ -205,9 +315,11 @@ export class CollaborationSessionStore {
       const now = this.nowDate();
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
-      requireHandleOwner(session, agentId, handle.secret);
+      requireCurrentHandleOwner(session, agentId, handle.secret, this.credentialKey);
       requireActiveSession(session);
-      const result = await operation(publicSession(session));
+      if (now.getTime() - Date.parse(session.lastSeenAt) < this.touchIntervalSeconds * 1_000) {
+        return publicSession(session);
+      }
       const updated: StoredCollaborationSession = {
         ...session,
         lastSeenAt: now.toISOString(),
@@ -215,7 +327,7 @@ export class CollaborationSessionStore {
         revision: session.revision + 1,
       };
       await this.persistState(replaceSession(state, updated));
-      return { session: publicSession(updated), result };
+      return publicSession(updated);
     });
   }
 
@@ -228,24 +340,60 @@ export class CollaborationSessionStore {
       const now = this.nowDate();
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
-      requireHandleOwner(session, agentId, handle.secret);
+      requireCurrentHandleOwner(session, agentId, handle.secret, this.credentialKey);
       return publicSession(session);
     });
   }
 
-  /** Resume or rotate an active/expired session. The previous handle is invalidated. */
+  /**
+   * Rotate an active/expired session credential exactly once per generation.
+   * Repeating the same request with the previous handle during the short
+   * recovery window deterministically re-derives the already-issued handle.
+   */
   public async resume(input: CollaborationSessionResumeInput): Promise<CollaborationSessionCredential> {
     const identity = validateIdentity(input);
     const handle = parseHandle(input.collaborationSessionHandle);
-    const ttlSeconds = input.ttlSeconds === undefined
-      ? this.defaultTtlSeconds
+    const resumeRequestId = validateResumeRequestId(input.resumeRequestId);
+    const requestedTtlSeconds = input.ttlSeconds === undefined
+      ? undefined
       : validateTtlSeconds(input.ttlSeconds, "ttlSeconds");
+    const ttlSeconds = requestedTtlSeconds ?? this.defaultTtlSeconds;
 
     return this.enqueue(async () => {
       const now = this.nowDate();
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
-      requireHandleOwner(session, identity.agentId, handle.secret);
+      if (session.agentId !== identity.agentId) {
+        throw new Error("Collaboration session belongs to a different OAuth actor");
+      }
+
+      const currentMatches = credentialVerifierMatches(
+        session,
+        session.credentialVerifier,
+        handle.secret,
+        this.credentialKey,
+      );
+      if (!currentMatches) {
+        const recovered = recoverCompletedResume(
+          session,
+          handle.secret,
+          resumeRequestId,
+          requestedTtlSeconds,
+          now,
+          this.credentialKey,
+        );
+        if (recovered) return recovered;
+        throw new Error("Invalid collaboration session handle or resume request");
+      }
+
+      if (session.resumeRecovery && resumeRequestMatches(
+        session,
+        session.resumeRecovery,
+        resumeRequestId,
+        this.credentialKey,
+      )) {
+        throw new Error("Resume request already completed; retry with the previous handle during recovery or use a new request ID");
+      }
       if (session.status === "released") {
         throw new Error("Collaboration session was released; start a new session and reassign its tasks");
       }
@@ -256,20 +404,53 @@ export class CollaborationSessionStore {
         throw new Error("Collaboration session expired beyond its resume window; start a new session and reassign its tasks");
       }
 
-      const secret = randomBytes(32).toString("base64url");
+      const sourceGeneration = session.credentialGeneration;
+      const targetGeneration = sourceGeneration + 1;
+      const secret = deriveResumeSecret(
+        this.credentialKey,
+        session,
+        sourceGeneration,
+        targetGeneration,
+        resumeRequestId,
+        ttlSeconds,
+      );
       const expiresAt = new Date(now.getTime() + ttlSeconds * 1_000);
+      const rotatedAt = now.toISOString();
       const updated: StoredCollaborationSession = {
         ...session,
         agentName: identity.agentName,
         status: "active",
-        lastSeenAt: now.toISOString(),
-        updatedAt: now.toISOString(),
+        lastSeenAt: rotatedAt,
+        updatedAt: rotatedAt,
         expiresAt: expiresAt.toISOString(),
         resumeUntil: new Date(expiresAt.getTime() + this.resumeGraceSeconds * 1_000).toISOString(),
+        credentialGeneration: targetGeneration,
+        lastCredentialRotatedAt: rotatedAt,
         releasedAt: undefined,
         revokedAt: undefined,
         revision: session.revision + 1,
-        credentialHash: hashSecret(secret),
+        credentialVerifier: createCredentialVerifier(
+          this.credentialKey,
+          this.projectKey,
+          session.collaborationSessionId,
+          session.agentId,
+          targetGeneration,
+          secret,
+        ),
+        resumeRecovery: {
+          sourceGeneration,
+          targetGeneration,
+          previousCredentialVerifier: session.credentialVerifier,
+          requestIdMac: createResumeRequestMac(
+            this.credentialKey,
+            session,
+            sourceGeneration,
+            resumeRequestId,
+          ),
+          ttlSeconds,
+          recoveryUntil: new Date(now.getTime() + this.resumeRecoverySeconds * 1_000).toISOString(),
+          rotatedAt,
+        },
       };
       await this.persistState(replaceSession(state, updated));
       return {
@@ -287,7 +468,7 @@ export class CollaborationSessionStore {
       const now = this.nowDate();
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
-      requireHandleOwner(session, agentId, handle.secret);
+      requireCurrentHandleOwner(session, agentId, handle.secret, this.credentialKey);
       if (session.status === "revoked") throw new Error("Collaboration session is revoked");
       if (session.status === "released") return publicSession(session);
       const updated: StoredCollaborationSession = {
@@ -295,6 +476,7 @@ export class CollaborationSessionStore {
         status: "released",
         releasedAt: now.toISOString(),
         updatedAt: now.toISOString(),
+        resumeRecovery: undefined,
         revision: session.revision + 1,
       };
       await this.persistState(replaceSession(state, updated));
@@ -316,6 +498,7 @@ export class CollaborationSessionStore {
         revokedAt: now.toISOString(),
         releasedAt: undefined,
         updatedAt: now.toISOString(),
+        resumeRecovery: undefined,
         revision: session.revision + 1,
       };
       await this.persistState(replaceSession(state, updated));
@@ -337,20 +520,24 @@ export class CollaborationSessionStore {
   }
 
   private async readAndExpire(now: Date): Promise<StoredCollaborationSessionState> {
-    const state = await this.readStateFile();
+    const state = await this.readStateFile(now);
     let changed = false;
     const sessions = state.sessions.map((session) => {
-      if (session.status !== "active" || Date.parse(session.expiresAt) > now.getTime()) return session;
+      const shouldExpire = session.status === "active" && Date.parse(session.expiresAt) <= now.getTime();
+      const shouldClearRecovery = session.resumeRecovery !== undefined &&
+        Date.parse(session.resumeRecovery.recoveryUntil) < now.getTime();
+      if (!shouldExpire && !shouldClearRecovery) return session;
       changed = true;
       return {
         ...session,
-        status: "expired" as const,
+        status: shouldExpire ? "expired" as const : session.status,
+        resumeRecovery: shouldClearRecovery ? undefined : session.resumeRecovery,
         updatedAt: now.toISOString(),
         revision: session.revision + 1,
       };
     });
     if (!changed) return state;
-    const updated = withSessions(this.projectKey, sessions);
+    const updated = withSessions(state, sessions);
     await this.persistState(updated);
     return updated;
   }
@@ -424,13 +611,13 @@ export class CollaborationSessionStore {
     }
   }
 
-  private async readStateFile(): Promise<StoredCollaborationSessionState> {
+  private async readStateFile(now: Date): Promise<StoredCollaborationSessionState> {
     await this.ensureDirectories();
     let serialized: string;
     try {
       serialized = await fs.promises.readFile(this.statePath, "utf8");
     } catch (error) {
-      if (isNodeError(error, "ENOENT")) return emptyState(this.projectKey);
+      if (isNodeError(error, "ENOENT")) return emptyState(this.projectKey, this.credentialKey);
       throw error;
     }
 
@@ -440,7 +627,13 @@ export class CollaborationSessionStore {
     } catch {
       throw new Error("Malformed collaboration session state: invalid JSON");
     }
-    return validateState(parsed, this.projectKey, this.maxSessions);
+    if (isRecord(parsed) && parsed.version === 1) {
+      const legacy = validateLegacyState(parsed, this.projectKey, this.maxSessions);
+      const migrated = migrateLegacyState(legacy, this.credentialKey, now);
+      await this.persistState(migrated);
+      return migrated;
+    }
+    return validateState(parsed, this.projectKey, this.maxSessions, this.credentialKey);
   }
 
   private async persistState(state: StoredCollaborationSessionState): Promise<void> {
@@ -494,12 +687,23 @@ export class CollaborationSessionStore {
   }
 }
 
-function emptyState(projectKey: string): StoredCollaborationSessionState {
-  return { version: 1, projectKey, sessions: [] };
+function emptyState(
+  projectKey: string,
+  credentialKey: ValidatedCredentialKey,
+): StoredCollaborationSessionState {
+  return {
+    version: 2,
+    projectKey,
+    credentialKeyBinding: createCredentialKeyBinding(credentialKey, projectKey),
+    sessions: [],
+  };
 }
 
-function withSessions(projectKey: string, sessions: StoredCollaborationSession[]): StoredCollaborationSessionState {
-  return { version: 1, projectKey, sessions };
+function withSessions(
+  state: StoredCollaborationSessionState,
+  sessions: StoredCollaborationSession[],
+): StoredCollaborationSessionState {
+  return { ...state, sessions };
 }
 
 function replaceSession(
@@ -507,7 +711,7 @@ function replaceSession(
   updated: StoredCollaborationSession,
 ): StoredCollaborationSessionState {
   return withSessions(
-    state.projectKey,
+    state,
     state.sessions.map((session) => session.collaborationSessionId === updated.collaborationSessionId ? updated : session),
   );
 }
@@ -518,11 +722,14 @@ function requireSession(state: StoredCollaborationSessionState, sessionId: strin
   return session;
 }
 
-function requireHandleOwner(session: StoredCollaborationSession, agentId: string, secret: string): void {
+function requireCurrentHandleOwner(
+  session: StoredCollaborationSession,
+  agentId: string,
+  secret: string,
+  credentialKey: ValidatedCredentialKey,
+): void {
   if (session.agentId !== agentId) throw new Error("Collaboration session belongs to a different OAuth actor");
-  const expected = Buffer.from(session.credentialHash, "base64url");
-  const actual = Buffer.from(hashSecret(secret), "base64url");
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+  if (!credentialVerifierMatches(session, session.credentialVerifier, secret, credentialKey)) {
     throw new Error("Invalid collaboration session handle");
   }
 }
@@ -539,7 +746,11 @@ function requireActiveSession(session: StoredCollaborationSession): void {
 }
 
 function publicSession(session: StoredCollaborationSession): CollaborationSession {
-  const { credentialHash: _credentialHash, ...publicFields } = session;
+  const {
+    credentialVerifier: _credentialVerifier,
+    resumeRecovery: _resumeRecovery,
+    ...publicFields
+  } = session;
   return { ...publicFields };
 }
 
@@ -555,8 +766,210 @@ function generateSessionId(): string {
   return `cs_${randomBytes(18).toString("base64url")}`;
 }
 
-function hashSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("base64url");
+function createCredentialKeyBinding(
+  credentialKey: ValidatedCredentialKey,
+  projectKey: string,
+): StoredCredentialKeyBinding {
+  return {
+    version: COLLABORATION_SESSION_CREDENTIAL_VERSION,
+    keyId: credentialKey.keyId,
+    mac: keyedDigest(credentialKey, STATE_KEY_BINDING_DOMAIN, [
+      projectKey,
+      "state-version:2",
+    ]),
+  };
+}
+
+function validateCredentialKeyBinding(
+  value: unknown,
+  credentialKey: ValidatedCredentialKey,
+  projectKey: string,
+): StoredCredentialKeyBinding {
+  if (!isRecord(value)) {
+    throw new Error("Malformed collaboration session state: missing credential key binding");
+  }
+  assertOnlyKeys(value, ["version", "keyId", "mac"], "credential key binding");
+  if (value.version !== COLLABORATION_SESSION_CREDENTIAL_VERSION) {
+    throw new Error("Malformed collaboration session state: unsupported credential key binding version");
+  }
+  const keyId = validateOptionalIdentifier(value.keyId, "credentialKeyBinding.keyId", SESSION_KEY_ID_MAX_BYTES);
+  if (keyId !== credentialKey.keyId) {
+    throw new Error("Collaboration session credential key ID does not match the configured server key");
+  }
+  const mac = validateMac(value.mac, "credential key binding MAC");
+  const expected = createCredentialKeyBinding(credentialKey, projectKey);
+  if (!constantTimeMacEqual(mac, expected.mac)) {
+    throw new Error("Collaboration session credential key material does not match persisted state");
+  }
+  return { version: COLLABORATION_SESSION_CREDENTIAL_VERSION, keyId, mac };
+}
+
+function createCredentialVerifier(
+  credentialKey: ValidatedCredentialKey,
+  projectKey: string,
+  collaborationSessionId: string,
+  agentId: string,
+  generation: number,
+  secret: string,
+): StoredCredentialVerifier {
+  return {
+    version: COLLABORATION_SESSION_CREDENTIAL_VERSION,
+    keyId: credentialKey.keyId,
+    generation,
+    mac: keyedDigest(credentialKey, CREDENTIAL_MAC_DOMAIN, [
+      projectKey,
+      collaborationSessionId,
+      agentId,
+      String(generation),
+      secret,
+    ]),
+  };
+}
+
+function credentialVerifierMatches(
+  session: StoredCollaborationSession,
+  verifier: StoredCredentialVerifier,
+  secret: string,
+  credentialKey: ValidatedCredentialKey,
+): boolean {
+  if (verifier.version !== COLLABORATION_SESSION_CREDENTIAL_VERSION ||
+      verifier.keyId !== credentialKey.keyId) return false;
+  const actual = createCredentialVerifier(
+    credentialKey,
+    session.projectKey,
+    session.collaborationSessionId,
+    session.agentId,
+    verifier.generation,
+    secret,
+  );
+  return constantTimeMacEqual(verifier.mac, actual.mac);
+}
+
+function createResumeRequestMac(
+  credentialKey: ValidatedCredentialKey,
+  session: StoredCollaborationSession,
+  sourceGeneration: number,
+  resumeRequestId: string,
+): string {
+  return keyedDigest(credentialKey, RESUME_REQUEST_MAC_DOMAIN, [
+    session.projectKey,
+    session.collaborationSessionId,
+    session.agentId,
+    String(sourceGeneration),
+    resumeRequestId,
+  ]);
+}
+
+function resumeRequestMatches(
+  session: StoredCollaborationSession,
+  recovery: StoredResumeRecovery,
+  resumeRequestId: string,
+  credentialKey: ValidatedCredentialKey,
+): boolean {
+  const actual = createResumeRequestMac(
+    credentialKey,
+    session,
+    recovery.sourceGeneration,
+    resumeRequestId,
+  );
+  return constantTimeMacEqual(recovery.requestIdMac, actual);
+}
+
+function deriveResumeSecret(
+  credentialKey: ValidatedCredentialKey,
+  session: StoredCollaborationSession,
+  sourceGeneration: number,
+  targetGeneration: number,
+  resumeRequestId: string,
+  ttlSeconds: number,
+): string {
+  return keyedDigest(credentialKey, RESUME_SECRET_DOMAIN, [
+    session.projectKey,
+    session.collaborationSessionId,
+    session.agentId,
+    String(sourceGeneration),
+    String(targetGeneration),
+    resumeRequestId,
+    String(ttlSeconds),
+  ]);
+}
+
+function recoverCompletedResume(
+  session: StoredCollaborationSession,
+  previousSecret: string,
+  resumeRequestId: string,
+  requestedTtlSeconds: number | undefined,
+  now: Date,
+  credentialKey: ValidatedCredentialKey,
+): CollaborationSessionCredential | undefined {
+  const recovery = session.resumeRecovery;
+  if (!recovery || Date.parse(recovery.recoveryUntil) < now.getTime()) return undefined;
+  if (!credentialVerifierMatches(
+    session,
+    recovery.previousCredentialVerifier,
+    previousSecret,
+    credentialKey,
+  )) return undefined;
+  if (!resumeRequestMatches(session, recovery, resumeRequestId, credentialKey)) {
+    throw new Error("Resume request conflicts with a completed credential rotation");
+  }
+  if (requestedTtlSeconds !== undefined && recovery.ttlSeconds !== requestedTtlSeconds) {
+    throw new Error("Resume request parameters conflict with a completed credential rotation");
+  }
+  if (recovery.targetGeneration !== session.credentialGeneration ||
+      recovery.sourceGeneration + 1 !== recovery.targetGeneration) {
+    throw new Error("Malformed collaboration session state: inconsistent resume recovery generation");
+  }
+  const secret = deriveResumeSecret(
+    credentialKey,
+    session,
+    recovery.sourceGeneration,
+    recovery.targetGeneration,
+    resumeRequestId,
+    recovery.ttlSeconds,
+  );
+  if (!credentialVerifierMatches(session, session.credentialVerifier, secret, credentialKey)) {
+    throw new Error("Malformed collaboration session state: resume recovery verifier mismatch");
+  }
+  return {
+    session: publicSession(session),
+    collaborationSessionHandle: `${session.collaborationSessionId}.${secret}`,
+  };
+}
+
+function keyedDigest(
+  credentialKey: ValidatedCredentialKey,
+  domain: string,
+  fields: string[],
+): string {
+  return createHmac("sha256", credentialKey.keyMaterial)
+    .update(domain, "utf8")
+    .update("\0", "utf8")
+    .update(JSON.stringify([credentialKey.keyId, ...fields]), "utf8")
+    .digest("base64url");
+}
+
+function constantTimeMacEqual(expected: string, actual: string): boolean {
+  if (!SESSION_MAC_PATTERN.test(expected) || !SESSION_MAC_PATTERN.test(actual)) return false;
+  const expectedBytes = Buffer.from(expected, "base64url");
+  const actualBytes = Buffer.from(actual, "base64url");
+  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
+}
+
+function requireActorSessionCapacity(
+  sessions: StoredCollaborationSession[],
+  agentId: string,
+  maximum: number,
+  nowMs: number,
+): void {
+  const liveOrResumable = sessions.filter((session) =>
+    session.agentId === agentId &&
+    (session.status === "active" ||
+      (session.status === "expired" && Date.parse(session.resumeUntil) >= nowMs)),
+  ).length;
+  if (liveOrResumable >= maximum) {
+    throw new Error(`Collaboration session live/resumable limit of ${maximum} reached for this OAuth actor`);
+  }
 }
 
 function makeRoomForSession(
@@ -581,30 +994,182 @@ function validateState(
   value: unknown,
   expectedProjectKey: string,
   maxSessions: number,
+  credentialKey: ValidatedCredentialKey,
 ): StoredCollaborationSessionState {
-  if (!isRecord(value) || value.version !== 1 || value.projectKey !== expectedProjectKey || !Array.isArray(value.sessions)) {
+  if (!isRecord(value) || value.version !== 2 || value.projectKey !== expectedProjectKey || !Array.isArray(value.sessions)) {
     throw new Error("Malformed or mismatched collaboration session state");
   }
+  assertOnlyKeys(
+    value,
+    ["version", "projectKey", "credentialKeyBinding", "sessions"],
+    "collaboration session state",
+  );
   if (value.sessions.length > maxSessions) {
     throw new Error("Malformed collaboration session state: session limit exceeded");
   }
+  const credentialKeyBinding = validateCredentialKeyBinding(
+    value.credentialKeyBinding,
+    credentialKey,
+    expectedProjectKey,
+  );
   const ids = new Set<string>();
-  const sessions = value.sessions.map((candidate) => validateStoredSession(candidate, expectedProjectKey, ids));
-  return withSessions(expectedProjectKey, sessions);
+  const sessions = value.sessions.map((candidate) =>
+    validateStoredSession(candidate, expectedProjectKey, credentialKey.keyId, ids));
+  return { version: 2, projectKey: expectedProjectKey, credentialKeyBinding, sessions };
 }
 
 function validateStoredSession(
   value: unknown,
   expectedProjectKey: string,
+  expectedKeyId: string,
   ids: Set<string>,
 ): StoredCollaborationSession {
   if (!isRecord(value)) throw new Error("Malformed collaboration session state: invalid session");
+  assertOnlyKeys(value, [
+    "collaborationSessionId",
+    "projectKey",
+    "agentId",
+    "agentName",
+    "label",
+    "requestedRoleId",
+    "status",
+    "createdAt",
+    "updatedAt",
+    "lastSeenAt",
+    "expiresAt",
+    "resumeUntil",
+    "credentialGeneration",
+    "lastCredentialRotatedAt",
+    "releasedAt",
+    "revokedAt",
+    "revision",
+    "credentialVerifier",
+    "resumeRecovery",
+  ], "collaboration session");
   const collaborationSessionId = validateSessionId(value.collaborationSessionId);
   if (ids.has(collaborationSessionId)) throw new Error("Malformed collaboration session state: duplicate session ID");
   ids.add(collaborationSessionId);
   if (value.projectKey !== expectedProjectKey) throw new Error("Malformed collaboration session state: mismatched project key");
   const status = validateStatus(value.status);
+  const credentialGeneration = validateGeneration(value.credentialGeneration, "credentialGeneration");
+  const credentialVerifier = validateCredentialVerifier(value.credentialVerifier, expectedKeyId);
+  const resumeRecovery = value.resumeRecovery === undefined
+    ? undefined
+    : validateResumeRecovery(value.resumeRecovery, expectedKeyId);
   const session: StoredCollaborationSession = {
+    collaborationSessionId,
+    projectKey: expectedProjectKey,
+    agentId: validateAgentId(value.agentId),
+    agentName: validateRequiredText(value.agentName, "agentName", 100),
+    label: validateOptionalText(value.label, "label", COLLABORATION_SESSION_LABEL_MAX_BYTES),
+    requestedRoleId: validateOptionalIdentifier(
+      value.requestedRoleId,
+      "requestedRoleId",
+      COLLABORATION_SESSION_ROLE_MAX_BYTES,
+    ),
+    status,
+    createdAt: validateDate(value.createdAt, "createdAt"),
+    updatedAt: validateDate(value.updatedAt, "updatedAt"),
+    lastSeenAt: validateDate(value.lastSeenAt, "lastSeenAt"),
+    expiresAt: validateDate(value.expiresAt, "expiresAt"),
+    resumeUntil: validateDate(value.resumeUntil, "resumeUntil"),
+    credentialGeneration,
+    lastCredentialRotatedAt: validateOptionalDate(value.lastCredentialRotatedAt, "lastCredentialRotatedAt"),
+    releasedAt: validateOptionalDate(value.releasedAt, "releasedAt"),
+    revokedAt: validateOptionalDate(value.revokedAt, "revokedAt"),
+    revision: validateRevision(value.revision),
+    credentialVerifier,
+    resumeRecovery,
+  };
+  if (Date.parse(session.resumeUntil) < Date.parse(session.expiresAt)) {
+    throw new Error("Malformed collaboration session state: resume window precedes expiry");
+  }
+  if (session.credentialVerifier.generation !== session.credentialGeneration) {
+    throw new Error("Malformed collaboration session state: credential generation mismatch");
+  }
+  if (session.credentialGeneration > 1 && !session.lastCredentialRotatedAt) {
+    throw new Error("Malformed collaboration session state: rotated credential lacks rotation timestamp");
+  }
+  if (session.resumeRecovery) {
+    if (session.resumeRecovery.targetGeneration !== session.credentialGeneration ||
+        session.resumeRecovery.sourceGeneration + 1 !== session.resumeRecovery.targetGeneration ||
+        session.resumeRecovery.previousCredentialVerifier.generation !== session.resumeRecovery.sourceGeneration) {
+      throw new Error("Malformed collaboration session state: inconsistent resume recovery generation");
+    }
+    if (Date.parse(session.resumeRecovery.recoveryUntil) < Date.parse(session.resumeRecovery.rotatedAt)) {
+      throw new Error("Malformed collaboration session state: recovery window precedes rotation");
+    }
+    if (session.lastCredentialRotatedAt !== session.resumeRecovery.rotatedAt) {
+      throw new Error("Malformed collaboration session state: recovery rotation timestamp mismatch");
+    }
+  }
+  if (status === "released" && !session.releasedAt) {
+    throw new Error("Malformed collaboration session state: released session lacks releasedAt");
+  }
+  if (status !== "released" && session.releasedAt) {
+    throw new Error("Malformed collaboration session state: non-released session has releasedAt");
+  }
+  if (status === "revoked" && !session.revokedAt) {
+    throw new Error("Malformed collaboration session state: revoked session lacks revokedAt");
+  }
+  if (status !== "revoked" && session.revokedAt) {
+    throw new Error("Malformed collaboration session state: non-revoked session has revokedAt");
+  }
+  if ((status === "released" || status === "revoked") && session.resumeRecovery) {
+    throw new Error("Malformed collaboration session state: terminal session retains resume recovery");
+  }
+  return session;
+}
+
+function validateLegacyState(
+  value: unknown,
+  expectedProjectKey: string,
+  maxSessions: number,
+): LegacyStoredCollaborationSessionState {
+  if (!isRecord(value) || value.version !== 1 || value.projectKey !== expectedProjectKey || !Array.isArray(value.sessions)) {
+    throw new Error("Malformed or mismatched legacy collaboration session state");
+  }
+  assertOnlyKeys(value, ["version", "projectKey", "sessions"], "legacy collaboration session state");
+  if (value.sessions.length > maxSessions) {
+    throw new Error("Malformed legacy collaboration session state: session limit exceeded");
+  }
+  const ids = new Set<string>();
+  const sessions = value.sessions.map((candidate) => validateLegacyStoredSession(candidate, expectedProjectKey, ids));
+  return { version: 1, projectKey: expectedProjectKey, sessions };
+}
+
+function validateLegacyStoredSession(
+  value: unknown,
+  expectedProjectKey: string,
+  ids: Set<string>,
+): LegacyStoredCollaborationSession {
+  if (!isRecord(value)) throw new Error("Malformed legacy collaboration session state: invalid session");
+  assertOnlyKeys(value, [
+    "collaborationSessionId",
+    "projectKey",
+    "agentId",
+    "agentName",
+    "label",
+    "requestedRoleId",
+    "status",
+    "createdAt",
+    "updatedAt",
+    "lastSeenAt",
+    "expiresAt",
+    "resumeUntil",
+    "releasedAt",
+    "revokedAt",
+    "revision",
+    "credentialHash",
+  ], "legacy collaboration session");
+  const collaborationSessionId = validateSessionId(value.collaborationSessionId);
+  if (ids.has(collaborationSessionId)) throw new Error("Malformed legacy collaboration session state: duplicate session ID");
+  ids.add(collaborationSessionId);
+  if (value.projectKey !== expectedProjectKey) {
+    throw new Error("Malformed legacy collaboration session state: mismatched project key");
+  }
+  const status = validateStatus(value.status);
+  const session: LegacyStoredCollaborationSession = {
     collaborationSessionId,
     projectKey: expectedProjectKey,
     agentId: validateAgentId(value.agentId),
@@ -624,24 +1189,58 @@ function validateStoredSession(
     releasedAt: validateOptionalDate(value.releasedAt, "releasedAt"),
     revokedAt: validateOptionalDate(value.revokedAt, "revokedAt"),
     revision: validateRevision(value.revision),
-    credentialHash: validateCredentialHash(value.credentialHash),
+    credentialHash: validateMac(value.credentialHash, "legacy credential hash"),
   };
   if (Date.parse(session.resumeUntil) < Date.parse(session.expiresAt)) {
-    throw new Error("Malformed collaboration session state: resume window precedes expiry");
+    throw new Error("Malformed legacy collaboration session state: resume window precedes expiry");
   }
   if (status === "released" && !session.releasedAt) {
-    throw new Error("Malformed collaboration session state: released session lacks releasedAt");
+    throw new Error("Malformed legacy collaboration session state: released session lacks releasedAt");
   }
   if (status !== "released" && session.releasedAt) {
-    throw new Error("Malformed collaboration session state: non-released session has releasedAt");
+    throw new Error("Malformed legacy collaboration session state: non-released session has releasedAt");
   }
   if (status === "revoked" && !session.revokedAt) {
-    throw new Error("Malformed collaboration session state: revoked session lacks revokedAt");
+    throw new Error("Malformed legacy collaboration session state: revoked session lacks revokedAt");
   }
   if (status !== "revoked" && session.revokedAt) {
-    throw new Error("Malformed collaboration session state: non-revoked session has revokedAt");
+    throw new Error("Malformed legacy collaboration session state: non-revoked session has revokedAt");
   }
   return session;
+}
+
+function migrateLegacyState(
+  legacy: LegacyStoredCollaborationSessionState,
+  credentialKey: ValidatedCredentialKey,
+  now: Date,
+): StoredCollaborationSessionState {
+  const migratedAt = now.toISOString();
+  const state = emptyState(legacy.projectKey, credentialKey);
+  return withSessions(state, legacy.sessions.map((session) => {
+    const { credentialHash, ...publicFields } = session;
+    const credentialGeneration = 1;
+    return {
+      ...publicFields,
+      status: "revoked" as const,
+      updatedAt: migratedAt,
+      releasedAt: undefined,
+      revokedAt: session.revokedAt ?? migratedAt,
+      credentialGeneration,
+      revision: session.revision + 1,
+      credentialVerifier: {
+        version: COLLABORATION_SESSION_CREDENTIAL_VERSION,
+        keyId: credentialKey.keyId,
+        generation: credentialGeneration,
+        mac: keyedDigest(credentialKey, LEGACY_TOMBSTONE_DOMAIN, [
+          session.projectKey,
+          session.collaborationSessionId,
+          session.agentId,
+          credentialHash,
+          String(session.revision),
+        ]),
+      },
+    };
+  }));
 }
 
 function validateIdentity(value: CollaborationSessionIdentity): CollaborationSessionIdentity {
@@ -665,9 +1264,81 @@ function validateSessionId(value: unknown): string {
   return value;
 }
 
-function validateCredentialHash(value: unknown): string {
-  if (typeof value !== "string" || !SESSION_HASH_PATTERN.test(value)) {
-    throw new Error("Malformed collaboration session state: invalid credential hash");
+function validateCredentialKey(value: unknown): ValidatedCredentialKey {
+  if (!isRecord(value)) throw new Error("credentialKey must be provided explicitly");
+  assertOnlyKeys(value, ["keyId", "keyMaterial"], "credentialKey");
+  const keyId = validateOptionalIdentifier(value.keyId, "credentialKey.keyId", SESSION_KEY_ID_MAX_BYTES);
+  if (!keyId) throw new Error("credentialKey.keyId is required");
+  if (typeof value.keyMaterial !== "string" ||
+      !SESSION_KEY_MATERIAL_PATTERN.test(value.keyMaterial) ||
+      value.keyMaterial.includes("=")) {
+    throw new Error("credentialKey.keyMaterial must be unpadded base64url");
+  }
+  const keyMaterial = Buffer.from(value.keyMaterial, "base64url");
+  if (keyMaterial.length < 32 || keyMaterial.length > 64 || keyMaterial.toString("base64url") !== value.keyMaterial) {
+    throw new Error("credentialKey.keyMaterial must encode between 32 and 64 bytes");
+  }
+  return { keyId, keyMaterial: Buffer.from(keyMaterial) };
+}
+
+function validateCredentialVerifier(value: unknown, expectedKeyId: string): StoredCredentialVerifier {
+  if (!isRecord(value)) throw new Error("Malformed collaboration session state: invalid credential verifier");
+  assertOnlyKeys(value, ["version", "keyId", "generation", "mac"], "credential verifier");
+  if (value.version !== COLLABORATION_SESSION_CREDENTIAL_VERSION) {
+    throw new Error("Malformed collaboration session state: unsupported credential verifier version");
+  }
+  const keyId = validateOptionalIdentifier(value.keyId, "credentialVerifier.keyId", SESSION_KEY_ID_MAX_BYTES);
+  if (keyId !== expectedKeyId) {
+    throw new Error("Collaboration session credential key ID does not match the configured server key");
+  }
+  return {
+    version: COLLABORATION_SESSION_CREDENTIAL_VERSION,
+    keyId,
+    generation: validateGeneration(value.generation, "credentialVerifier.generation"),
+    mac: validateMac(value.mac, "credential verifier MAC"),
+  };
+}
+
+function validateResumeRecovery(value: unknown, expectedKeyId: string): StoredResumeRecovery {
+  if (!isRecord(value)) throw new Error("Malformed collaboration session state: invalid resume recovery");
+  assertOnlyKeys(value, [
+    "sourceGeneration",
+    "targetGeneration",
+    "previousCredentialVerifier",
+    "requestIdMac",
+    "ttlSeconds",
+    "recoveryUntil",
+    "rotatedAt",
+  ], "resume recovery");
+  return {
+    sourceGeneration: validateGeneration(value.sourceGeneration, "resumeRecovery.sourceGeneration"),
+    targetGeneration: validateGeneration(value.targetGeneration, "resumeRecovery.targetGeneration"),
+    previousCredentialVerifier: validateCredentialVerifier(value.previousCredentialVerifier, expectedKeyId),
+    requestIdMac: validateMac(value.requestIdMac, "resume request MAC"),
+    ttlSeconds: validateTtlSeconds(value.ttlSeconds, "resumeRecovery.ttlSeconds"),
+    recoveryUntil: validateDate(value.recoveryUntil, "resumeRecovery.recoveryUntil"),
+    rotatedAt: validateDate(value.rotatedAt, "resumeRecovery.rotatedAt"),
+  };
+}
+
+function validateMac(value: unknown, field: string): string {
+  if (typeof value !== "string" || !SESSION_MAC_PATTERN.test(value)) {
+    throw new Error(`Malformed collaboration session state: invalid ${field}`);
+  }
+  return value;
+}
+
+function validateGeneration(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  return value as number;
+}
+
+function validateResumeRequestId(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._~-]{16,128}$/.test(value) ||
+      Buffer.byteLength(value, "utf8") > COLLABORATION_SESSION_RESUME_REQUEST_ID_MAX_BYTES) {
+    throw new Error("resumeRequestId must be 16-128 URL-safe opaque characters");
   }
   return value;
 }
@@ -689,6 +1360,13 @@ function validateTtlSeconds(value: unknown, field: string): number {
 function validateResumeGraceSeconds(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > COLLABORATION_SESSION_MAX_RESUME_GRACE_SECONDS) {
     throw new Error(`resumeGraceSeconds must be an integer between 0 and ${COLLABORATION_SESSION_MAX_RESUME_GRACE_SECONDS}`);
+  }
+  return value as number;
+}
+
+function validateBoundedSeconds(value: unknown, field: string, maximum: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > maximum) {
+    throw new Error(`${field} must be an integer between 1 and ${maximum}`);
   }
   return value as number;
 }
@@ -735,6 +1413,12 @@ function isWithin(root: string, candidate: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertOnlyKeys(value: Record<string, unknown>, allowed: string[], label: string): void {
+  const allowedKeys = new Set(allowed);
+  const unknown = Object.keys(value).filter((key) => !allowedKeys.has(key));
+  if (unknown.length > 0) throw new Error(`Malformed ${label}: unknown field`);
 }
 
 function isNodeError(error: unknown, code: string): boolean {
