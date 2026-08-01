@@ -110,8 +110,8 @@ test("start --setup resets generated state before the first-time flow", async (t
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
-  await waitFor(() => output.includes("Select setup mode [1/2]:"));
-  cliProcess.stdin.write("1\n");
+  await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
+  cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
@@ -155,8 +155,8 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
-  await waitFor(() => output.includes("Select setup mode [1/2]:"));
-  cliProcess.stdin.write("1\n");
+  await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
+  cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Allow PiLink to request these temporary router mappings? [Y/n]:"));
@@ -409,8 +409,8 @@ test("first start downloads cloudflared from PI_CLOUDFLARED_URL when not preinst
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
 
-  await waitFor(() => output.includes("Select setup mode [1/2]:"));
-  cliProcess.stdin.write("1\n");
+  await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
+  cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("cloudflared is not installed; downloading"));
@@ -430,10 +430,37 @@ test("first start downloads cloudflared from PI_CLOUDFLARED_URL when not preinst
   assert.ok(stat.size > 0);
 });
 
-test("start --setup option 2 creates a separate instance without deleting existing config", async (t) => {
+test("start --setup rejects an invalid setup choice without deleting the existing instance", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-setup-invalid-"));
+  const configPath = path.join(root, ".env");
+  const dataPath = path.join(root, "data");
+  const port = await availablePort();
+  await writeConfig(configPath, root, port, dataPath);
+  await fs.mkdir(dataPath);
+  await fs.writeFile(path.join(dataPath, "clients.json"), JSON.stringify({ clients: [{ client_id: "original-client" }] }));
+
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath });
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  let output = "";
+  cliProcess.stdout.on("data", (chunk) => { output += chunk; });
+  cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
+  cliProcess.stdin.write("unexpected\n");
+  const [code] = await once(cliProcess, "exit");
+
+  assert.notEqual(code, 0);
+  assert.match(output, /Setup cancelled: choose 1 for a separate instance or 2 to overwrite/);
+  assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PORT=${port}`));
+  const originalStore = JSON.parse(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"));
+  assert.equal(originalStore.clients[0].client_id, "original-client");
+});
+
+test("start --setup option 1 creates a separate instance without deleting existing config", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-setup-sep-"));
   const configPath = path.join(root, ".env");
-  const newConfigPath = path.join(root, "instance2", ".env");
+  const newConfigDirectory = path.join(root, "instance2");
+  const newConfigPath = path.join(newConfigDirectory, ".env");
   const dataPath = path.join(root, "data");
   const fakeCloudflared = path.join(root, "cloudflared");
   const port = await availablePort();
@@ -453,15 +480,17 @@ test("start --setup option 2 creates a separate instance without deleting existi
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
 
-  await waitFor(() => output.includes("Select setup mode [1/2]:"));
-  cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Enter configuration path"));
-  cliProcess.stdin.write(`${newConfigPath}\n`);
-  await waitFor(() => output.includes("Enter server port"));
+  await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
+  cliProcess.stdin.write("1\n");
+  await waitFor(() => output.includes("Enter new configuration directory"));
+  cliProcess.stdin.write(`${newConfigDirectory}\n`);
+  await waitFor(() => output.includes("Enter new server port"));
   cliProcess.stdin.write(`${newPort}\n`);
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
+  const health = await fetch(`http://127.0.0.1:${newPort}/health`);
+  assert.equal(health.status, 200);
   cliProcess.stdin.write("https://chatgpt.example/sep-callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
 
