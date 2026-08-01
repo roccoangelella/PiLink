@@ -74,7 +74,7 @@ The relevant vulnerability classes are unauthorized access, scope escalation, id
 | Peer-agent identity spoofing | Chat/task actor ID and name are derived from OAuth identity; connection instance is server-minted; task ownership and lifecycle checks are atomic | Authenticated peers can still post misleading content. Agents must treat coordination messages as untrusted evidence and verify claims against repository state/tests. |
 | Persistent coordination or memory poisoning | Private project-scoped storage outside workspace; message/task byte limits; bounded chat/task retention; typed task ownership/status; atomic persistence | Persisted malicious text can influence future agents. Future activity storage should redact at write time, separate authoritative state from narrative content, and support evidence/provenance. |
 | Secret leakage through audit or constrained execution | Tool audit records metadata only; arguments/results are excluded; constrained child environment is allowlisted; generated state is private | Unrestricted `bash`, file reads, or repository code can intentionally access local secrets when its mode permits that access. |
-| Resource exhaustion | Request-body/tool-input limits, OAuth rate limiting, command timeouts, output truncation, bounded task/chat histories, audit-log rotation | Authenticated clients can still create concurrent sessions or expensive filesystem operations. Global/per-client concurrency and idle-session limits are desirable future defenses. |
+| Resource exhaustion | Request-body/tool-input limits, OAuth rate limiting, command timeouts, output truncation, bounded task/chat histories, audit-log rotation, race-safe total/per-client MCP session quotas, idle-session expiry | Authenticated clients can still issue expensive filesystem operations or keep their allowed sessions busy. Per-client request concurrency and work-queue limits remain desirable future defenses. |
 | Supply-chain compromise | Lockfile install; dependency scripts disabled in CI/release; npm signature/provenance and vulnerability gates; SHA-pinned GitHub Actions; Dependabot/dependency review; OIDC-only npm trusted publishing; protected release environment | Registry/account/platform compromise remains possible. Keep reviewing dependency necessity and action pins; verify npm provenance after release. |
 | Public vulnerability disclosure causing immediate exploitation | Private GitHub Security Advisory reporting policy and coordinated disclosure guidance | Repository private vulnerability reporting must be enabled in GitHub settings. |
 
@@ -111,7 +111,7 @@ PiLink explicitly accepts that:
 - trusted workspace scripts are arbitrary code, despite filtered environment variables;
 - model behavior and human approvals can fail, so they are secondary controls;
 - a same-user process can generally access whatever that operating-system account can access unless a stronger external sandbox is used;
-- availability against a determined authenticated client is limited without global concurrency/session quotas.
+- availability against a determined authenticated client remains limited by the cost of operations within its allowed sessions; transport quotas do not replace OS/process resource controls.
 
 ## Verification
 
