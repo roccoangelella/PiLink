@@ -116,35 +116,53 @@ async function handleSetupMode(): Promise<void> {
     return;
   }
 
+  const existingConfigPath = path.resolve(configPath);
+  const existingConfigDirectory = path.dirname(existingConfigPath);
+  const existingPort = readPortFromConfig(existingConfigPath);
+
   console.error("\n=== Setup configuration ===");
-  console.error(`Existing configuration found at: ${configPath}`);
-  console.error("1. Overwrite and reset existing configuration");
-  console.error("2. Create a new separate instance (custom config path and port)");
+  console.error(`Existing configuration found at: ${existingConfigPath}`);
+  console.error("1. Create a new separate instance (new config directory and port)");
+  console.error("2. Completely overwrite and reset the existing instance");
   const readline = createInterface({ input: process.stdin, output: process.stderr });
-  const choice = (await readline.question("Select setup mode [1/2]: ")).trim();
 
-  if (choice === "2") {
-    const defaultConfigDir = path.join(path.dirname(configPath) + "-2");
-    const defaultPath = path.join(defaultConfigDir, ".env");
-    const customPath = (await readline.question(`Enter configuration path [default: ${defaultPath}]: `)).trim();
-    configPath = customPath ? path.resolve(customPath) : defaultPath;
+  try {
+    const choice = (await readline.question("How should PiLink continue? [1/2]: ")).trim();
 
-    const currentPort = readPort();
-    const defaultPort = currentPort + 1;
-    const customPort = (await readline.question(`Enter server port [default: ${defaultPort}]: `)).trim();
-    readline.close();
+    if (choice === "1") {
+      const defaultConfigDirectory = nextSeparateConfigDirectory(existingConfigDirectory);
+      const customDirectory = (await readline.question(`Enter new configuration directory [default: ${defaultConfigDirectory}]: `)).trim();
+      const newConfigDirectory = path.resolve(customDirectory || defaultConfigDirectory);
+      if (newConfigDirectory === existingConfigDirectory) {
+        throw new Error("The separate instance must use a different configuration directory.");
+      }
+      if (fs.existsSync(newConfigDirectory) && fs.readdirSync(newConfigDirectory).length > 0) {
+        throw new Error(`The separate instance configuration directory must be new or empty: ${newConfigDirectory}`);
+      }
 
-    const newPort = customPort ? parseInt(customPort, 10) : defaultPort;
-    if (isNaN(newPort) || newPort <= 0 || newPort > 65535) {
-      throw new Error(`Invalid port: ${customPort}`);
+      const defaultPort = nextSeparatePort(existingPort);
+      const customPort = (await readline.question(`Enter new server port [default: ${defaultPort}]: `)).trim();
+      const newPort = customPort ? parsePort(customPort) : defaultPort;
+      if (newPort === existingPort) {
+        throw new Error(`The separate instance must use a different port than ${existingPort}.`);
+      }
+
+      configPath = path.join(newConfigDirectory, ".env");
+      process.env.PILINK_CONFIG = configPath;
+      process.env.PORT = String(newPort);
+      initialize(newPort);
+      return;
     }
 
-    process.env.PILINK_CONFIG = configPath;
-    initialize(newPort);
-  } else {
+    if (choice === "2") {
+      console.error("--setup deletes PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh.");
+      removeGeneratedState();
+      return;
+    }
+
+    throw new Error("Setup cancelled: choose 1 for a separate instance or 2 to overwrite the existing instance.");
+  } finally {
     readline.close();
-    console.error("--setup deletes PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh.");
-    removeGeneratedState();
   }
 }
 
@@ -796,10 +814,35 @@ function flushDeferredServerOutput(): void {
 
 function readPort(): number {
   const environmentPort = Number(process.env.PORT);
-  if (Number.isSafeInteger(environmentPort) && environmentPort > 0) return environmentPort;
-  if (!fs.existsSync(configPath)) return 3200;
-  const match = fs.readFileSync(configPath, "utf8").match(/^PORT=(\d+)$/m);
-  return match ? Number(match[1]) : 3200;
+  if (Number.isSafeInteger(environmentPort) && environmentPort > 0 && environmentPort <= 65535) return environmentPort;
+  return readPortFromConfig(configPath);
+}
+
+function readPortFromConfig(configFile: string): number {
+  if (!fs.existsSync(configFile)) return 3200;
+  const match = fs.readFileSync(configFile, "utf8").match(/^PORT=(\d+)$/m);
+  return match ? parsePort(match[1]) : 3200;
+}
+
+function parsePort(value: string): number {
+  if (!/^\d+$/.test(value)) throw new Error(`Invalid port: ${value}`);
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port <= 0 || port > 65535) throw new Error(`Invalid port: ${value}`);
+  return port;
+}
+
+function nextSeparatePort(existingPort: number): number {
+  return existingPort < 65535 ? existingPort + 1 : 3200;
+}
+
+function nextSeparateConfigDirectory(existingDirectory: string): string {
+  let suffix = 2;
+  let candidate = `${existingDirectory}-${suffix}`;
+  while (fs.existsSync(candidate)) {
+    suffix += 1;
+    candidate = `${existingDirectory}-${suffix}`;
+  }
+  return candidate;
 }
 
 function secret(): string {
