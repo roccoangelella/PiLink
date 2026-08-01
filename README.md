@@ -56,6 +56,12 @@ Keep that secret out of ChatGPT prompts, logs, source control, and public config
 
 OAuth tokens are audience/issuer-bound, expire after `TOKEN_EXPIRY` seconds (default 2,592,000, or 30 days), and preserve their scopes for the lifetime of an MCP session. Tokens can be revoked at `POST /oauth/revoke` using the issuing client's credentials, the token itself as a Bearer credential, or the administrator bootstrap credential; revocations persist under `PI_DATA_DIR` until the token would naturally expire. `mcp:read` permits only read/search tools, `mcp:write` permits mutation and constrained execution (plus bash when unsafe mode is explicitly enabled), and `mcp:tools` permits all tools subject to the harness mode.
 
+## Tool audit log
+
+Every MCP tool call is recorded in a private, project-scoped JSONL audit log under `PI_DATA_DIR/projects/<workspace-hash>/tool-audit.jsonl`. Events contain only operational metadata: a generated call ID, OAuth agent ID, transport session ID when available, tool name, start time, duration, workspace/full-access mode, success/error outcome, and bounded execution outcome fields such as exit code, timeout, cancellation, or truncation. Tool arguments, file paths, command text, chat messages, tool results, file contents, and error text are deliberately excluded.
+
+Audit writes are failure-isolated so a logging problem cannot change a tool result. The active log rotates to `tool-audit.1.jsonl` at 10 MiB and only one rotated file is retained, bounding storage to roughly 20 MiB per workspace. Both files and their parent directories use private permissions. Keep `PI_DATA_DIR` outside `PI_WORK_DIR`, as required for agent chat, so workspace-confined tools cannot read or modify the audit trail.
+
 ## Agent chat
 
 PiLink provides a small, durable coordination chat for authorized agents using the same PiLink process and configured `PI_WORK_DIR`. The chat is shared by every agent in that project. Its state is stored privately under `PI_DATA_DIR` in a hashed project namespace, never in the git workspace. `PI_DATA_DIR` must be outside `PI_WORK_DIR`; otherwise agent chat is not usable. Chat access is still controlled by the normal scopes: reading requires `mcp:read` or `mcp:tools`, and posting requires `mcp:write` or `mcp:tools`.

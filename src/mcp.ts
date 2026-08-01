@@ -14,7 +14,8 @@ import { isToolAllowed, sanitizeToolArguments, type HarnessPolicy, type ToolName
 import { VERSION } from "./config.js";
 import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { AGENT_CHAT_URI, type AgentChatBroker, type AgentChatMessage, type AgentChatReadResult } from "./chat.js";
-import { executeRunProfile, RUN_PROFILES } from "./run.js";
+import type { ToolAuditEventInput } from "./audit.js";
+import { executeRunProfile, RUN_PROFILES, type RunProfileResult } from "./run.js";
 
 export interface AuthenticatedAgentIdentity {
   agentId: string;
@@ -27,11 +28,26 @@ export interface McpServerHandle {
   connect: McpServer["connect"];
 }
 
+export interface ToolAuditSink {
+  record(input: ToolAuditEventInput): Promise<void>;
+}
+
+interface ToolRequestContext {
+  sessionId?: string;
+}
+
+interface ToolCallResult {
+  content: unknown;
+  isError?: boolean;
+  structuredContent?: unknown;
+}
+
 export function createMcpServer(
   policy: HarnessPolicy,
   scopes: string,
   identity?: Readonly<AuthenticatedAgentIdentity>,
   broker?: AgentChatBroker,
+  audit?: ToolAuditSink,
 ): McpServerHandle {
   const systemPromptText = buildSystemPrompt(policy);
   const server = new McpServer(
@@ -46,7 +62,49 @@ export function createMcpServer(
   const findTool = createFindTool(policy.workspace);
   const lsTool = createLsTool(policy.workspace);
 
-  const execute = async <T extends Record<string, unknown>>(tool: ToolName, nativeTool: { execute: (id: string, args: T) => Promise<unknown> }, args: T) => {
+  const auditCall = async <T extends ToolCallResult>(
+    tool: string,
+    extra: ToolRequestContext,
+    operation: () => T | Promise<T>,
+    outcomeFields?: (result: T) => Partial<Pick<ToolAuditEventInput, "exitCode" | "timedOut" | "cancelled" | "truncated">>,
+  ): Promise<T> => {
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    let outcome: ToolAuditEventInput["outcome"] = "error";
+    let fields: Partial<ToolAuditEventInput> = {};
+    try {
+      const result = await operation();
+      outcome = result.isError ? "error" : "success";
+      fields = outcomeFields?.(result) || {};
+      return result;
+    } finally {
+      if (audit) {
+        const reportFailure = () => console.error(`[AUDIT] Failed to persist metadata for tool '${tool}'`);
+        try {
+          void audit.record({
+            callId: `call_${randomUUID()}`,
+            agentId: identity?.agentId,
+            sessionId: extra.sessionId,
+            tool,
+            startedAt,
+            durationMs: Date.now() - startedAtMs,
+            outcome,
+            accessMode: policy.unsafeFullAccess ? "full-access" : "workspace",
+            ...fields,
+          }).catch(reportFailure);
+        } catch {
+          reportFailure();
+        }
+      }
+    }
+  };
+
+  const execute = async <T extends Record<string, unknown>>(
+    tool: ToolName,
+    nativeTool: { execute: (id: string, args: T) => Promise<unknown> },
+    args: T,
+    extra: ToolRequestContext,
+  ) => auditCall(tool, extra, async () => {
     if (!isToolAllowed(scopes, tool)) return toolError(`Token scope does not permit '${tool}'`);
     try {
       const sanitized = await sanitizeToolArguments(policy, tool, args);
@@ -56,7 +114,7 @@ export function createMcpServer(
     } catch (error) {
       return toolError(error instanceof Error ? error.message : "Tool execution failed");
     }
-  };
+  });
 
   server.registerPrompt("pilink_system_prompt", {
     title: "PiLink Agent Guidance",
@@ -69,9 +127,9 @@ export function createMcpServer(
     description: "Return the same PiLink coding-agent guidance exposed during MCP initialization.",
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async () => ({
+  }, (_args, extra) => auditCall("get_system_prompt", extra, async () => ({
     content: [{ type: "text" as const, text: systemPromptText }],
-  }));
+  })));
 
   server.registerTool("read", {
     title: "Read File",
@@ -82,7 +140,7 @@ export function createMcpServer(
       limit: z.number().int().positive().max(2000).optional().describe("Maximum number of text lines to return."),
     }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (args) => execute("read", readTool, args));
+  }, (args, extra) => execute("read", readTool, args, extra));
 
   server.registerTool("bash", {
     title: "Run Shell Command",
@@ -92,7 +150,7 @@ export function createMcpServer(
       timeout: z.number().positive().max(policy.maxBashTimeoutSeconds).optional().describe(`Maximum runtime in seconds, capped at ${policy.maxBashTimeoutSeconds}.`),
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, (args) => execute("bash", bashTool, args));
+  }, (args, extra) => execute("bash", bashTool, args, extra));
 
   const runResultSchema = z.object({
     profile: z.enum(RUN_PROFILES),
@@ -117,7 +175,7 @@ export function createMcpServer(
     }).strict(),
     outputSchema: runResultSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, async (args, extra) => {
+  }, (args, extra) => auditCall("run", extra, async () => {
     if (!isToolAllowed(scopes, "run")) return toolError("Token scope does not permit 'run'");
     try {
       const result = await executeRunProfile(policy, args, extra.signal);
@@ -129,7 +187,16 @@ export function createMcpServer(
     } catch (error) {
       return toolError(error instanceof Error ? error.message : "Constrained command execution failed");
     }
-  });
+  }, (response) => {
+    const result = ("structuredContent" in response ? response.structuredContent : undefined) as RunProfileResult | undefined;
+    if (!result) return {};
+    return {
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      cancelled: result.cancelled,
+      truncated: result.truncated,
+    };
+  }));
 
   server.registerTool("edit", {
     title: "Edit File",
@@ -142,7 +209,7 @@ export function createMcpServer(
       }).strict()).min(1).max(100).describe("Exact text replacements applied atomically to one file."),
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, (args) => execute("edit", editTool, args));
+  }, (args, extra) => execute("edit", editTool, args, extra));
 
   server.registerTool("write", {
     title: "Write File",
@@ -152,7 +219,7 @@ export function createMcpServer(
       content: z.string().max(1024 * 1024).describe("Complete file content, up to 1 MiB."),
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (args) => execute("write", writeTool, args));
+  }, (args, extra) => execute("write", writeTool, args, extra));
 
   server.registerTool("grep", {
     title: "Search File Contents",
@@ -167,7 +234,7 @@ export function createMcpServer(
       limit: z.number().int().positive().max(1000).optional().describe("Maximum number of matches to return."),
     }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (args) => execute("grep", grepTool, args));
+  }, (args, extra) => execute("grep", grepTool, args, extra));
 
   server.registerTool("find", {
     title: "Find Files",
@@ -178,7 +245,7 @@ export function createMcpServer(
       limit: z.number().int().positive().max(1000).optional().describe("Maximum number of matching paths to return."),
     }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (args) => execute("find", findTool, args));
+  }, (args, extra) => execute("find", findTool, args, extra));
 
   server.registerTool("ls", {
     title: "List Directory",
@@ -188,7 +255,7 @@ export function createMcpServer(
       limit: z.number().int().positive().max(1000).optional().describe("Maximum number of entries to return."),
     }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (args) => execute("ls", lsTool, args));
+  }, (args, extra) => execute("ls", lsTool, args, extra));
 
   let dispose = () => undefined;
   if (identity && broker) {
@@ -230,7 +297,7 @@ export function createMcpServer(
       }).strict(),
       outputSchema: chatMessageSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, async (args) => {
+    }, (args, extra) => auditCall("agent_chat_post", extra, async () => {
       if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_chat_post'");
       if (args.agent_name !== undefined && args.agent_name !== authenticatedIdentity.agentName) {
         return toolError("agent_name must match the authenticated agent identity when provided");
@@ -248,7 +315,7 @@ export function createMcpServer(
       } catch (error) {
         return toolError(error instanceof Error ? error.message : "Agent chat post failed");
       }
-    });
+    }));
 
     server.registerTool("agent_chat_read", {
       title: "Read Agent Coordination",
@@ -258,7 +325,7 @@ export function createMcpServer(
       }).strict(),
       outputSchema: chatSnapshotSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async (args) => {
+    }, (args, extra) => auditCall("agent_chat_read", extra, async () => {
       if (!canChatRead(scopes)) return toolError("Token scope does not permit 'agent_chat_read'");
       try {
         const snapshot = toChatSnapshot(await broker.read(args.after));
@@ -269,7 +336,7 @@ export function createMcpServer(
       } catch (error) {
         return toolError(error instanceof Error ? error.message : "Agent chat read failed");
       }
-    });
+    }));
 
     server.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
       requireChatReadScope(scopes);

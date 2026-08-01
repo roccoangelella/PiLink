@@ -16,6 +16,7 @@ export interface ToolAuditEventInput {
   accessMode: ToolAuditAccessMode;
   exitCode?: number | null;
   timedOut?: boolean;
+  cancelled?: boolean;
   truncated?: boolean;
 }
 
@@ -32,6 +33,7 @@ export interface ToolAuditEvent {
   accessMode: ToolAuditAccessMode;
   exitCode?: number | null;
   timedOut?: boolean;
+  cancelled?: boolean;
   truncated?: boolean;
 }
 
@@ -75,6 +77,10 @@ export class ToolAuditLog {
     const operation = previous.then(() => this.append(event));
     appendQueues.set(this.logPath, operation.then(() => undefined, () => undefined));
     return operation;
+  }
+
+  public flush(): Promise<void> {
+    return appendQueues.get(this.logPath) || Promise.resolve();
   }
 
   private async append(event: ToolAuditEvent): Promise<void> {
@@ -138,6 +144,7 @@ function normalizeEvent(input: ToolAuditEventInput): ToolAuditEvent {
   if (input.sessionId !== undefined) event.sessionId = validateText(input.sessionId, "sessionId", 200);
   if (input.exitCode !== undefined) event.exitCode = validateExitCode(input.exitCode);
   if (input.timedOut !== undefined) event.timedOut = validateBoolean(input.timedOut, "timedOut");
+  if (input.cancelled !== undefined) event.cancelled = validateBoolean(input.cancelled, "cancelled");
   if (input.truncated !== undefined) event.truncated = validateBoolean(input.truncated, "truncated");
   return event;
 }
