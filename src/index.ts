@@ -72,6 +72,7 @@ app.get("/health", (_req, res) => {
     server: "pilink",
     version: VERSION,
     harness: "pi-agent",
+    sessions: publicSessionStatus(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -87,14 +88,216 @@ app.get("/", (_req, res) => {
 
 interface ManagedTransport {
   transport: StreamableHTTPServerTransport | SSEServerTransport;
+  server: ReturnType<typeof createMcpServer>;
   clientId: string;
+  createdAtMs: number;
+  lastActivityAtMs: number;
+  inFlightRequests: number;
+  openStreams: number;
 }
 
 const transports: Record<string, ManagedTransport> = {};
+let pendingMcpSessionsTotal = 0;
+const pendingMcpSessionsByClient = new Map<string, number>();
+const idleSessionTimeoutMs = config.mcpSessionIdleTimeoutSeconds * 1_000;
+const sessionReclaimGraceMs = config.mcpSessionReclaimGraceSeconds * 1_000;
 
 function tokenFor(req: express.Request): { sub: string; scope: string } {
   return (req as express.Request & { tokenPayload: { sub: string; scope: string } }).tokenPayload;
 }
+
+function once(callback: () => void): () => void {
+  let called = false;
+  return () => {
+    if (called) return;
+    called = true;
+    callback();
+  };
+}
+
+function activeSessionsForClient(clientId: string): number {
+  return Object.values(transports).filter((managed) => managed.clientId === clientId).length;
+}
+
+function publicSessionStatus() {
+  const active = Object.values(transports);
+  return {
+    active: active.length,
+    busy: active.filter((managed) => managed.inFlightRequests > 0 || managed.openStreams > 0).length,
+    pending: pendingMcpSessionsTotal,
+    max_total: config.maxMcpSessionsTotal,
+    max_per_client: config.maxMcpSessionsPerClient,
+    idle_timeout_seconds: config.mcpSessionIdleTimeoutSeconds,
+    reclaim_grace_seconds: config.mcpSessionReclaimGraceSeconds,
+  };
+}
+
+function createManagedTransport(
+  transport: ManagedTransport["transport"],
+  server: ManagedTransport["server"],
+  clientId: string,
+): ManagedTransport {
+  const now = Date.now();
+  return {
+    transport,
+    server,
+    clientId,
+    createdAtMs: now,
+    lastActivityAtMs: now,
+    inFlightRequests: 0,
+    openStreams: 0,
+  };
+}
+
+function touchTransport(managed: ManagedTransport): void {
+  managed.lastActivityAtMs = Date.now();
+}
+
+async function withManagedRequest<T>(managed: ManagedTransport, operation: () => Promise<T>): Promise<T> {
+  touchTransport(managed);
+  managed.inFlightRequests += 1;
+  try {
+    return await operation();
+  } finally {
+    managed.inFlightRequests = Math.max(0, managed.inFlightRequests - 1);
+    touchTransport(managed);
+  }
+}
+
+async function withManagedStream<T>(managed: ManagedTransport, operation: () => Promise<T>): Promise<T> {
+  touchTransport(managed);
+  managed.openStreams += 1;
+  try {
+    return await operation();
+  } finally {
+    managed.openStreams = Math.max(0, managed.openStreams - 1);
+    touchTransport(managed);
+  }
+}
+
+function removeManagedTransport(
+  sessionId: string,
+  expected?: ManagedTransport["transport"],
+): ManagedTransport | undefined {
+  const managed = transports[sessionId];
+  if (!managed || (expected && managed.transport !== expected)) return undefined;
+  delete transports[sessionId];
+  return managed;
+}
+
+async function closeDetachedTransport(sessionId: string, managed: ManagedTransport, context: string): Promise<void> {
+  try {
+    await managed.server.close();
+  } catch (error) {
+    console.error(`[${context}] Unable to close MCP session ${sessionId}:`, error);
+  }
+}
+
+async function closeManagedTransport(sessionId: string, managed: ManagedTransport, context: string): Promise<void> {
+  const detached = removeManagedTransport(sessionId, managed.transport);
+  if (!detached) return;
+  await closeDetachedTransport(sessionId, detached, context);
+}
+
+function isReclaimable(managed: ManagedTransport, now: number): boolean {
+  return managed.inFlightRequests === 0 &&
+    managed.openStreams === 0 &&
+    now - managed.lastActivityAtMs >= sessionReclaimGraceMs;
+}
+
+function oldestReclaimableSession(clientId?: string): [string, ManagedTransport] | undefined {
+  const now = Date.now();
+  return Object.entries(transports)
+    .filter(([, managed]) => (!clientId || managed.clientId === clientId) && isReclaimable(managed, now))
+    .sort(([, left], [, right]) =>
+      left.lastActivityAtMs - right.lastActivityAtMs || left.createdAtMs - right.createdAtMs,
+    )[0];
+}
+
+function recycleOldestQuiescentSession(clientId: string | undefined, reason: string): boolean {
+  const candidate = oldestReclaimableSession(clientId);
+  if (!candidate) return false;
+  const [sessionId, managed] = candidate;
+  const detached = removeManagedTransport(sessionId, managed.transport);
+  if (!detached) return false;
+  console.error(`[MCP] Recycling quiescent session ${sessionId} for client ${managed.clientId} under ${reason}.`);
+  void closeDetachedTransport(sessionId, detached, "MCP");
+  return true;
+}
+
+function reclaimCapacity(clientId: string): void {
+  while (
+    activeSessionsForClient(clientId) + (pendingMcpSessionsByClient.get(clientId) || 0) >=
+    config.maxMcpSessionsPerClient
+  ) {
+    if (!recycleOldestQuiescentSession(clientId, "per-client quota pressure")) break;
+  }
+  while (Object.keys(transports).length + pendingMcpSessionsTotal >= config.maxMcpSessionsTotal) {
+    if (!recycleOldestQuiescentSession(undefined, "total quota pressure")) break;
+  }
+}
+
+function reserveSessionSlot(clientId: string, res: express.Response): (() => void) | null {
+  reclaimCapacity(clientId);
+  const totalInUse = Object.keys(transports).length + pendingMcpSessionsTotal;
+  const clientInUse = activeSessionsForClient(clientId) + (pendingMcpSessionsByClient.get(clientId) || 0);
+  const totalExceeded = totalInUse >= config.maxMcpSessionsTotal;
+  const clientExceeded = clientInUse >= config.maxMcpSessionsPerClient;
+  if (totalExceeded || clientExceeded) {
+    res.setHeader("Retry-After", "1");
+    res.status(429).json({
+      error: "too_many_sessions",
+      error_description: clientExceeded
+        ? "OAuth client has reached its active MCP session limit"
+        : "PiLink has reached its active MCP session limit",
+      limits: {
+        total: config.maxMcpSessionsTotal,
+        per_client: config.maxMcpSessionsPerClient,
+      },
+      active: {
+        total: Object.keys(transports).length,
+        client: activeSessionsForClient(clientId),
+      },
+    });
+    return null;
+  }
+
+  pendingMcpSessionsTotal += 1;
+  pendingMcpSessionsByClient.set(clientId, (pendingMcpSessionsByClient.get(clientId) || 0) + 1);
+  return once(() => {
+    pendingMcpSessionsTotal = Math.max(0, pendingMcpSessionsTotal - 1);
+    const remaining = Math.max(0, (pendingMcpSessionsByClient.get(clientId) || 1) - 1);
+    if (remaining === 0) pendingMcpSessionsByClient.delete(clientId);
+    else pendingMcpSessionsByClient.set(clientId, remaining);
+  });
+}
+
+function rejectExpiredOrUnknownSession(res: express.Response): void {
+  res.status(404).json({ error: "Session not found or expired" });
+}
+
+let idleSessionSweepRunning = false;
+const idleSessionSweepIntervalMs = Math.min(30_000, Math.max(250, Math.floor(idleSessionTimeoutMs / 4)));
+async function sweepIdleMcpSessions(): Promise<void> {
+  const now = Date.now();
+  await Promise.all(Object.entries(transports).map(async ([sessionId, managed]) => {
+    if (managed.inFlightRequests > 0 || managed.openStreams > 0) return;
+    if (now - managed.lastActivityAtMs < idleSessionTimeoutMs) return;
+    console.error(
+      `[MCP] Expiring quiescent session ${sessionId} for client ${managed.clientId} ` +
+      `after ${config.mcpSessionIdleTimeoutSeconds}s without an active request or stream.`,
+    );
+    await closeManagedTransport(sessionId, managed, "MCP");
+  }));
+}
+const idleSessionSweep = setInterval(() => {
+  if (idleSessionSweepRunning) return;
+  idleSessionSweepRunning = true;
+  void sweepIdleMcpSessions().finally(() => {
+    idleSessionSweepRunning = false;
+  });
+}, idleSessionSweepIntervalMs);
+idleSessionSweep.unref();
 
 function ensureAcceptHeader(req: express.Request): void {
   const currentAccept = req.headers["accept"] || "";
@@ -118,15 +321,19 @@ app.post("/sse", authenticateBearer, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   try {
-    if (sessionId && transports[sessionId]) {
+    if (sessionId) {
       const managed = transports[sessionId];
+      if (!managed) {
+        rejectExpiredOrUnknownSession(res);
+        return;
+      }
       if (managed.clientId !== tokenFor(req).sub) {
         res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
         return;
       }
       const transport = managed.transport;
       if (transport instanceof StreamableHTTPServerTransport) {
-        await transport.handleRequest(req, res, req.body);
+        await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
       } else {
         res.status(400).json({
           jsonrpc: "2.0",
@@ -138,25 +345,48 @@ app.post("/sse", authenticateBearer, async (req, res) => {
     }
 
     console.error("[MCP] New Streamable HTTP session initializing...");
+    const client = tokenFor(req);
+    const releaseReservation = reserveSessionSlot(client.sub, res);
+    if (!releaseReservation) return;
+    let managed: ManagedTransport;
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
         console.error(`[MCP] Streamable HTTP session created: ${sid}`);
-        transports[sid] = { transport, clientId: tokenFor(req).sub };
+        if (managed) {
+          transports[sid] = managed;
+          releaseReservation();
+        }
       },
     });
-
-    transport.onclose = () => {
+    const mcpServer = createMcpServer(policy, client.scope);
+    managed = createManagedTransport(transport, mcpServer, client.sub);
+    const cleanup = once(() => {
       const sid = transport.sessionId;
-      if (sid && transports[sid]) {
-        console.error(`[MCP] Streamable HTTP session closed: ${sid}`);
-        delete transports[sid];
+      if (sid) {
+        const detached = removeManagedTransport(sid, transport);
+        if (detached) {
+          console.error(`[MCP] Streamable HTTP session closed: ${sid}`);
+          void closeDetachedTransport(sid, detached, "MCP");
+        }
+      } else {
+        void mcpServer.close().catch(() => undefined);
       }
-    };
+      releaseReservation();
+    });
+    transport.onclose = cleanup;
+    transport.onerror = cleanup;
 
-    const mcpServer = createMcpServer(policy, tokenFor(req).scope);
-    await mcpServer.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    try {
+      await mcpServer.connect(transport);
+      await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
+    } catch (error) {
+      cleanup();
+      throw error;
+    } finally {
+      releaseReservation();
+      if (!transport.sessionId) cleanup();
+    }
   } catch (error) {
     console.error("[MCP] Error handling Streamable HTTP request:", error);
     if (!res.headersSent) {
@@ -173,8 +403,12 @@ app.post("/sse", authenticateBearer, async (req, res) => {
 app.get("/sse", authenticateBearer, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-  if (sessionId && transports[sessionId]) {
+  if (sessionId) {
     const managed = transports[sessionId];
+    if (!managed) {
+      rejectExpiredOrUnknownSession(res);
+      return;
+    }
     if (managed.clientId !== tokenFor(req).sub) {
       res.status(403).json({ error: "forbidden", error_description: "Session belongs to another client" });
       return;
@@ -182,23 +416,56 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
       console.error(`[MCP] Streamable HTTP SSE stream opened for session: ${sessionId}`);
-      await transport.handleRequest(req, res);
+      try {
+        await withManagedStream(managed, () => transport.handleRequest(req, res));
+      } catch (error) {
+        console.error("[MCP] Error handling Streamable HTTP SSE stream:", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "internal_error", error_description: "Unable to handle MCP session" });
+        }
+      }
       return;
     }
+    res.status(400).json({ error: "Session uses legacy SSE transport, not Streamable HTTP" });
+    return;
   }
 
   console.error("[MCP] Legacy SSE session starting...");
+  const client = tokenFor(req);
+  const releaseReservation = reserveSessionSlot(client.sub, res);
+  if (!releaseReservation) return;
   const transport = new SSEServerTransport("/messages", res);
-  transports[transport.sessionId] = { transport, clientId: tokenFor(req).sub };
+  const mcpServer = createMcpServer(policy, client.scope);
+  const managed = createManagedTransport(transport, mcpServer, client.sub);
+  managed.openStreams = 1;
+  transports[transport.sessionId] = managed;
+  releaseReservation();
   console.error(`[MCP] Legacy SSE session created: ${transport.sessionId}`);
 
-  res.on("close", () => {
-    console.error(`[MCP] Legacy SSE session closed: ${transport.sessionId}`);
-    delete transports[transport.sessionId];
+  const cleanup = once(() => {
+    managed.openStreams = 0;
+    touchTransport(managed);
+    const detached = removeManagedTransport(transport.sessionId, transport);
+    if (detached) {
+      console.error(`[MCP] Legacy SSE session closed: ${transport.sessionId}`);
+      void closeDetachedTransport(transport.sessionId, detached, "MCP");
+    }
+    releaseReservation();
   });
+  res.once("close", cleanup);
+  transport.onerror = cleanup;
 
-  const mcpServer = createMcpServer(policy, tokenFor(req).scope);
-  await mcpServer.connect(transport);
+  try {
+    await mcpServer.connect(transport);
+  } catch (error) {
+    cleanup();
+    console.error("[MCP] Error starting legacy SSE session:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "internal_error", error_description: "Unable to start MCP session" });
+    }
+  } finally {
+    releaseReservation();
+  }
 });
 
 // ── Streamable HTTP: DELETE /sse (session teardown) ──────────
@@ -214,8 +481,12 @@ app.delete("/sse", authenticateBearer, async (req, res) => {
     const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
       console.error(`[MCP] Streamable HTTP session deleted: ${sessionId}`);
-      await transport.handleRequest(req, res);
-      delete transports[sessionId];
+      try {
+        await withManagedRequest(managed, () => transport.handleRequest(req, res));
+      } finally {
+        const detached = removeManagedTransport(sessionId, transport);
+        if (detached) await closeDetachedTransport(sessionId, detached, "MCP");
+      }
       return;
     }
   }
@@ -237,8 +508,16 @@ app.post("/messages", authenticateBearer, async (req, res) => {
     res.status(404).json({ error: "Session not found or expired" });
     return;
   }
+  const transport = managed.transport;
 
-  await managed.transport.handlePostMessage(req, res);
+  try {
+    await withManagedRequest(managed, () => transport.handlePostMessage(req, res));
+  } catch (error) {
+    console.error("[MCP] Error handling legacy SSE message:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "internal_error", error_description: "Unable to handle MCP session" });
+    }
+  }
 });
 
 // ── Start server ─────────────────────────────────────────────
@@ -271,16 +550,19 @@ server.once("error", (error: NodeJS.ErrnoException) => {
 });
 
 // ── Graceful shutdown ────────────────────────────────────────
-process.on("SIGINT", async () => {
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.error("Shutting down...");
-  for (const sessionId in transports) {
-    try {
-      await transports[sessionId].transport.close?.();
-      delete transports[sessionId];
-    } catch { /* ignore */ }
-  }
+  clearInterval(idleSessionSweep);
+  await Promise.all(Object.entries(transports).map(([sessionId, managed]) =>
+    closeManagedTransport(sessionId, managed, "shutdown"),
+  ));
   process.exit(0);
-});
+}
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 
 function renderLandingPage(): string {
   return `<!DOCTYPE html>

@@ -16,6 +16,10 @@ export interface RuntimeConfig {
   tokenExpirySeconds: number;
   unsafeFullAccess: boolean;
   maxBashTimeoutSeconds: number;
+  maxMcpSessionsTotal: number;
+  maxMcpSessionsPerClient: number;
+  mcpSessionIdleTimeoutSeconds: number;
+  mcpSessionReclaimGraceSeconds: number;
   corsOrigins: string[];
   trustProxy: boolean;
 }
@@ -35,6 +39,13 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const port = positiveInteger(env.PORT, 3200, "PORT");
   const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 360000000000, "TOKEN_EXPIRY");
   const maxBashTimeoutSeconds = positiveInteger(env.PI_MAX_BASH_TIMEOUT, 120, "PI_MAX_BASH_TIMEOUT");
+  const maxMcpSessionsTotal = positiveInteger(env.PI_MAX_MCP_SESSIONS_TOTAL, 64, "PI_MAX_MCP_SESSIONS_TOTAL");
+  const maxMcpSessionsPerClient = positiveInteger(env.PI_MAX_MCP_SESSIONS_PER_CLIENT, 16, "PI_MAX_MCP_SESSIONS_PER_CLIENT");
+  const mcpSessionIdleTimeoutSeconds = positiveInteger(env.PI_MCP_SESSION_IDLE_TIMEOUT, 10 * 60, "PI_MCP_SESSION_IDLE_TIMEOUT");
+  const mcpSessionReclaimGraceSeconds = positiveInteger(env.PI_MCP_SESSION_RECLAIM_GRACE, 5, "PI_MCP_SESSION_RECLAIM_GRACE");
+  if (maxMcpSessionsPerClient > maxMcpSessionsTotal) {
+    throw new Error("PI_MAX_MCP_SESSIONS_PER_CLIENT cannot exceed PI_MAX_MCP_SESSIONS_TOTAL");
+  }
   let workspace = path.resolve(env.PI_WORK_DIR || process.cwd());
   if (!fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
     const cwd = process.cwd();
@@ -69,6 +80,10 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     tokenExpirySeconds,
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
     maxBashTimeoutSeconds,
+    maxMcpSessionsTotal,
+    maxMcpSessionsPerClient,
+    mcpSessionIdleTimeoutSeconds,
+    mcpSessionReclaimGraceSeconds,
     corsOrigins: (env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
     trustProxy: env.TRUST_PROXY === "true",
   };
