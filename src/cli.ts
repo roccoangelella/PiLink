@@ -9,9 +9,17 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.js";
-import { loadClients, registerClient } from "./auth.js";
+import { loadEnvironment, loadRuntimeConfig, defaultConfigPath, type AgentMode } from "./config.js";
+import {
+  effectiveClientTokenVersion,
+  isClientActive,
+  loadClients,
+  registerClient,
+  rotateClientSecret,
+  setClientDisabled,
+} from "./auth.js";
 import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublicIpv4, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
+import { HostingMonitor } from "./monitor.js";
 
 const [, , command = "start", ...args] = process.argv;
 let configPath = process.env.PILINK_CONFIG || defaultConfigPath();
@@ -19,6 +27,7 @@ const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
 let waitingForSetupCallback = false;
 let deferredServerOutput = "";
 let deferredServerOutputTruncated = false;
+let hostingMonitor: HostingMonitor | undefined;
 
 if (command === "init") {
   initialize();
@@ -28,9 +37,88 @@ if (command === "init") {
   startServer(args.includes("--allow-unsafe-full-access"));
 } else if (command === "reset") {
   void reset(args);
+} else if (command === "clients") {
+  void manageClients(args).catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 } else {
-  console.error("Usage: pilink <init|start|serve|reset> [--allow-unsafe-full-access] [--setup] [--yes] [--start]");
+  printUsage();
   process.exitCode = 1;
+}
+
+function printUsage(): void {
+  console.error("Usage: pilink <init|start|serve|reset|clients> [options]");
+  console.error("  pilink clients list");
+  console.error("  pilink clients disable <client-id>");
+  console.error("  pilink clients enable <client-id>");
+  console.error("  pilink clients rotate-secret <client-id>");
+}
+
+async function manageClients(args: string[]): Promise<void> {
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`PiLink configuration does not exist: ${configPath}. Run 'pilink init' first.`);
+  }
+  loadEnvironment();
+  loadRuntimeConfig();
+
+  const [action = "list", clientId, ...extra] = args;
+  if (extra.length > 0 || (action !== "list" && !clientId)) {
+    printUsage();
+    process.exitCode = 1;
+    return;
+  }
+
+  if (action === "list") {
+    if (clientId) {
+      printUsage();
+      process.exitCode = 1;
+      return;
+    }
+    const clients = loadClients();
+    if (clients.length === 0) {
+      console.log("No OAuth clients are registered.");
+      return;
+    }
+    console.log("CLIENT_ID\tSTATUS\tTOKEN_VERSION\tNAME\tSCOPE\tCREATED_AT");
+    for (const client of clients) {
+      console.log([
+        terminalField(client.client_id),
+        isClientActive(client) ? "active" : terminalField(`disabled:${client.disabled_at}`),
+        effectiveClientTokenVersion(client),
+        terminalField(client.client_name),
+        terminalField(client.scope),
+        terminalField(client.created_at),
+      ].join("\t"));
+    }
+    return;
+  }
+
+  if (action === "disable" || action === "enable") {
+    const disabled = action === "disable";
+    const client = await setClientDisabled(clientId, disabled);
+    if (!client) throw new Error(`Unknown OAuth client: ${terminalField(clientId)}`);
+    console.error(`${disabled ? "Disabled" : "Enabled"} OAuth client ${terminalField(client.client_id)} (${terminalField(client.client_name)}).`);
+    if (disabled) console.error("Its existing access tokens and MCP sessions are now invalid.");
+    return;
+  }
+
+  if (action === "rotate-secret") {
+    const rotated = await rotateClientSecret(clientId);
+    if (!rotated) throw new Error(`Unknown OAuth client: ${terminalField(clientId)}`);
+    console.error(`Rotated the secret for OAuth client ${terminalField(rotated.client.client_id)} (${terminalField(rotated.client.client_name)}).`);
+    console.error("Existing access tokens and MCP sessions are now invalid.");
+    console.error("Store this new secret now; PiLink will not display it again:");
+    console.log(rotated.client_secret);
+    return;
+  }
+
+  printUsage();
+  process.exitCode = 1;
+}
+
+function terminalField(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
 }
 
 function initialize(portOverride?: number): void {
@@ -48,7 +136,14 @@ function initialize(portOverride?: number): void {
     `JWT_SECRET=${secret()}`,
     `PI_BOOTSTRAP_SECRET=${secret()}`,
     "PI_MAX_BASH_TIMEOUT=120",
+    "PI_MAX_MCP_SESSIONS_TOTAL=64",
+    "PI_MAX_MCP_SESSIONS_PER_CLIENT=16",
+    "PI_MCP_SESSION_IDLE_TIMEOUT=600",
+    "# PI_AGENT_MODE is chosen on the first hosted start: single-agent or agent-swarm.",
+    "# PI_ALLOW_WORKSPACE_EXECUTION=false",
+    "# PI_REQUIRE_EXECUTION_APPROVAL=false",
     "# PI_UNSAFE_FULL_ACCESS=false",
+    "# Additional exact browser origins for MCP requests; SERVER_URL's own origin is always allowed.",
     "# CORS_ORIGINS=https://chatgpt.com",
     "",
   ].join("\n");
@@ -93,6 +188,9 @@ function resetTargets(): string[] {
   const targets = new Set<string>([
     configPath,
     path.join(dataDirectory, "clients.json"),
+    path.join(dataDirectory, "clients.json.lock"),
+    path.join(dataDirectory, "revoked-tokens.json"),
+    path.join(dataDirectory, "oauth-client-audit.jsonl"),
     path.join(configDirectory, "bin", cloudflaredFileName()),
     path.join(configDirectory, "bin", caddyFileName()),
     path.join(configDirectory, "Caddyfile"),
@@ -173,6 +271,7 @@ async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
   if (!fs.existsSync(configPath)) initialize();
   let hostingMode: "quick-tunnel" | "nip-io";
   try {
+    await selectAgentMode(forceSetup);
     hostingMode = await selectHostingMode(forceSetup);
   } catch (error) {
     console.error(error instanceof Error ? error.message : "Unable to configure hosting");
@@ -184,6 +283,36 @@ async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
     return;
   }
   await startQuickTunnel(unsafe, forceSetup);
+}
+
+async function selectAgentMode(forceSetup: boolean): Promise<AgentMode> {
+  loadEnvironment();
+  const configuredMode = process.env.PI_AGENT_MODE;
+  if (configuredMode && configuredMode !== "single-agent" && configuredMode !== "agent-swarm") {
+    throw new Error("PI_AGENT_MODE must be 'single-agent' or 'agent-swarm'");
+  }
+  if (!forceSetup && (configuredMode === "single-agent" || configuredMode === "agent-swarm")) return configuredMode;
+
+  if (forceSetup) console.error("\n=== Reconfigure agent architecture ===");
+  console.error("\n=== Choose agent architecture ===");
+  console.error("1. Single agent (recommended)");
+  console.error("   Smallest surface: one coding-agent tool harness with no shared coordination state.");
+  console.error("2. Agent swarm");
+  console.error("   Enables durable public chat, task coordination, and governed shared-memory proposals for multiple authorized agents.");
+  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const choice = (await readline.question("Select architecture [1/2]: ")).trim();
+    const mode: AgentMode = choice === "" || choice === "1"
+      ? "single-agent"
+      : choice === "2"
+        ? "agent-swarm"
+        : (() => { throw new Error("Agent architecture setup cancelled: choose 1 or 2."); })();
+    saveConfig({ PI_AGENT_MODE: mode });
+    process.env.PI_AGENT_MODE = mode;
+    return mode;
+  } finally {
+    readline.close();
+  }
 }
 
 async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<void> {
@@ -207,10 +336,12 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
       tunnel.stdout?.removeAllListeners("data");
       tunnel.stderr?.removeAllListeners("data");
       printQuickTunnelStartupInstructions(url);
-      const { process: serverProc, ready } = startServer(unsafe, url, tunnel);
+      const { process: serverProc, ready } = startServer(unsafe, url, tunnel, true);
       server = serverProc;
-      void ready.then((serverReady) => {
-        if (serverReady) return runFirstTimeSetup(url, forceSetup);
+      void ready.then(async (serverReady) => {
+        if (!serverReady) return;
+        await runFirstTimeSetup(url, forceSetup);
+        startHostingMonitor();
       });
     }
   };
@@ -369,7 +500,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   }
   const serverUrl = `https://${hostname}`;
   printNipIoStartupInstructions(serverUrl, Boolean(portMappings));
-  const { process: server, ready } = startServer(unsafe, serverUrl, caddy);
+  const { process: server, ready } = startServer(unsafe, serverUrl, caddy, true);
   let shuttingDown = false;
   let caddyRunning = true;
   let mappingsReleased = false;
@@ -398,8 +529,10 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
     server.kill("SIGINT");
     process.exitCode = code === 0 ? 0 : 1;
   });
-  void Promise.all([ready, certificateReady]).then(([serverReady, certificateObtained]) => {
-    if (serverReady && certificateObtained && caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
+  void Promise.all([ready, certificateReady]).then(async ([serverReady, certificateObtained]) => {
+    if (!serverReady || !certificateObtained || !caddyRunning) return;
+    await runFirstTimeSetup(serverUrl, forceSetup);
+    startHostingMonitor();
   });
 }
 
@@ -725,7 +858,7 @@ function canRun(executable: string): boolean {
   return spawnSync(executable, ["--version"], { stdio: "ignore" }).status === 0;
 }
 
-function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): { process: ChildProcess; ready: Promise<boolean> } {
+function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess, hosted = false): { process: ChildProcess; ready: Promise<boolean> } {
   if (!fs.existsSync(configPath)) initialize();
   loadEnvironment();
   const config = loadRuntimeConfig();
@@ -749,6 +882,7 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
       PILINK_CONFIG: configPath,
       HOST: "127.0.0.1",
       PI_DATA_DIR: config.dataDir,
+      PI_INTERACTIVE_MONITOR: hosted ? "true" : "false",
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
       ...(unsafe ? { PI_UNSAFE_FULL_ACCESS: "true" } : {}),
     },
@@ -766,17 +900,30 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
   });
 
   const shutdown = () => {
+    hostingMonitor?.stop();
     server.kill("SIGINT");
     edge?.kill("SIGTERM");
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   server.on("exit", (code) => {
+    hostingMonitor?.stop();
     settleReady(false);
     edge?.kill("SIGTERM");
     process.exitCode = code ?? 1;
   });
   return { process: server, ready };
+}
+
+function startHostingMonitor(): void {
+  if (hostingMonitor) return;
+  const config = loadRuntimeConfig();
+  hostingMonitor = new HostingMonitor({
+    mode: config.agentMode,
+    workspace: config.workspace,
+    dataDir: config.dataDir,
+  });
+  hostingMonitor.start();
 }
 
 function saveConfig(values: Record<string, string>): void {

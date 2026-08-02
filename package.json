@@ -40,7 +40,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "npm run build && node --test test/**/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 test/**/*.test.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {

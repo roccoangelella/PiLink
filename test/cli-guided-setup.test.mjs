@@ -69,6 +69,9 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Select architecture [1/2]:"));
+  assert.match(output, /Single agent \(recommended\)/);
+  cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   assert.match(output, /Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session/);
   cliProcess.stdin.write("1\n");
@@ -81,11 +84,12 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   assert.ok(promptIndex !== -1, "Paste callback URL prompt should be printed");
   assert.ok(bannerIndex < promptIndex, "Server banner box must be printed before Paste callback URL prompt");
   cliProcess.stdin.write("https://chatgpt.example/callback\n");
-  await waitFor(() => output.includes("ChatGPT OAuth client registered"));
+  await waitFor(() => output.includes("Client ID: pi_"));
   assert.match(output, /Client ID: pi_[a-f0-9]{16}/);
   assert.match(output, /Client secret: [A-Za-z0-9_-]{40,}/);
   assert.match(output, /Token endpoint auth method: client_secret_post/);
   assert.match(await fs.readFile(configPath, "utf8"), /PI_HOSTING_MODE=quick-tunnel/);
+  assert.match(await fs.readFile(configPath, "utf8"), /PI_AGENT_MODE=agent-swarm/);
   const store = JSON.parse(await fs.readFile(path.join(root, "data", "clients.json"), "utf8"));
   assert.equal(store.clients.length, 1);
   assert.deepEqual(store.clients[0].redirect_uris, ["https://chatgpt.example/callback"]);
@@ -112,6 +116,8 @@ test("start --setup resets generated state before the first-time flow", async (t
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
+  await waitFor(() => output.includes("Select architecture [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
@@ -122,7 +128,7 @@ test("start --setup resets generated state before the first-time flow", async (t
   assert.doesNotMatch(output, /\[HTTP\] GET \/health/);
   cliProcess.stdin.write("https://chatgpt.example/renamed-repository-callback\n");
   await waitFor(() => output.includes("ChatGPT OAuth client registered"));
-  assert.match(output, /\[HTTP\] GET \/health → 200/);
+  assert.doesNotMatch(output, /\[HTTP\] GET \/health/);
 
   const store = JSON.parse(await fs.readFile(path.join(root, "clients.json"), "utf8"));
   assert.equal(store.clients.length, 1);
@@ -157,6 +163,8 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
+  await waitFor(() => output.includes("Select architecture [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Allow PiLink to request these temporary router mappings? [Y/n]:"));
@@ -201,6 +209,7 @@ test("start reports an occupied local port without starting OAuth setup", async 
     "PI_HOSTING_MODE=nip-io",
     "PI_NIP_IO_NETWORK=manual",
     "PI_NIP_IO_HOSTNAME=pilink-203-0-113-20.nip.io",
+    "PI_AGENT_MODE=single-agent",
   ].join("\n"));
   await fs.writeFile(fakeCaddy, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexec sleep 30\n", { mode: 0o700 });
 
@@ -313,6 +322,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   await fs.mkdir(path.join(root, "bin"));
   await fs.mkdir(dataPath);
   await fs.writeFile(path.join(dataPath, "clients.json"), "{}");
+  await fs.writeFile(path.join(dataPath, "clients.json.lock"), "stale lock");
+  await fs.writeFile(path.join(dataPath, "revoked-tokens.json"), "{}");
+  await fs.writeFile(path.join(dataPath, "oauth-client-audit.jsonl"), "{}\n");
   await fs.writeFile(path.join(dataPath, "keep.txt"), "unrelated data");
   await fs.writeFile(path.join(root, "bin", "cloudflared"), "managed binary");
   await fs.writeFile(path.join(root, "bin", "caddy"), "managed binary");
@@ -327,6 +339,9 @@ test("reset --yes removes generated files without removing unrelated data", asyn
   assert.match(result.output, /PiLink state was reset/);
   await assert.rejects(fs.stat(configPath));
   await assert.rejects(fs.stat(path.join(dataPath, "clients.json")));
+  await assert.rejects(fs.stat(path.join(dataPath, "clients.json.lock")));
+  await assert.rejects(fs.stat(path.join(dataPath, "revoked-tokens.json")));
+  await assert.rejects(fs.stat(path.join(dataPath, "oauth-client-audit.jsonl")));
   await assert.rejects(fs.stat(path.join(root, "bin", "cloudflared")));
   await assert.rejects(fs.stat(path.join(root, "bin", "caddy")));
   await assert.rejects(fs.stat(path.join(root, "Caddyfile")));
@@ -376,7 +391,7 @@ async function runCli(args, cwd, overrides) {
 
 function cliEnvironment(overrides) {
   const env = { ...process.env };
-  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_PUBLIC_IPV4", "PI_CADDY_PATH", "PI_CLOUDFLARED_PATH", "PI_CLOUDFLARED_URL", "PI_CADDY_URL"]) {
+  for (const name of ["PI_WORK_DIR", "PI_DATA_DIR", "PORT", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "SERVER_URL", "PILINK_CONFIG", "PI_HOSTING_MODE", "PI_AGENT_MODE", "PI_NIP_IO_HOSTNAME", "PI_NIP_IO_NETWORK", "PI_PUBLIC_IPV4", "PI_CADDY_PATH", "PI_CLOUDFLARED_PATH", "PI_CLOUDFLARED_URL", "PI_CADDY_URL"]) {
     delete env[name];
   }
   return { ...env, ...overrides };
@@ -411,6 +426,8 @@ test("first start downloads cloudflared from PI_CLOUDFLARED_URL when not preinst
 
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
+  await waitFor(() => output.includes("Select architecture [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("cloudflared is not installed; downloading"));
@@ -486,6 +503,8 @@ test("start --setup option 1 creates a separate instance without deleting existi
   cliProcess.stdin.write(`${newConfigDirectory}\n`);
   await waitFor(() => output.includes("Enter new server port"));
   cliProcess.stdin.write(`${newPort}\n`);
+  await waitFor(() => output.includes("Select architecture [1/2]:"));
+  cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Select hosting [1/2]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
@@ -509,6 +528,7 @@ async function writeConfig(configPath, workspace, port, dataPath = path.join(pat
     `JWT_SECRET=${"a".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
     "PI_HOSTING_MODE=quick-tunnel",
+    "PI_AGENT_MODE=single-agent",
   ].join("\n"));
 }
 
@@ -530,7 +550,7 @@ async function availablePort() {
 
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Timed out waiting for CLI output");
