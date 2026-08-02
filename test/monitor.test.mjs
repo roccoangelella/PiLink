@@ -40,6 +40,16 @@ test("monitor reads private metadata-only audit records and durable public chat 
   assert.doesNotMatch(rendered, /first\nmessage/);
 });
 
+test("single-agent monitor exposes only tool-call controls and guidance", () => {
+  const snapshot = { tools: [], chat: [] };
+  const tools = formatMonitor(snapshot, "single-agent", "tools");
+  const help = formatMonitor(snapshot, "single-agent", "help");
+
+  assert.match(tools, /\[t\] tool calls/);
+  assert.doesNotMatch(tools, /\[c\] public chat/);
+  assert.doesNotMatch(help, /Public-chat messages/);
+});
+
 test("monitor degrades to a bounded one-shot plain status when hosting without a TTY", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-monitor-pipe-"));
   const workspace = path.join(root, "workspace");
@@ -63,6 +73,7 @@ test("monitor degrades to a bounded one-shot plain status when hosting without a
   await waitFor(() => rendered.includes("live monitor requires a TTY"));
   monitor.stop();
   assert.match(rendered, /TOOL CALLS/);
+  assert.doesNotMatch(rendered, /\[c\] public chat/);
   assert.doesNotMatch(rendered, /\x1b\[2J/);
 });
 

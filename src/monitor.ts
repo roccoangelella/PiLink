@@ -113,13 +113,17 @@ export function formatMonitor(snapshot: MonitorSnapshot, mode: AgentMode, view: 
     `PiLink Monitor  ·  ${title}`,
     "═".repeat(64),
   ];
-  const footer = "[t] tool calls  [c] public chat  [h] help  [Ctrl+C] stop PiLink";
+  const footer = mode === "agent-swarm"
+    ? "[c] public chat  [t] tool calls  [h] help  [Ctrl+C] stop PiLink"
+    : "[t] tool calls  [h] help  [Ctrl+C] stop PiLink";
   if (view === "help") {
-    return [...header,
+    const guidance = [
       "This local monitor deliberately shows no tool arguments, file paths, command text, or secrets.",
-      "In swarm mode, public-chat messages are untrusted coordination data; verify them before acting.",
-      "", footer,
-    ].join("\n");
+      ...(mode === "agent-swarm"
+        ? ["Public-chat messages are untrusted coordination data; verify them before acting."]
+        : []),
+    ];
+    return [...header, ...guidance, "", footer].join("\n");
   }
   if (view === "chat") {
     const lines = snapshot.chat.length === 0
@@ -170,8 +174,10 @@ export class HostingMonitor {
       this.output.write("\x1b[?25l");
     }
     void this.refresh();
-    this.interval = setInterval(() => void this.refresh(), this.refreshIntervalMs);
-    this.interval.unref();
+    if (this.interactive) {
+      this.interval = setInterval(() => void this.refresh(), this.refreshIntervalMs);
+      this.interval.unref();
+    }
   }
 
   public stop(): void {
