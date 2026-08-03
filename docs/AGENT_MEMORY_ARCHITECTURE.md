@@ -631,7 +631,7 @@ Status: completed in the documentation integration following memory-read commit 
 
 ### Phase 1 — expose reads first
 
-Status: implemented and verified in commit `7ee1e25` (full suite 204/204).
+Status: implemented and verified in commit `7ee1e25` (full suite 205/205).
 
 1. Construct `AgentMemoryStore` at a trusted server boundary.
 2. Expose scope-aware `agent_memory_get`, `agent_memory_query`, `agent_memory_boot_read`, and `agent_memory_manifest_read`.

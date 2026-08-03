@@ -5,7 +5,7 @@ Owner: AI Engineer / evaluator, approved by the project manager
 Last reviewed: 2026-08-03
 Task: `e1deaaba-d294-4c81-a5dc-5ab3ff80ef12`
 Evaluation target: manager-selected post-initialize, connection-bound `collaboration_bootstrap` protocol
-Implementation claimed: evaluation only; reviewed runtime behavior is implemented through commit `f477863`, with the exact current branch full suite passing 204/204 after the non-regressing Phase 1 memory-read commit `7ee1e25`
+Implementation claimed: evaluation only; reviewed runtime behavior is implemented through commit `f477863`, with the exact current branch full suite passing 205/205 after the non-regressing Phase 1 memory-read commit `7ee1e25`
 Security boundary: this evaluation records evidence and acceptance; it does not grant roles, credentials, authorization, or runtime policy
 Status of inspected implementation: all evaluated role/bootstrap, session ownership, crash recovery, deterministic close, reservation rollback, and read-only compatibility scenarios pass
 
@@ -170,7 +170,7 @@ Rejected transitions:
 
 - `npm run build && node --test test/collaboration-roles.test.mjs test/collaboration-bootstrap.test.mjs test/mcp-role-prompt.test.mjs test/role-bootstrap-http.integration.test.mjs` — **35/35 passed**.
 - Runtime commit `f477863` passed the standard full suite at **196/196** before the later governed-memory read integration.
-- The exact current branch tree passes `npm test` at **204/204** on 2026-08-03.
+- The exact current branch tree passes `npm test` at **205/205** on 2026-08-03.
 - The focused suite covers role registry/pinning, post-initialize prompt modes, sibling collaboration sessions, generic locking, disposal races, deterministic HTTP DELETE release, read-only no-state compatibility, and repeated setup-failure reservation rollback.
 - The exact current `src/mcp.ts` pristine guidance correctly distinguishes an explicitly assigned role from a no-role request: explicit roles bootstrap first; no-role operations enter generic actor-scoped mode instead of inventing a role.
 
