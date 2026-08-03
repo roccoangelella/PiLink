@@ -55,7 +55,7 @@ A conflicting unverified request cannot override the verified assignment. Prompt
 - `ai-engineer`: role/prompt architecture, durable memory/documentation conventions, retrieval/ranking, provenance, evaluation harnesses, KPIs, and acceptance scenarios.
 - `collaborator`: non-privileged verified fallback preserving the shared loop and manager-only user reporting.
 
-`reviewer` remains an internal task/review contract in `COLLABORATION_ROLE_CONTRACTS.md`; it is not selected from free-form user role labels in this registry version.
+`reviewer` remains an internal task/review contract in `protocols/collaboration-role-contracts.md`; it is not selected from free-form user role labels in this registry version.
 
 ## Integration API
 

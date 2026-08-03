@@ -19,7 +19,7 @@ The scheduler must be:
 - recoverable after lease expiry, stale revisions, disconnects, and missed notifications;
 - useful before strict role, review, workspace, and activity features are fully implemented.
 
-This document specifies task-store and MCP semantics. Behavioral role instructions live in `COLLABORATION_ROLE_CONTRACTS.md` and are not repeated here.
+This document specifies task-store and MCP semantics. Behavioral role instructions live in `protocols/collaboration-role-contracts.md` and are not repeated here.
 
 ## Design choice
 

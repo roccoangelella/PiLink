@@ -1,6 +1,6 @@
 # Security Policy
 
-PiLink exposes an authenticated coding-agent harness to remote MCP clients. Vulnerabilities involving authentication, authorization, workspace confinement, command execution, public hosting, dependency integrity, or secret disclosure can have severe impact and should be reported privately. See the [PiLink threat model](../docs/THREAT_MODEL.md) for trust boundaries, security invariants, accepted residual risks, and verification expectations.
+PiLink exposes an authenticated coding-agent harness to remote MCP clients. Vulnerabilities involving authentication, authorization, workspace confinement, command execution, public hosting, dependency integrity, or secret disclosure can have severe impact and should be reported privately. See the [PiLink threat model](../docs/security/threat-model.md) for trust boundaries, security invariants, accepted residual risks, and verification expectations.
 
 ## Supported versions
 

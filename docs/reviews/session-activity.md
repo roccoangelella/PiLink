@@ -275,7 +275,7 @@ The requirement was to distinguish active task ownership across sibling sessions
 
 **Required action**
 
-Migrate all stores together to server-generated project ID according to `COLLABORATION_PROJECT_WORKTREES.md`. This is not a reason to reject the isolated core, but public autonomous multi-workspace collaboration must not launch with path identity.
+Migrate all stores together to server-generated project ID according to `architecture/project-workspaces.md`. This is not a reason to reject the isolated core, but public autonomous multi-workspace collaboration must not launch with path identity.
 
 ## Properties accepted in the session/task commit
 

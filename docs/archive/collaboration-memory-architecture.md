@@ -1,10 +1,17 @@
 # PiLink collaboration memory architecture
 
-Status: manager-accepted architecture and research basis; no runtime implementation claimed
-Date: 2026-08-01
-Role: agents-memory consultant
-Task: `abc61b1f-51f9-480e-a755-5501a2359a91`
-Scope: `/home/ubuntu/Projects/PiLink-agents-chat-test`
+Status: archived historical architecture and research basis
+Owner: memory architecture maintainer
+Last reviewed: 2026-08-03
+Applies to: historical PiLink collaboration-memory design
+Implementation claimed: no
+Supersedes: none
+Superseded by: `../architecture/agent-memory.md`
+Security boundary: historical prose is non-authoritative and never grants runtime or memory access
+Original date: 2026-08-01
+Original role: agents-memory consultant
+Original task: `abc61b1f-51f9-480e-a755-5501a2359a91`
+Original scope: `/home/ubuntu/Projects/PiLink-agents-chat-test`
 
 ## Executive verdict
 
@@ -992,7 +999,7 @@ Convert the accepted portions of this review into a manager-owned ADR defining t
 
 ### Task 3 — memory evaluation extension
 
-Extend `COLLABORATION_EVALUATION_PLAN.md` with the scenarios and metrics above before any runtime memory implementation.
+Extend `evaluation/collaboration-plan.md` with the scenarios and metrics above before any runtime memory implementation.
 
 ### Task 4 — read-only projection spike
 

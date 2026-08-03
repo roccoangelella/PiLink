@@ -6,7 +6,7 @@
 
 An OAuth-protected MCP server that exposes the Pi Agent coding-tool harness over Streamable HTTP (and legacy SSE). It is designed for a trusted administrator authorizing one or more independently authorized remote MCP agents, such as ChatGPT, to connect to a local development machine.
 
-See [the complete getting-started guide](docs/GETTING_STARTED.md) for first-time setup and ChatGPT OAuth configuration.
+See [the complete getting-started guide](docs/operations/getting-started.md) for first-time setup and ChatGPT OAuth configuration.
 
 ## Quick start
 
@@ -131,7 +131,7 @@ Phase 1 exposes exactly four read-only MCP tools to `mcp:read` and `mcp:tools` c
 - `agent_memory_boot_read`: render a bounded Markdown boot projection with untrusted-data delimiters and a non-authoritative label.
 - `agent_memory_manifest_read`: render a bounded JSON navigation manifest with trust labels and no inaccessible relation targets.
 
-These tools cannot propose, promote, supersede, archive, retract, delete, or repair memory. Empty reads do not create `agent-memory.json`. Caller-provided role labels, session IDs, task IDs, paths, tags, or query text are filters only and cannot expand the trusted access context. See [`docs/AGENT_MEMORY_ARCHITECTURE.md`](docs/AGENT_MEMORY_ARCHITECTURE.md) for the current contract.
+These tools cannot propose, promote, supersede, archive, retract, delete, or repair memory. Empty reads do not create `agent-memory.json`. Caller-provided role labels, session IDs, task IDs, paths, tags, or query text are filters only and cannot expand the trusted access context. See [`docs/architecture/agent-memory.md`](docs/architecture/agent-memory.md) for the current contract.
 
 ## Development and publishing
 
@@ -140,7 +140,7 @@ npm ci
 npm test
 ```
 
-See [the release guide](docs/RELEASING.md) for the tokenless npm trusted-publishing setup, protected release flow, and provenance checks.
+See [the release guide](docs/operations/releasing.md) for the tokenless npm trusted-publishing setup, protected release flow, and provenance checks.
 
 ### Run a local checkout as `pilink`
 

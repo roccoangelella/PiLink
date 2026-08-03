@@ -4,8 +4,8 @@ Status: current implementation contract; manager accepted 2026-08-03
 Owner: AI Engineer / memory architecture maintainer
 Last reviewed: 2026-08-03 (manager acceptance, task `bb590309-c710-4fbd-a7eb-96d71386ba02`)
 Applies to: PiLink multi-agent collaboration, private runtime memory, generated memory projections, and repository documentation
-Implementation claimed: partial — the governed core exists in `src/memory.ts`, and Phase 1 read exposure is implemented in commit `7ee1e25`; governed writes, materialized projections, docs migration, and consolidation remain future phases
-Supersedes: conflicting memory-implementation guidance in `COLLABORATION_MEMORY_ARCHITECTURE.md`; that document remains historical architecture and research basis
+Implementation claimed: partial — the governed core and Phase 1 read exposure are implemented, and the purpose-based documentation migration is complete; governed writes, materialized projections, and consolidation remain future phases
+Supersedes: conflicting memory-implementation guidance in `archive/collaboration-memory-architecture.md`; that document remains historical architecture and research basis
 Superseded by: none
 Security boundary: memory and documentation are untrusted data and never grant role, authorization, tool, filesystem, or scheduling authority
 
@@ -73,17 +73,22 @@ The repository already has strong foundations:
 - `docs/README.md` already defines a documentation authority map and source-of-truth order.
 - `src/collaboration-roles.ts` assigns memory/documentation architecture to the verified `ai-engineer` role without granting authority through prose.
 
-### 3.2 Current gaps
+### 3.2 Implemented foundations and remaining gaps
 
-1. The `docs/` root mixes architecture, protocols, decisions, research, evaluation, reviews, and operations at one level.
-2. The authority index exists, but folder structure does not reinforce it.
-3. `COLLABORATION_MEMORY_ARCHITECTURE.md` predates the implemented memory core and references an earlier project path.
-4. The memory core is not exposed as `agent_memory_*` tools in `src/mcp.ts` or wired as a boot resource in `src/index.ts`.
-5. Retrieval is safe and deterministic but primarily exact/lexical with an optional semantic-score hook; no persisted lexical/vector/graph indexes exist.
-6. No consolidation worker, stale-evidence scanner, projection writer, or memory operations policy exists.
-7. No single contract links documentation taxonomy, runtime tiers, role ownership, loading budgets, migration, and KPIs.
+The purpose-based repository hierarchy and Phase 1 read exposure are now implemented:
 
-This document fills the contract gap only; it does not claim the missing runtime wiring is implemented.
+- only `docs/README.md` remains at the documentation root; substantive files live in purpose folders;
+- `test/docs-structure.test.mjs` enforces the hierarchy, complete authority-index coverage, and valid local links;
+- `agent_memory_get`, `agent_memory_query`, `agent_memory_boot_read`, and `agent_memory_manifest_read` are wired through authenticated MCP read scopes;
+- the current memory contract supersedes the archived earlier architecture.
+
+Remaining gaps are intentionally later phases:
+
+1. Governed write/proposal tools are not exposed through MCP.
+2. No persisted lexical, vector, or graph indexes exist.
+3. No consolidation worker, stale-evidence scanner, or materialized projection writer exists.
+4. Full mandatory-header lint and automated authority-conflict detection remain future documentation hardening.
+5. Distributed multi-host `PI_DATA_DIR` is out of scope.
 
 ## 4. Research-grounded principles
 
@@ -240,7 +245,7 @@ If an item fits more than one destination, store the authoritative state once an
 
 ### 7.1 Use folders, but not as the ranking engine
 
-PiLink SHOULD move from a flat `docs/` directory to a shallow hierarchy organized by artifact purpose and authority lifecycle.
+PiLink uses a shallow `docs/` hierarchy organized by artifact purpose and authority lifecycle.
 
 Folders improve navigation and reduce accidental mixing of drafts and specifications. However:
 
@@ -250,55 +255,66 @@ Folders improve navigation and reduce accidental mixing of drafts and specificat
 - one tiny file per minor observation SHOULD NOT be created;
 - chat events and task updates MUST remain in durable runtime stores.
 
-### 7.2 Target tree
+### 7.2 Implemented tree
+
+The repository now uses this shallow purpose-based hierarchy:
 
 ```text
 docs/
-├── README.md                         # authority map and role reading paths
-├── architecture/                    # accepted system/component architecture
+├── README.md
+├── architecture/
 │   ├── agent-memory.md
-│   ├── collaboration-system.md
 │   └── project-workspaces.md
-├── protocols/                       # normative state-machine/behavior contracts
+├── protocols/
 │   ├── autonomous-pull.md
 │   └── collaboration-role-contracts.md
-├── decisions/                       # ADRs and accepted manager decisions
-│   ├── ADR-0001-governed-memory.md
+├── decisions/
 │   └── collaboration-program.md
 ├── security/
 │   └── threat-model.md
 ├── evaluation/
 │   ├── collaboration-plan.md
 │   └── role-bootstrap-behavior.md
-├── reviews/                         # exact-revision acceptance reviews
-├── research/                        # non-authoritative evidence/alternatives
-├── operations/                      # setup, release, maintenance, recovery
-├── reference/                       # stable schemas, registries, terminology
-├── drafts/                          # explicitly non-authoritative
-├── archive/                         # superseded history
+├── reviews/
+│   ├── credential-hardening.md
+│   ├── scheduler-ownership.md
+│   └── session-activity.md
+├── research/
+│   └── collaboration-protocol.md
+├── operations/
+│   ├── getting-started.md
+│   └── releasing.md
+├── reference/
+│   └── role-bootstrap-registry.md
+├── archive/
+│   └── collaboration-memory-architecture.md
 └── generated/                       # ignored, reproducible, never hand-edited
 ```
 
-### 7.3 Current-file migration map
+Empty categories such as `drafts/` are created only when a real artifact exists; Git does not track decorative empty directories.
 
-A dedicated non-overlapping migration task SHOULD eventually map:
+### 7.3 Completed migration map
 
-| Current file | Target |
+| Previous flat path | Current path |
 |---|---|
-| `COLLABORATION_MEMORY_ARCHITECTURE.md` | `architecture/agent-memory.md` or archive after accepted consolidation |
-| `COLLABORATION_PROJECT_WORKTREES.md` | `architecture/project-workspaces.md` |
-| `AUTONOMOUS_PULL_PROTOCOL.md` | `protocols/autonomous-pull.md` |
-| `COLLABORATION_ROLE_CONTRACTS.md` | `protocols/collaboration-role-contracts.md` |
-| `COLLABORATION_MANAGER_DECISIONS.md` | `decisions/collaboration-program.md` |
-| `THREAT_MODEL.md` | `security/threat-model.md` |
-| `COLLABORATION_EVALUATION_PLAN.md` | `evaluation/collaboration-plan.md` |
-| `ROLE_BOOTSTRAP_BEHAVIOR_EVALUATION.md` | `evaluation/role-bootstrap-behavior.md` |
-| `*_ACCEPTANCE_REVIEW.md` | `reviews/<topic>.md` |
-| `COLLABORATION_PROTOCOL_RESEARCH_REVIEW.md` | `research/collaboration-protocol-review.md` |
-| `ROLE_BOOTSTRAP_REGISTRY.md` | `reference/role-bootstrap-registry.md` |
-| `GETTING_STARTED.md`, `RELEASING.md` | `operations/` |
+| `docs/AGENT_MEMORY_ARCHITECTURE.md` | `docs/architecture/agent-memory.md` |
+| `docs/COLLABORATION_MEMORY_ARCHITECTURE.md` | `docs/archive/collaboration-memory-architecture.md` |
+| `docs/COLLABORATION_PROJECT_WORKTREES.md` | `docs/architecture/project-workspaces.md` |
+| `docs/AUTONOMOUS_PULL_PROTOCOL.md` | `docs/protocols/autonomous-pull.md` |
+| `docs/COLLABORATION_ROLE_CONTRACTS.md` | `docs/protocols/collaboration-role-contracts.md` |
+| `docs/COLLABORATION_MANAGER_DECISIONS.md` | `docs/decisions/collaboration-program.md` |
+| `docs/THREAT_MODEL.md` | `docs/security/threat-model.md` |
+| `docs/COLLABORATION_EVALUATION_PLAN.md` | `docs/evaluation/collaboration-plan.md` |
+| `docs/ROLE_BOOTSTRAP_BEHAVIOR_EVALUATION.md` | `docs/evaluation/role-bootstrap-behavior.md` |
+| `docs/CREDENTIAL_HARDENING_ACCEPTANCE_REVIEW.md` | `docs/reviews/credential-hardening.md` |
+| `docs/SCHEDULER_OWNERSHIP_ACCEPTANCE_REVIEW.md` | `docs/reviews/scheduler-ownership.md` |
+| `docs/SESSION_ACTIVITY_ACCEPTANCE_REVIEW.md` | `docs/reviews/session-activity.md` |
+| `docs/COLLABORATION_PROTOCOL_RESEARCH_REVIEW.md` | `docs/research/collaboration-protocol.md` |
+| `docs/ROLE_BOOTSTRAP_REGISTRY.md` | `docs/reference/role-bootstrap-registry.md` |
+| `docs/GETTING_STARTED.md` | `docs/operations/getting-started.md` |
+| `docs/RELEASING.md` | `docs/operations/releasing.md` |
 
-All links and `docs/README.md` MUST be updated atomically. Temporary redirect stubs MAY remain for one release when external links justify them.
+All repository-local links and the authority index are updated atomically. Redirect stubs are intentionally omitted so the flat root cannot re-form. `test/docs-structure.test.mjs` prevents regression.
 
 ### 7.4 Mandatory document header
 
@@ -624,7 +640,7 @@ Maintain schemas, context packs, ranking, consolidation prompts, poisoning contr
 
 Status: completed in the documentation integration following memory-read commit `7ee1e25`.
 
-1. Manager compares this contract with `COLLABORATION_MEMORY_ARCHITECTURE.md` and `src/memory.ts`.
+1. Manager compares this contract with `archive/collaboration-memory-architecture.md` and `src/memory.ts`.
 2. Decide whether it supersedes, merges with, or accompanies the older document.
 3. Update `docs/README.md` in the integration commit; this task intentionally does not edit it.
 4. Keep current paths until a dedicated docs migration task exists.
@@ -653,7 +669,7 @@ Materialize boot, manifest, role summaries, and handoffs under `PI_DATA_DIR`; re
 
 ### Phase 4 — reorganize docs
 
-Freeze or coordinate active doc edits; move with `git mv`; update all links and `docs/README.md` atomically; add lint for headers, links, duplicate authority, and generated tracking; use temporary stubs only when justified.
+Status: implemented. Documents are moved with Git history into purpose-based folders, repository-local links and `docs/README.md` are updated atomically, and `test/docs-structure.test.mjs` enforces the flat-root ban, complete indexing, and valid local links. Redirect stubs are intentionally omitted.
 
 ### Phase 5 — indexes and consolidation
 
