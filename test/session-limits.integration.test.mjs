@@ -12,7 +12,7 @@ import { loadRuntimeConfig } from "../dist/config.js";
 
 const bootstrapSecret = "b".repeat(32);
 
-test("runtime configuration validates MCP session resource limits", async () => {
+test("runtime configuration validates MCP session lifecycle settings", async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-session-config-"));
   try {
     const base = {
@@ -21,15 +21,23 @@ test("runtime configuration validates MCP session resource limits", async () => 
       JWT_SECRET: "j".repeat(32),
       PI_BOOTSTRAP_SECRET: bootstrapSecret,
     };
-    const config = loadRuntimeConfig({
+    const defaults = loadRuntimeConfig(base);
+    assert.equal(defaults.maxMcpSessionsTotal, 64);
+    assert.equal(defaults.maxMcpSessionsPerClient, 16);
+    assert.equal(defaults.mcpSessionIdleTimeoutSeconds, 600);
+    assert.equal(defaults.mcpSessionReclaimGraceSeconds, 5);
+
+    const configured = loadRuntimeConfig({
       ...base,
       PI_MAX_MCP_SESSIONS_TOTAL: "12",
       PI_MAX_MCP_SESSIONS_PER_CLIENT: "3",
       PI_MCP_SESSION_IDLE_TIMEOUT: "45",
+      PI_MCP_SESSION_RECLAIM_GRACE: "7",
     });
-    assert.equal(config.maxMcpSessionsTotal, 12);
-    assert.equal(config.maxMcpSessionsPerClient, 3);
-    assert.equal(config.mcpSessionIdleTimeoutSeconds, 45);
+    assert.equal(configured.maxMcpSessionsTotal, 12);
+    assert.equal(configured.maxMcpSessionsPerClient, 3);
+    assert.equal(configured.mcpSessionIdleTimeoutSeconds, 45);
+    assert.equal(configured.mcpSessionReclaimGraceSeconds, 7);
     assert.throws(
       () => loadRuntimeConfig({
         ...base,
@@ -43,86 +51,276 @@ test("runtime configuration validates MCP session resource limits", async () => 
   }
 });
 
-test("Streamable HTTP enforces race-safe quotas, 404 expiry, and idle cleanup", async (t) => {
+test("parallel initialization cannot race past the quota", async (t) => {
   const fixture = await startServer(t, {
-    PI_MAX_MCP_SESSIONS_TOTAL: "2",
+    PI_MAX_MCP_SESSIONS_TOTAL: "1",
     PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
-    PI_MCP_SESSION_IDLE_TIMEOUT: "1",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
   });
-  const first = await register(fixture.serverUrl, "First", "mcp:read");
-  const second = await register(fixture.serverUrl, "Second", "mcp:read");
-  const third = await register(fixture.serverUrl, "Third", "mcp:read");
-  const firstToken = await token(fixture.serverUrl, first, "mcp:read");
-  const secondToken = await token(fixture.serverUrl, second, "mcp:read");
-  const thirdToken = await token(fixture.serverUrl, third, "mcp:read");
+  const client = await register(fixture.serverUrl, "Race client", "mcp:read");
+  const accessToken = await token(fixture.serverUrl, client, "mcp:read");
 
   const racing = await Promise.all([
-    rawInitialize(fixture.serverUrl, firstToken, "race-a"),
-    rawInitialize(fixture.serverUrl, firstToken, "race-b"),
+    initialize(fixture.serverUrl, accessToken, "race-a"),
+    initialize(fixture.serverUrl, accessToken, "race-b"),
   ]);
-  assert.deepEqual(racing.map((response) => response.status).sort((a, b) => a - b), [200, 429]);
-  const rejectedRace = racing.find((response) => response.status === 429);
-  assert.equal(rejectedRace.headers.get("retry-after"), "5");
-  const rejectedBody = await rejectedRace.json();
-  assert.equal(rejectedBody.error, "too_many_sessions");
-  assert.equal(rejectedBody.limits.per_client, 1);
-  const acceptedRace = racing.find((response) => response.status === 200);
-  const racedSessionId = acceptedRace.headers.get("mcp-session-id");
-  assert.ok(racedSessionId);
-  await terminateRawSession(fixture.serverUrl, firstToken, racedSessionId);
+  assert.deepEqual(racing.map(({ response }) => response.status).sort((a, b) => a - b), [200, 429]);
+  const rejected = racing.find(({ response }) => response.status === 429).response;
+  assert.equal(rejected.headers.get("retry-after"), "1");
+  assert.equal((await rejected.json()).error, "too_many_sessions");
+
+  const accepted = racing.find(({ response }) => response.status === 200);
+  assert.ok(accepted.sessionId);
+  await accepted.response.text();
+  await terminate(fixture.serverUrl, accessToken, accepted.sessionId);
   await waitForActiveSessions(fixture.serverUrl, 0);
-
-  const firstConnection = await connectStreamable(fixture, firstToken, "first-client");
-  const firstSessionId = firstConnection.transport.sessionId;
-  assert.ok(firstSessionId);
-  await assert.rejects(
-    connectStreamable(fixture, firstToken, "first-client-duplicate"),
-    /429|too_many_sessions|session limit/i,
-  );
-
-  const secondConnection = await connectStreamable(fixture, secondToken, "second-client");
-  const secondSessionId = secondConnection.transport.sessionId;
-  assert.ok(secondSessionId);
-  await assert.rejects(
-    connectStreamable(fixture, thirdToken, "third-client-over-total"),
-    /429|too_many_sessions|total MCP session limit/i,
-  );
-
-  const statusAtLimit = await health(fixture.serverUrl);
-  assert.deepEqual(statusAtLimit.sessions, {
-    active: 2,
-    pending: 0,
-    max_total: 2,
-    max_per_client: 1,
-    idle_timeout_seconds: 1,
-  });
-
-  await waitForActiveSessions(fixture.serverUrl, 0, 5_000);
-  for (const [accessToken, expiredSessionId] of [
-    [firstToken, firstSessionId],
-    [secondToken, secondSessionId],
-  ]) {
-    const expired = await fetch(`${fixture.serverUrl}/sse`, {
-      method: "POST",
-      headers: mcpHeaders(accessToken, expiredSessionId),
-      body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "ping" }),
-    });
-    assert.equal(expired.status, 404);
-    assert.deepEqual(await expired.json(), { error: "Session not found or expired" });
-  }
-
-  const thirdConnection = await connectStreamable(fixture, thirdToken, "third-client-after-expiry");
-  assert.ok(thirdConnection.transport.sessionId);
-  await thirdConnection.close();
-  await firstConnection.close().catch(() => undefined);
-  await secondConnection.close().catch(() => undefined);
 });
 
-test("legacy SSE shares per-client quotas and expires idle streams", async (t) => {
+test("quota pressure immediately recycles an established quiescent session", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "1",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
+  });
+  const client = await register(fixture.serverUrl, "Pressure client", "mcp:read");
+  const accessToken = await token(fixture.serverUrl, client, "mcp:read");
+
+  const first = await initialize(fixture.serverUrl, accessToken, "first-session");
+  assert.equal(first.response.status, 200);
+  assert.ok(first.sessionId);
+  await first.response.text();
+  await sendInitialized(fixture.serverUrl, accessToken, first.sessionId);
+
+  const replacement = await initialize(fixture.serverUrl, accessToken, "replacement-session");
+  assert.equal(replacement.response.status, 200);
+  assert.ok(replacement.sessionId);
+  await replacement.response.text();
+  assert.notEqual(replacement.sessionId, first.sessionId);
+
+  const oldSession = await fetch(`${fixture.serverUrl}/sse`, {
+    method: "POST",
+    headers: mcpHeaders(accessToken, first.sessionId),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "ping" }),
+  });
+  assert.equal(oldSession.status, 404);
+  assert.deepEqual(await oldSession.json(), { error: "Session not found or expired" });
+
+  const status = await health(fixture.serverUrl);
+  assert.equal(status.sessions.active, 1);
+  assert.equal(status.sessions.busy, 0);
+  assert.equal(status.sessions.pending, 0);
+  await terminate(fixture.serverUrl, accessToken, replacement.sessionId);
+});
+
+test("an incomplete handshake remains protected by the reclaim grace", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "1",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
+  });
+  const client = await register(fixture.serverUrl, "Handshake client", "mcp:read");
+  const accessToken = await token(fixture.serverUrl, client, "mcp:read");
+
+  const first = await initialize(fixture.serverUrl, accessToken, "unfinished-handshake");
+  assert.equal(first.response.status, 200);
+  assert.ok(first.sessionId);
+  await first.response.text();
+
+  const rejected = await initialize(fixture.serverUrl, accessToken, "must-not-recycle-unfinished");
+  assert.equal(rejected.response.status, 429);
+  assert.equal((await rejected.response.json()).error, "too_many_sessions");
+  await terminate(fixture.serverUrl, accessToken, first.sessionId);
+});
+
+test("rapid reconnects from one ChatGPT connector do not exhaust the quota", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "4",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "4",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
+  });
+  const client = await register(fixture.serverUrl, "Reconnect client", "mcp:read");
+  const accessToken = await token(fixture.serverUrl, client, "mcp:read");
+  let latestSessionId;
+
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const connection = await initialize(fixture.serverUrl, accessToken, `reconnect-${attempt}`);
+    assert.equal(connection.response.status, 200, `attempt ${attempt}`);
+    assert.ok(connection.sessionId);
+    await connection.response.text();
+    await sendInitialized(fixture.serverUrl, accessToken, connection.sessionId);
+    latestSessionId = connection.sessionId;
+  }
+
+  const status = await health(fixture.serverUrl);
+  assert.equal(status.sessions.active, 4);
+  assert.equal(status.sessions.busy, 0);
+  assert.equal(status.sessions.pending, 0);
+  await terminate(fixture.serverUrl, accessToken, latestSessionId);
+});
+
+test("parallel reconnects from multiple public-chat agents remain bounded", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "12",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "4",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
+  });
+  const agentTokens = [];
+  for (let agent = 0; agent < 6; agent += 1) {
+    const client = await register(fixture.serverUrl, `Public chat agent ${agent}`, "mcp:read");
+    agentTokens.push(await token(fixture.serverUrl, client, "mcp:read"));
+  }
+
+  const latestSessionIds = await Promise.all(agentTokens.map(async (accessToken, agent) => {
+    let latestSessionId;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const connection = await initialize(fixture.serverUrl, accessToken, `agent-${agent}-reconnect-${attempt}`);
+      assert.equal(connection.response.status, 200, `agent ${agent}, attempt ${attempt}`);
+      assert.ok(connection.sessionId);
+      await connection.response.text();
+      await sendInitialized(fixture.serverUrl, accessToken, connection.sessionId);
+      latestSessionId = connection.sessionId;
+    }
+    return latestSessionId;
+  }));
+
+  const status = await health(fixture.serverUrl);
+  assert.ok(status.sessions.active <= 12, status.sessions.active);
+  assert.equal(status.sessions.busy, 0);
+  assert.equal(status.sessions.pending, 0);
+
+  await Promise.all(latestSessionIds.map((sessionId, index) =>
+    terminate(fixture.serverUrl, agentTokens[index], sessionId).catch(() => undefined),
+  ));
+});
+
+test("parallel public-chat clients close cleanly and reconnect without accumulating", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "16",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "16",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "1",
+    PI_MCP_SESSION_RECLAIM_GRACE: "5",
+  });
+  const registered = await register(fixture.serverUrl, "Parallel public-chat agent", "mcp:tools");
+  const accessToken = await token(fixture.serverUrl, registered, "mcp:tools");
+
+  const firstWave = await Promise.all(Array.from({ length: 12 }, (_, index) =>
+    connectStreamable(fixture, accessToken, `public-chat-wave-1-${index}`),
+  ));
+  await Promise.all(firstWave.map(({ client }, index) => client.callTool({
+    name: "agent_chat_post",
+    arguments: { agent_message: `parallel message ${index}` },
+  })));
+
+  const firstStatus = await health(fixture.serverUrl);
+  assert.equal(firstStatus.sessions.active, 12);
+  assert.equal(firstStatus.sessions.pending, 0);
+
+  await Promise.all(firstWave.map(({ close }) => close()));
+  await waitForBusySessions(fixture.serverUrl, 0);
+
+  const quiescentAfterClose = await health(fixture.serverUrl);
+  assert.equal(quiescentAfterClose.sessions.active, 12);
+  assert.equal(quiescentAfterClose.sessions.busy, 0);
+
+  const secondWave = await Promise.all(Array.from({ length: 12 }, (_, index) =>
+    connectStreamable(fixture, accessToken, `public-chat-wave-2-${index}`),
+  ));
+  const readResult = await secondWave[0].client.callTool({ name: "agent_chat_read", arguments: {} });
+  const read = parseToolText(readResult);
+  assert.equal(read.messages.length, 12);
+  assert.deepEqual(
+    new Set(read.messages.map((message) => message.agent_message)),
+    new Set(Array.from({ length: 12 }, (_, index) => `parallel message ${index}`)),
+  );
+
+  const secondStatus = await health(fixture.serverUrl);
+  assert.ok(secondStatus.sessions.active <= 16, secondStatus.sessions.active);
+  assert.equal(secondStatus.sessions.busy, 12);
+  assert.equal(secondStatus.sessions.pending, 0);
+  await Promise.all(secondWave.map(({ close }) => close()));
+  await waitForActiveSessions(fixture.serverUrl, 0, 5_000);
+});
+
+test("an open Streamable HTTP SSE stream survives idle cleanup and pressure", async (t) => {
   const fixture = await startServer(t, {
     PI_MAX_MCP_SESSIONS_TOTAL: "1",
     PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
     PI_MCP_SESSION_IDLE_TIMEOUT: "1",
+    PI_MCP_SESSION_RECLAIM_GRACE: "1",
+  });
+  const client = await register(fixture.serverUrl, "Active stream client", "mcp:read");
+  const accessToken = await token(fixture.serverUrl, client, "mcp:read");
+  const initialized = await initialize(fixture.serverUrl, accessToken, "active-stream-session");
+  assert.equal(initialized.response.status, 200);
+  assert.ok(initialized.sessionId);
+  await initialized.response.text();
+  await sendInitialized(fixture.serverUrl, accessToken, initialized.sessionId);
+
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const stream = await fetch(`${fixture.serverUrl}/sse`, {
+    method: "GET",
+    headers: {
+      Accept: "text/event-stream",
+      Authorization: `Bearer ${accessToken}`,
+      "Mcp-Session-Id": initialized.sessionId,
+      "Mcp-Protocol-Version": "2025-11-25",
+    },
+    signal: controller.signal,
+  });
+  assert.equal(stream.status, 200);
+  await waitForBusySessions(fixture.serverUrl, 1);
+
+  await delay(2_200);
+  const stillActive = await health(fixture.serverUrl);
+  assert.equal(stillActive.sessions.active, 1);
+  assert.equal(stillActive.sessions.busy, 1);
+
+  const rejected = await initialize(fixture.serverUrl, accessToken, "must-not-evict-active-stream");
+  assert.equal(rejected.response.status, 429);
+  assert.equal(rejected.response.headers.get("retry-after"), "1");
+  assert.equal((await rejected.response.json()).error, "too_many_sessions");
+
+  controller.abort();
+  await stream.body?.cancel().catch(() => undefined);
+});
+
+test("quiescent sessions still expire after the idle timeout", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "2",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "2",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "1",
+    PI_MCP_SESSION_RECLAIM_GRACE: "1",
+  });
+  const client = await register(fixture.serverUrl, "Idle client", "mcp:read");
+  const accessToken = await token(fixture.serverUrl, client, "mcp:read");
+  const initialized = await initialize(fixture.serverUrl, accessToken, "idle-session");
+  assert.equal(initialized.response.status, 200);
+  assert.ok(initialized.sessionId);
+  await initialized.response.text();
+  await sendInitialized(fixture.serverUrl, accessToken, initialized.sessionId);
+
+  await waitForActiveSessions(fixture.serverUrl, 0, 5_000);
+  const expired = await fetch(`${fixture.serverUrl}/sse`, {
+    method: "POST",
+    headers: mcpHeaders(accessToken, initialized.sessionId),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "ping" }),
+  });
+  assert.equal(expired.status, 404);
+  assert.deepEqual(await expired.json(), { error: "Session not found or expired" });
+});
+
+test("legacy SSE streams remain active until the client disconnects", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "1",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "1",
+    PI_MCP_SESSION_RECLAIM_GRACE: "1",
   });
   const first = await register(fixture.serverUrl, "Legacy First", "mcp:read");
   const second = await register(fixture.serverUrl, "Legacy Second", "mcp:read");
@@ -130,19 +328,21 @@ test("legacy SSE shares per-client quotas and expires idle streams", async (t) =
   const secondToken = await token(fixture.serverUrl, second, "mcp:read");
 
   const firstConnection = await connectLegacy(fixture, firstToken, "legacy-first");
-  assert.equal((await health(fixture.serverUrl)).sessions.active, 1);
+  await delay(2_200);
+  const active = await health(fixture.serverUrl);
+  assert.equal(active.sessions.active, 1);
+  assert.equal(active.sessions.busy, 1);
 
   await assert.rejects(
     connectLegacy(fixture, secondToken, "legacy-second-at-limit"),
-    /429|too_many_sessions|total MCP session limit/i,
+    /429|too_many_sessions|active MCP session limit/i,
   );
 
-  await waitForActiveSessions(fixture.serverUrl, 0, 5_000);
-  const secondConnection = await connectLegacy(fixture, secondToken, "legacy-second-after-expiry");
+  await firstConnection.close();
+  await waitForActiveSessions(fixture.serverUrl, 0);
+  const secondConnection = await connectLegacy(fixture, secondToken, "legacy-second-after-close");
   assert.equal((await health(fixture.serverUrl)).sessions.active, 1);
-
   await secondConnection.close();
-  await firstConnection.close().catch(() => undefined);
   await waitForActiveSessions(fixture.serverUrl, 0);
 });
 
@@ -151,6 +351,7 @@ async function startServer(t, limits) {
   const workspace = path.join(root, "workspace");
   const dataDir = path.join(root, "data");
   await fs.mkdir(workspace);
+  await fs.mkdir(dataDir);
   const port = await availablePort();
   const serverUrl = `http://127.0.0.1:${port}`;
   const server = spawn(process.execPath, [path.resolve("dist/index.js")], {
@@ -208,8 +409,12 @@ async function connectLegacy(fixture, accessToken, name) {
   };
 }
 
-async function rawInitialize(serverUrl, accessToken, clientName) {
-  return fetch(`${serverUrl}/sse`, {
+function parseToolText(result) {
+  return JSON.parse(result.content.find((item) => item.type === "text").text);
+}
+
+async function initialize(serverUrl, accessToken, clientName) {
+  const response = await fetch(`${serverUrl}/sse`, {
     method: "POST",
     headers: mcpHeaders(accessToken),
     body: JSON.stringify({
@@ -223,9 +428,20 @@ async function rawInitialize(serverUrl, accessToken, clientName) {
       },
     }),
   });
+  return { response, sessionId: response.headers.get("mcp-session-id") };
 }
 
-async function terminateRawSession(serverUrl, accessToken, sessionId) {
+async function sendInitialized(serverUrl, accessToken, sessionId) {
+  const response = await fetch(`${serverUrl}/sse`, {
+    method: "POST",
+    headers: mcpHeaders(accessToken, sessionId),
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.ok([200, 202, 204].includes(response.status), response.status);
+  await response.text();
+}
+
+async function terminate(serverUrl, accessToken, sessionId) {
   const response = await fetch(`${serverUrl}/sse`, {
     method: "DELETE",
     headers: {
@@ -284,11 +500,21 @@ async function waitForActiveSessions(serverUrl, expected, timeoutMs = 3_000) {
   while (Date.now() < deadline) {
     const current = await health(serverUrl);
     if (current.sessions.active === expected && current.sessions.pending === 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await delay(50);
   }
   const current = await health(serverUrl);
   assert.equal(current.sessions.active, expected);
   assert.equal(current.sessions.pending, 0);
+}
+
+async function waitForBusySessions(serverUrl, expected) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const status = await health(serverUrl);
+    if (status.sessions.busy === expected) return;
+    await delay(25);
+  }
+  const status = await health(serverUrl);
+  assert.equal(status.sessions.busy, expected);
 }
 
 async function availablePort() {
@@ -305,13 +531,13 @@ async function availablePort() {
 }
 
 async function waitForHealth(serverUrl) {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
       if ((await fetch(`${serverUrl}/health`)).ok) return;
     } catch {
       // Server has not bound yet.
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await delay(50);
   }
   throw new Error("PiLink did not become healthy");
 }
@@ -319,4 +545,8 @@ async function waitForHealth(serverUrl) {
 function onceExit(child) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve) => child.once("exit", resolve));
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
