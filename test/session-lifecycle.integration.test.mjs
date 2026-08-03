@@ -48,12 +48,12 @@ test("runtime configuration validates session limits and reclaim grace", async (
   }
 });
 
-test("quota pressure recycles an old quiescent session instead of returning 429", async (t) => {
+test("quota pressure immediately recycles an established quiescent session", async (t) => {
   const fixture = await startServer(t, {
     PI_MAX_MCP_SESSIONS_TOTAL: "1",
     PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
     PI_MCP_SESSION_IDLE_TIMEOUT: "60",
-    PI_MCP_SESSION_RECLAIM_GRACE: "1",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
   });
   const accessToken = await registerAndToken(fixture.serverUrl, "pressure-client");
 
@@ -62,7 +62,6 @@ test("quota pressure recycles an old quiescent session instead of returning 429"
   assert.ok(first.sessionId);
   await first.response.text();
   await sendInitialized(fixture.serverUrl, accessToken, first.sessionId);
-  await delay(1_100);
 
   const replacement = await initialize(fixture.serverUrl, accessToken, "replacement-session");
   assert.equal(replacement.response.status, 200);
@@ -82,6 +81,52 @@ test("quota pressure recycles an old quiescent session instead of returning 429"
   assert.equal(status.sessions.active, 1);
   assert.equal(status.sessions.pending, 0);
   await terminate(fixture.serverUrl, accessToken, replacement.sessionId);
+});
+
+test("an incomplete handshake remains protected by the reclaim grace", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "1",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "1",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
+  });
+  const accessToken = await registerAndToken(fixture.serverUrl, "handshake-client");
+
+  const first = await initialize(fixture.serverUrl, accessToken, "unfinished-handshake");
+  assert.equal(first.response.status, 200);
+  assert.ok(first.sessionId);
+  await first.response.text();
+
+  const rejected = await initialize(fixture.serverUrl, accessToken, "must-not-recycle-unfinished");
+  assert.equal(rejected.response.status, 429);
+  assert.equal((await rejected.response.json()).error, "too_many_sessions");
+  await terminate(fixture.serverUrl, accessToken, first.sessionId);
+});
+
+test("rapid established reconnects do not exhaust the session quota", async (t) => {
+  const fixture = await startServer(t, {
+    PI_MAX_MCP_SESSIONS_TOTAL: "4",
+    PI_MAX_MCP_SESSIONS_PER_CLIENT: "4",
+    PI_MCP_SESSION_IDLE_TIMEOUT: "60",
+    PI_MCP_SESSION_RECLAIM_GRACE: "60",
+  });
+  const accessToken = await registerAndToken(fixture.serverUrl, "reconnect-client");
+  let latestSessionId;
+
+  for (let attempt = 0; attempt < 44; attempt += 1) {
+    const connection = await initialize(fixture.serverUrl, accessToken, `reconnect-${attempt}`);
+    assert.equal(connection.response.status, 200, `attempt ${attempt}`);
+    assert.ok(connection.sessionId);
+    await connection.response.text();
+    await sendInitialized(fixture.serverUrl, accessToken, connection.sessionId);
+    latestSessionId = connection.sessionId;
+  }
+
+  const status = await health(fixture.serverUrl);
+  assert.equal(status.sessions.active, 4);
+  assert.equal(status.sessions.busy, 0);
+  assert.equal(status.sessions.pending, 0);
+  await terminate(fixture.serverUrl, accessToken, latestSessionId);
 });
 
 test("an open Streamable HTTP SSE stream survives the idle timeout and is never pressure-recycled", async (t) => {

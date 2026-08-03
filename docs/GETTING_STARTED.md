@@ -107,7 +107,7 @@ nano ~/.config/pilink/.env
 
 `PI_WORK_DIR` is the directory exposed to file tools.
 
-PiLink keeps active requests and open SSE streams alive regardless of the idle timer. Quiescent transport state is bounded by `PI_MAX_MCP_SESSIONS_TOTAL` and `PI_MAX_MCP_SESSIONS_PER_CLIENT`; when those limits are reached, the oldest quiescent session older than `PI_MCP_SESSION_RECLAIM_GRACE` seconds is recycled immediately. `PI_MCP_SESSION_IDLE_TIMEOUT` remains the normal cleanup deadline for unused sessions. The defaults are 64 total sessions, 16 per OAuth client, a 600-second idle timeout, and a 5-second reclaim grace.
+PiLink keeps active requests and open SSE streams alive regardless of the idle timer. Quiescent transport state is bounded by `PI_MAX_MCP_SESSIONS_TOTAL` and `PI_MAX_MCP_SESSIONS_PER_CLIENT`. When those limits are reached, an established quiescent session can be recycled immediately; `PI_MCP_SESSION_RECLAIM_GRACE` protects only a new session whose MCP handshake has not yet completed. `PI_MCP_SESSION_IDLE_TIMEOUT` remains the normal cleanup deadline for unused sessions. The defaults are 64 total sessions, 16 per OAuth client, a 600-second idle timeout, and a 5-second unfinished-handshake grace.
 
 | Mode | Command | Capabilities |
 | --- | --- | --- |

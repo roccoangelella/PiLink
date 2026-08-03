@@ -94,6 +94,7 @@ interface ManagedTransport {
   lastActivityAtMs: number;
   inFlightRequests: number;
   openStreams: number;
+  established: boolean;
 }
 
 const transports: Record<string, ManagedTransport> = {};
@@ -146,6 +147,7 @@ function createManagedTransport(
     lastActivityAtMs: now,
     inFlightRequests: 0,
     openStreams: 0,
+    established: false,
   };
 }
 
@@ -202,7 +204,7 @@ async function closeManagedTransport(sessionId: string, managed: ManagedTranspor
 function isReclaimable(managed: ManagedTransport, now: number): boolean {
   return managed.inFlightRequests === 0 &&
     managed.openStreams === 0 &&
-    now - managed.lastActivityAtMs >= sessionReclaimGraceMs;
+    (managed.established || now - managed.lastActivityAtMs >= sessionReclaimGraceMs);
 }
 
 function oldestReclaimableSession(clientId?: string): [string, ManagedTransport] | undefined {
@@ -334,6 +336,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       const transport = managed.transport;
       if (transport instanceof StreamableHTTPServerTransport) {
         await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
+        managed.established = true;
       } else {
         res.status(400).json({
           jsonrpc: "2.0",
@@ -415,6 +418,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     }
     const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
+      managed.established = true;
       console.error(`[MCP] Streamable HTTP SSE stream opened for session: ${sessionId}`);
       try {
         await withManagedStream(managed, () => transport.handleRequest(req, res));
@@ -512,6 +516,7 @@ app.post("/messages", authenticateBearer, async (req, res) => {
 
   try {
     await withManagedRequest(managed, () => transport.handlePostMessage(req, res));
+    managed.established = true;
   } catch (error) {
     console.error("[MCP] Error handling legacy SSE message:", error);
     if (!res.headersSent) {
