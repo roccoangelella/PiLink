@@ -21,6 +21,15 @@ import {
   type AgentTask,
   type AgentTaskStore,
 } from "./tasks.js";
+import {
+  AGENT_WORK_DEFAULT_MAX_WAIT_SECONDS,
+  AGENT_WORK_LIFECYCLES,
+  AGENT_WORK_MAX_WAIT_SECONDS,
+  computeAgentWaitSeconds,
+  makeAgentTaskBoardToken,
+  type AgentWorkLoopStore,
+  type AgentWorkState,
+} from "./work-loop.js";
 import { startProgressReporter, type ProgressRequestContext } from "./progress.js";
 import {
   composeCollaborationSystemPrompt,
@@ -107,6 +116,7 @@ export function createMcpServer(
   taskStore?: AgentTaskStore,
   collaborationBootstrap?: ConnectionCollaborationBootstrap,
   memoryStore?: AgentMemoryStore,
+  workLoopStore?: AgentWorkLoopStore,
 ): McpServerHandle {
   const connectionAgentInstanceId = normalizeAgentInstanceId(agentInstanceId);
   const authenticatedIdentity = identity ? normalizeAuthenticatedIdentity(identity) : undefined;
@@ -142,6 +152,8 @@ export function createMcpServer(
   const findTool = createFindTool(policy.workspace);
   const lsTool = createLsTool(policy.workspace);
 
+  let releasedWorkStateGate: (tool: string) => Promise<string | undefined> = async () => undefined;
+
   const auditCall = async <T extends ToolCallResult>(
     tool: string,
     extra: ToolRequestContext,
@@ -157,6 +169,8 @@ export function createMcpServer(
     let fields: Partial<ToolAuditEventInput> = {};
     try {
       if (gateError) return toolError(gateError) as T;
+      const workGateError = await releasedWorkStateGate(tool);
+      if (workGateError) return toolError(workGateError) as T;
       const result = await operation();
       outcome = result.isError ? "error" : "success";
       fields = outcomeFields?.(result) || {};
@@ -288,6 +302,28 @@ export function createMcpServer(
     }
   };
 
+  const workParticipantInput = (context: Readonly<ConnectionCollaborationContext>) => ({
+    collaborationSessionId: context.collaborationSessionId,
+    agentId: context.agentId,
+    agentName: context.agentName,
+    canonicalRoleId: context.roleAssignment.canonicalRoleId,
+    occupancyLabel: context.roleAssignment.occupancyLabel,
+  });
+
+  releasedWorkStateGate = async (tool: string): Promise<string | undefined> => {
+    if (!workLoopStore || tool === "collaboration_bootstrap" || tool === "get_system_prompt" || tool === "agent_work_wait") {
+      return undefined;
+    }
+    if (collaborationConnectionState !== "bootstrapped" || !verifiedCollaborationContext) return undefined;
+    try {
+      const state = await workLoopStore.get(verifiedCollaborationContext.collaborationSessionId);
+      if (state.lifecycle !== "released") return undefined;
+      return `This collaboration session was permanently released by the manager: ${state.releaseReason || "no reason recorded"}`;
+    } catch {
+      return "Verified collaboration work state is unavailable; retry after reconnecting";
+    }
+  };
+
   const currentSystemPromptText = async (): Promise<string> => {
     const context = collaborationConnectionState === "bootstrapped"
       ? await verifyCollaborationContext()
@@ -358,6 +394,12 @@ export function createMcpServer(
       try {
         const context = acceptVerifiedContext(await collaborationBootstrap.initialize(args.requested_role_label));
         const assignment = context.roleAssignment;
+        if (workLoopStore) {
+          const workState = await workLoopStore.register(workParticipantInput(context));
+          if (workState.lifecycle === "released") {
+            throw new Error(`collaboration session was permanently released by the manager: ${workState.releaseReason || "no reason recorded"}`);
+          }
+        }
         const result = {
           collaboration_session_id: context.collaborationSessionId,
           request_kind: context.requestKind,
@@ -645,6 +687,8 @@ export function createMcpServer(
     }, async () => {
       const gateError = lockGenericCollaboration();
       if (gateError) throw new Error(gateError);
+      const workGateError = await releasedWorkStateGate("agent_chat_resource_read");
+      if (workGateError) throw new Error(workGateError);
       requireChatReadScope(scopes);
       return { contents: [{ uri: AGENT_CHAT_URI, mimeType: "application/json", text: JSON.stringify(toChatSnapshot(await broker.read())) }] };
     });
@@ -817,8 +861,15 @@ export function createMcpServer(
       }, (args, extra) => auditCall("agent_task_claim", extra, async () => {
         if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_claim'");
         try {
+          const identityInput = await taskIdentityInput();
+          if (workLoopStore && identityInput.collaborationSessionId) {
+            const workState = await workLoopStore.markWorking(identityInput.collaborationSessionId);
+            if (workState.lifecycle === "released") {
+              return toolError(`This collaboration session was permanently released by the manager: ${workState.releaseReason || "no reason recorded"}`);
+            }
+          }
           return taskResult(await taskStore.claim({
-            ...(await taskIdentityInput()),
+            ...identityInput,
             taskId: args.task_id,
             expectedRevision: args.expected_revision,
             leaseSeconds: args.lease_seconds,
@@ -940,9 +991,180 @@ export function createMcpServer(
       }));
     }
 
+    if (taskStore && workLoopStore && collaborationBootstrap) {
+      const workStateSchema = z.object({
+        collaboration_session_id: z.string(),
+        agent_id: z.string(),
+        agent_name: z.string(),
+        canonical_role_id: z.string(),
+        occupancy_label: z.string(),
+        lifecycle: z.enum(AGENT_WORK_LIFECYCLES),
+        consecutive_timeouts: z.number().int().nonnegative(),
+        last_chat_cursor: z.number().int().nonnegative().optional(),
+        task_board_token: z.string().optional(),
+        released_by_collaboration_session_id: z.string().optional(),
+        release_reason: z.string().optional(),
+        created_at: z.string(),
+        updated_at: z.string(),
+        revision: z.number().int().positive(),
+      }).strict();
+      const workWaitSchema = z.object({
+        outcome: z.enum(["snapshot", "changed", "timeout", "released"]),
+        waited_seconds: z.number().nonnegative(),
+        work_state: workStateSchema,
+        chat: chatSnapshotSchema,
+        tasks: z.array(taskSchema),
+        task_board_token: z.string(),
+      }).strict();
+
+      server.registerTool("agent_work_wait", {
+        title: "Wait for Durable Work",
+        description: "Enter the durable WAITING_FOR_TASK lifecycle without ending the collaboration turn. The server performs a bounded long poll with persisted exponential backoff and jitter, then returns authoritative chat/task state. Pass both opaque cursors from the previous response; repeat after a timeout until work changes or a manager release is returned.",
+        inputSchema: z.object({
+          after_chat_cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe("Previous chat next_cursor. Omit together with task_board_token for an immediate initial snapshot."),
+          task_board_token: z.string().optional().describe("Opaque task-board token returned by the previous agent_work_wait call. Never construct or modify it."),
+          maximum_wait_seconds: z.number().int().min(1).max(AGENT_WORK_MAX_WAIT_SECONDS).optional().describe(`Maximum bounded long-poll duration; defaults to ${AGENT_WORK_DEFAULT_MAX_WAIT_SECONDS} seconds. The persisted backoff may choose a shorter wait.`),
+        }).strict(),
+        outputSchema: workWaitSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_work_wait", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_work_wait'");
+        if ((args.after_chat_cursor === undefined) !== (args.task_board_token === undefined)) {
+          return toolError("after_chat_cursor and task_board_token must be supplied together or both omitted");
+        }
+        try {
+          const context = await verifyCollaborationContext();
+          let workState = await workLoopStore.register(workParticipantInput(context));
+          if (workState.lifecycle === "released") {
+            const snapshot = await readAgentWorkSnapshot(broker, taskStore, args.after_chat_cursor);
+            return workWaitResult("released", 0, workState, snapshot);
+          }
+
+          const initial = await readAgentWorkSnapshot(broker, taskStore, args.after_chat_cursor);
+          const initialRequest = args.after_chat_cursor === undefined || args.task_board_token === undefined;
+          if (initialRequest || agentWorkSnapshotChanged(initial, args.after_chat_cursor!, args.task_board_token!)) {
+            workState = await workLoopStore.recordOutcome({
+              collaborationSessionId: context.collaborationSessionId,
+              changed: true,
+              chatCursor: initial.chat.nextCursor,
+              taskBoardToken: initial.taskBoardToken,
+            });
+            return workWaitResult(initialRequest ? "snapshot" : "changed", 0, workState, initial);
+          }
+
+          workState = await workLoopStore.markWaiting(context.collaborationSessionId);
+          if (workState.lifecycle === "released") {
+            return workWaitResult("released", 0, workState, initial);
+          }
+          const waitSeconds = computeAgentWaitSeconds(
+            workState.consecutiveTimeouts,
+            args.maximum_wait_seconds ?? AGENT_WORK_DEFAULT_MAX_WAIT_SECONDS,
+          );
+          const waited = await waitForAgentWorkChange({
+            broker,
+            taskStore,
+            workLoopStore,
+            collaborationSessionId: context.collaborationSessionId,
+            afterChatCursor: args.after_chat_cursor!,
+            taskBoardToken: args.task_board_token!,
+            waitSeconds,
+            signal: extra.signal,
+          });
+          if (waited.releasedState) {
+            return workWaitResult("released", waited.waitedSeconds, waited.releasedState, waited.snapshot);
+          }
+          workState = await workLoopStore.recordOutcome({
+            collaborationSessionId: context.collaborationSessionId,
+            changed: waited.changed,
+            chatCursor: waited.snapshot.chat.nextCursor,
+            taskBoardToken: waited.snapshot.taskBoardToken,
+          });
+          return workWaitResult(
+            waited.changed ? "changed" : "timeout",
+            waited.waitedSeconds,
+            workState,
+            waited.snapshot,
+          );
+        } catch (error) {
+          return toolError(error instanceof Error ? error.message : "Agent work wait failed");
+        }
+      }));
+
+      server.registerTool("agent_work_list", {
+        title: "List Agent Work Lifecycles",
+        description: "List durable collaboration work lifecycles and public session IDs. Only a server-verified manager role may use this to identify workers that can be explicitly released.",
+        inputSchema: z.object({
+          lifecycles: z.array(z.enum(AGENT_WORK_LIFECYCLES)).min(1).max(AGENT_WORK_LIFECYCLES.length).optional().describe("Optional lifecycle filter."),
+          limit: z.number().int().min(1).max(500).optional().describe("Maximum number of work states to return."),
+        }).strict(),
+        outputSchema: z.object({ work_states: z.array(workStateSchema) }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_work_list", extra, async () => {
+        if (!canChatRead(scopes)) return toolError("Token scope does not permit 'agent_work_list'");
+        try {
+          const context = await verifyCollaborationContext();
+          if (context.roleAssignment.canonicalRoleId !== "manager") {
+            return toolError("Only a server-verified manager role may list agent work lifecycles");
+          }
+          const result = {
+            work_states: (await workLoopStore.list({ lifecycles: args.lifecycles, limit: args.limit }))
+              .map(toAgentWorkState),
+          };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
+        } catch (error) {
+          return toolError(error instanceof Error ? error.message : "Agent work lifecycle list failed");
+        }
+      }));
+
+      server.registerTool("agent_work_release", {
+        title: "Permanently Release Agent",
+        description: "Permanently release one waiting or offline collaboration session that owns no working or input-required task. This is a durable manager-only transition; free-form chat cannot release an agent. The latest work-state revision is required to prevent stale release decisions.",
+        inputSchema: z.object({
+          target_collaboration_session_id: z.string().min(1).max(64).describe("Public collaboration session ID from agent_work_list."),
+          expected_revision: z.number().int().positive().describe("Latest target work-state revision returned by agent_work_list."),
+          reason: z.string().min(1).max(8192).describe("Concrete manager reason why this agent is no longer needed."),
+        }).strict(),
+        outputSchema: workStateSchema,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      }, (args, extra) => auditCall("agent_work_release", extra, async () => {
+        if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_work_release'");
+        try {
+          const context = await verifyCollaborationContext();
+          if (context.roleAssignment.canonicalRoleId !== "manager") {
+            return toolError("Only a server-verified manager role may permanently release an agent");
+          }
+          const activeTasks = await taskStore.list({ statuses: ["working", "input_required"], limit: 200 });
+          const ownedTaskIds = activeTasks
+            .filter((task) => task.ownerCollaborationSessionId === args.target_collaboration_session_id)
+            .map((task) => task.taskId);
+          if (ownedTaskIds.length > 0) {
+            return toolError(`Target session still owns non-terminal tasks: ${ownedTaskIds.join(", ")}`);
+          }
+          const released = await workLoopStore.releaseByManager({
+            managerCollaborationSessionId: context.collaborationSessionId,
+            targetCollaborationSessionId: args.target_collaboration_session_id,
+            expectedRevision: args.expected_revision,
+            reason: args.reason,
+          });
+          const result = toAgentWorkState(released);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
+        } catch (error) {
+          return toolError(error instanceof Error ? error.message : "Agent permanent release failed");
+        }
+      }));
+    }
+
     server.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
       const gateError = lockGenericCollaboration();
       if (gateError) throw new Error(gateError);
+      const workGateError = await releasedWorkStateGate("agent_chat_subscribe");
+      if (workGateError) throw new Error(workGateError);
       requireChatReadScope(scopes);
       if (request.params.uri !== AGENT_CHAT_URI) throw new Error("Unsupported resource URI");
       subscriptions.add(AGENT_CHAT_URI);
@@ -959,6 +1181,7 @@ export function createMcpServer(
 
     const unsubscribeBroker = broker.subscribe(connectionAgentInstanceId, async (notification) => {
       if (!subscriptions.has(notification.uri)) return;
+      if (await releasedWorkStateGate("agent_chat_notification")) return;
       try {
         await server.server.sendResourceUpdated({ uri: notification.uri });
       } catch {
@@ -972,6 +1195,13 @@ export function createMcpServer(
       unsubscribeBroker();
       subscriptions.clear();
       disposePromise = (async () => {
+        if (workLoopStore && verifiedCollaborationContext) {
+          try {
+            await workLoopStore.disconnect(verifiedCollaborationContext.collaborationSessionId);
+          } catch {
+            console.error("[COLLABORATION] Failed to mark agent work lifecycle offline during MCP cleanup");
+          }
+        }
         if (!collaborationBootstrap) return;
         try {
           await collaborationBootstrap.dispose();
@@ -981,8 +1211,8 @@ export function createMcpServer(
       })();
       return disposePromise;
     };
-  } else if (identity || broker || taskStore || collaborationBootstrap || memoryStore) {
-    throw new Error("Authenticated identity and AgentChatBroker must be provided together; AgentTaskStore, collaboration bootstrap, and agent memory require both");
+  } else if (identity || broker || taskStore || collaborationBootstrap || memoryStore || workLoopStore) {
+    throw new Error("Authenticated identity and AgentChatBroker must be provided together; AgentTaskStore, collaboration bootstrap, agent memory, and the work-loop store require both");
   }
 
   return { server, agentInstanceId: connectionAgentInstanceId, dispose, connect: (transport) => server.connect(transport) };
@@ -1039,6 +1269,150 @@ function toAgentTask(task: AgentTask) {
     updated_at: task.updatedAt,
     revision: task.revision,
   };
+}
+
+interface AgentWorkSnapshot {
+  chat: AgentChatReadResult;
+  tasks: AgentTask[];
+  taskBoardToken: string;
+}
+
+interface AgentWorkWaitOutcome {
+  changed: boolean;
+  waitedSeconds: number;
+  snapshot: AgentWorkSnapshot;
+  releasedState?: AgentWorkState;
+}
+
+async function readAgentWorkSnapshot(
+  broker: AgentChatBroker,
+  taskStore: AgentTaskStore,
+  afterChatCursor?: number,
+): Promise<AgentWorkSnapshot> {
+  const [chat, tasks] = await Promise.all([
+    broker.read(afterChatCursor),
+    taskStore.list({ statuses: ["open", "working", "input_required"], limit: 200 }),
+  ]);
+  const serializedBoard = JSON.stringify(tasks
+    .slice()
+    .sort((left, right) => left.taskId.localeCompare(right.taskId))
+    .map((task) => ({
+      taskId: task.taskId,
+      status: task.status,
+      revision: task.revision,
+      ownerAgentId: task.ownerAgentId,
+      ownerCollaborationSessionId: task.ownerCollaborationSessionId,
+      ownerScope: task.ownerScope,
+      leaseExpiresAt: task.leaseExpiresAt,
+      updatedAt: task.updatedAt,
+    })));
+  return { chat, tasks, taskBoardToken: makeAgentTaskBoardToken(serializedBoard) };
+}
+
+function agentWorkSnapshotChanged(
+  snapshot: AgentWorkSnapshot,
+  afterChatCursor: number,
+  taskBoardToken: string,
+): boolean {
+  return snapshot.chat.gap || snapshot.chat.latestCursor !== afterChatCursor ||
+    snapshot.taskBoardToken !== taskBoardToken;
+}
+
+async function waitForAgentWorkChange(input: {
+  broker: AgentChatBroker;
+  taskStore: AgentTaskStore;
+  workLoopStore: AgentWorkLoopStore;
+  collaborationSessionId: string;
+  afterChatCursor: number;
+  taskBoardToken: string;
+  waitSeconds: number;
+  signal: AbortSignal;
+}): Promise<AgentWorkWaitOutcome> {
+  const startedAtMs = Date.now();
+  const deadlineMs = startedAtMs + input.waitSeconds * 1_000;
+  let snapshot = await readAgentWorkSnapshot(input.broker, input.taskStore, input.afterChatCursor);
+
+  while (Date.now() < deadlineMs) {
+    const remainingMs = deadlineMs - Date.now();
+    await delayWithAbort(Math.min(1_000, remainingMs), input.signal);
+    const workState = await input.workLoopStore.get(input.collaborationSessionId);
+    snapshot = await readAgentWorkSnapshot(input.broker, input.taskStore, input.afterChatCursor);
+    if (workState.lifecycle === "released") {
+      return {
+        changed: false,
+        waitedSeconds: (Date.now() - startedAtMs) / 1_000,
+        snapshot,
+        releasedState: workState,
+      };
+    }
+    if (agentWorkSnapshotChanged(snapshot, input.afterChatCursor, input.taskBoardToken)) {
+      return {
+        changed: true,
+        waitedSeconds: (Date.now() - startedAtMs) / 1_000,
+        snapshot,
+      };
+    }
+  }
+
+  return {
+    changed: false,
+    waitedSeconds: (Date.now() - startedAtMs) / 1_000,
+    snapshot,
+  };
+}
+
+function workWaitResult(
+  outcome: "snapshot" | "changed" | "timeout" | "released",
+  waitedSeconds: number,
+  workState: AgentWorkState,
+  snapshot: AgentWorkSnapshot,
+) {
+  const result = {
+    outcome,
+    waited_seconds: waitedSeconds,
+    work_state: toAgentWorkState(workState),
+    chat: toChatSnapshot(snapshot.chat),
+    tasks: snapshot.tasks.map(toAgentTask),
+    task_board_token: snapshot.taskBoardToken,
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(result) }],
+    structuredContent: result,
+  };
+}
+
+function toAgentWorkState(state: AgentWorkState) {
+  return {
+    collaboration_session_id: state.collaborationSessionId,
+    agent_id: state.agentId,
+    agent_name: state.agentName,
+    canonical_role_id: state.canonicalRoleId,
+    occupancy_label: state.occupancyLabel,
+    lifecycle: state.lifecycle,
+    consecutive_timeouts: state.consecutiveTimeouts,
+    last_chat_cursor: state.lastChatCursor,
+    task_board_token: state.taskBoardToken,
+    released_by_collaboration_session_id: state.releasedByCollaborationSessionId,
+    release_reason: state.releaseReason,
+    created_at: state.createdAt,
+    updated_at: state.updatedAt,
+    revision: state.revision,
+  };
+}
+
+function delayWithAbort(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new Error("Agent work wait was cancelled"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, Math.max(0, milliseconds));
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new Error("Agent work wait was cancelled"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function renderApprovalText(value: string): string {

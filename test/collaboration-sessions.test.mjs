@@ -240,7 +240,7 @@ test("requires a validated server key and persists only versioned HMAC verifiers
   assert.equal(credential.session.assignedRoleId, "implementer");
   assert.equal(credential.session.occupancyLabel, "dev1");
   assert.equal(credential.session.roleContractId, "pilink-collaboration/implementer");
-  assert.equal(credential.session.roleContractVersion, "1.0.0");
+  assert.equal(credential.session.roleContractVersion, "1.1.0");
   assert.equal(credential.session.credentialGeneration, 1);
   assert.equal(credential.session.expiresAt, "2026-08-01T10:00:30.000Z");
   assert.equal(credential.session.resumeUntil, "2026-08-01T10:02:30.000Z");

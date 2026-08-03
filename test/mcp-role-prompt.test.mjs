@@ -208,16 +208,16 @@ test("initializes generically, then exposes one verified role prompt on dynamic 
     assert.equal(publicResult.assigned_role_id, "implementer");
     assert.equal(publicResult.occupancy_label, "dev1");
     assert.equal(publicResult.contract_id, "pilink-collaboration/implementer");
-    assert.equal(publicResult.contract_version, "1.0.0");
+    assert.equal(publicResult.contract_version, "1.1.0");
     assert.equal(JSON.stringify(publicResult).includes(bootstrap.privateHandle), false);
 
     const guidance = publicResult.guidance;
     assert.match(guidance, /PILINK VERIFIED COLLABORATION SESSION/);
     assert.match(guidance, /Canonical role: implementer/);
     assert.match(guidance, /Occupancy label: dev1/);
-    assert.match(guidance, /Contract: pilink-collaboration\/implementer@1\.0\.0/);
-    assert.match(guidance, /PILINK SHARED COLLABORATION CONTRACT v1\.0\.0/);
-    assert.match(guidance, /PILINK IMPLEMENTER ROLE v1\.0\.0/);
+    assert.match(guidance, /Contract: pilink-collaboration\/implementer@1\.1\.0/);
+    assert.match(guidance, /PILINK SHARED COLLABORATION CONTRACT v1\.1\.0/);
+    assert.match(guidance, /PILINK IMPLEMENTER ROLE v1\.1\.0/);
     assert.doesNotMatch(guidance, /call collaboration_bootstrap first/i);
     assert.equal(guidance.includes(bootstrap.privateHandle), false);
 
@@ -625,7 +625,7 @@ test("rejects malformed post-creation context and disposes its private session",
         canonicalRoleId: "manager",
         occupancyLabel: "manager",
         contractId: "pilink-collaboration/manager",
-        contractVersion: "1.0.0",
+        contractVersion: "1.1.0",
       },
     },
   });

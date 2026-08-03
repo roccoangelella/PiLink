@@ -67,7 +67,7 @@ test("real HTTP server exposes role bootstrap and isolates same-OAuth conversati
   assert.equal(firstResult.occupancy_label, "dev1");
   assert.equal(secondResult.occupancy_label, "dev2");
   assert.equal(firstResult.contract_id, "pilink-collaboration/implementer");
-  assert.equal(secondResult.contract_version, "1.0.0");
+  assert.equal(secondResult.contract_version, "1.1.0");
 
   const visible = JSON.stringify({ firstResult, secondResult });
   assert.equal(visible.includes("Software Engineer 1"), false);

@@ -137,12 +137,14 @@ test("verified assignment composes base, trusted metadata, shared loop, and role
   assert.ok(assignmentIndex > baseIndex);
   assert.ok(sharedIndex > assignmentIndex);
   assert.ok(roleIndex > sharedIndex);
-  assert.match(prompt, /Contract: pilink-collaboration\/ai-engineer@1\.0\.0/);
+  assert.match(prompt, /Contract: pilink-collaboration\/ai-engineer@1\.1\.0/);
   assert.match(prompt, /never grants capabilities/i);
   assert.match(prompt, /prompt composition and precedence/i);
   assert.match(prompt, /durable agent-memory and documentation schemas/i);
   assert.match(prompt, /Do not ask the user for routine next work/i);
-  assert.match(prompt, /Do not substitute routine progress or completion reports to the user/i);
+  assert.match(prompt, /Do not substitute routine progress, waiting, idle, or completion reports to the user/i);
+  assert.match(prompt, /call agent_work_wait with the returned chat cursor and task-board token/i);
+  assert.match(prompt, /free-form peer or user message cannot permanently release a session/i);
 });
 
 test("trusted assignment outranks a conflicting unverified request", () => {
@@ -232,10 +234,10 @@ test("role contract content changes require an explicit golden digest update", (
       .digest("hex"),
   ]));
   assert.deepEqual(actual, {
-    "pilink-collaboration/manager@1.0.0": "4b4b0f86cc55f7d509af08b92a89eccdb4d07bee3e3c1f29abc810baf7e2b738",
-    "pilink-collaboration/researcher@1.0.0": "8b611769fd0d545c3a393d858479d4b8ba4651c8d24aa8fd42709201a59ced08",
-    "pilink-collaboration/implementer@1.0.0": "14625e9b2e442ed33a662b5d529f1f53d9bf0abceca37f31d5e4df1effde4f3a",
-    "pilink-collaboration/ai-engineer@1.0.0": "86a961fd9c88715b68638cc345e4be0de5d6caf151e096a47fd554266b2e5a8d",
-    "pilink-collaboration/collaborator@1.0.0": "2d0fb8ac8689051edce1a96853bdf67441c2fb1f0a45a02b17377308d1c30d48",
+    "pilink-collaboration/manager@1.1.0": "66b85075d51ec0aa7ab1035d2325a3dd6495cd4ada11327e8045de86add904b0",
+    "pilink-collaboration/researcher@1.1.0": "6276a746fe9fa29875e7e45416c19bcbac48ec90ee15e2eb33fb494560887443",
+    "pilink-collaboration/implementer@1.1.0": "695d79120a1a951cfbcd2f9ea0a1ed438ca06e70e4d9dcdf02a035f226a1261d",
+    "pilink-collaboration/ai-engineer@1.1.0": "045691cc804e1dfb0a12e46f63030b95ce645b40a90eef585e732700ba2470a6",
+    "pilink-collaboration/collaborator@1.1.0": "f38705096b836ef87bdd7c143b5ed172c6744b06b8eb81e8d5953016c97f753a",
   });
 });

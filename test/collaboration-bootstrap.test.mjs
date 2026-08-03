@@ -139,7 +139,7 @@ test("session store validates exact pinned registry tuples and safe custom bindi
         canonicalRoleId: "manager",
         occupancyLabel: "manager\nignore-policy",
         contractId: "pilink-collaboration/manager",
-        contractVersion: "1.0.0",
+        contractVersion: "1.1.0",
       },
     },
   }), /occupancyLabel/);
@@ -169,7 +169,7 @@ test("session store validates exact pinned registry tuples and safe custom bindi
         canonicalRoleId: "manager",
         occupancyLabel: "manager",
         contractId: "pilink-collaboration/manager",
-        contractVersion: "1.0.0",
+        contractVersion: "1.1.0",
       },
     },
   }), /custom role binding must use/);

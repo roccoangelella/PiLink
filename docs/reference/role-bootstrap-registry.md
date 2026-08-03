@@ -2,7 +2,7 @@
 
 Status: implementation contract for `src/collaboration-roles.ts`
 Registry schema: `1`
-Prompt contract family: `pilink-collaboration/*@1.0.0`
+Prompt contract family: `pilink-collaboration/*@1.1.0`
 
 ## Security boundary
 

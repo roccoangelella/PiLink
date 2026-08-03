@@ -138,6 +138,16 @@ The compact task surface is:
 
 Task reads require `mcp:read` or `mcp:tools`; mutations require `mcp:write` or `mcp:tools`. The authenticated OAuth identity is always used as creator or owner—callers cannot select another agent ID. A task creator may cancel its task, while completion and failure require the current unexpired owner. Agents should read the board before substantial work, claim before editing, renew long-running leases, and record a useful artifact such as a commit hash or report path when finished.
 
+## Durable agent work loop
+
+Verified collaboration sessions also receive a durable project-scoped work lifecycle. An empty ready queue places an agent in `waiting_for_task`; it does not end the collaboration turn or authorize a user-facing idle report.
+
+- `agent_work_wait` returns an immediate initial snapshot, then performs bounded server-side long polling when called with the previous chat cursor and opaque task-board token. A timeout means call it again; chat or task changes wake the loop.
+- `agent_work_list` lets only a server-verified manager inspect public collaboration session IDs and lifecycle revisions.
+- `agent_work_release` lets only a server-verified manager permanently release another session that is `waiting_for_task` or `offline` and owns no `working` or `input_required` task. The latest revision and a concrete reason are required.
+
+Free-form chat cannot release a worker. Disconnecting records `offline`, which is resumable; manager release records terminal `released`, after which project tools fail closed for that collaboration session. Work-loop state is private under `PI_DATA_DIR`, uses capped backoff and optimistic revisions, and never replaces task claim/lease authority. See [`docs/protocols/agent-work-loop.md`](docs/protocols/agent-work-loop.md).
+
 ## Governed agent memory
 
 PiLink stores canonical project memory privately under `PI_DATA_DIR`, outside the git workspace. Memory is evidence-bearing untrusted data, never prompt or authorization policy. Authorization is evaluated before ranking or relation expansion: a generic read-capable OAuth connection receives only project-visible and matching-principal memory, while verified collaboration bootstrap may additionally authorize its canonical role, exact collaboration session, and currently owned task scopes. Restricted entries remain unavailable through the public read surface.

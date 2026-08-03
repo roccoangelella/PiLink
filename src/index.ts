@@ -27,6 +27,7 @@ import { AgentTaskStore } from "./tasks.js";
 import { CollaborationSessionStore } from "./collaboration-sessions.js";
 import { CollaborationBootstrap } from "./collaboration-bootstrap.js";
 import { AgentMemoryStore } from "./memory.js";
+import { AgentWorkLoopStore } from "./work-loop.js";
 
 loadEnvironment();
 const config = loadRuntimeConfig();
@@ -131,6 +132,7 @@ let toolAuditLog: ToolAuditLog | undefined;
 let agentTaskStore: AgentTaskStore | undefined;
 let collaborationSessionStore: CollaborationSessionStore | undefined;
 let agentMemoryStore: AgentMemoryStore | undefined;
+let agentWorkLoopStore: AgentWorkLoopStore | undefined;
 
 function getAgentChatBroker(): AgentChatBroker {
   if (!agentChatBroker) {
@@ -170,6 +172,17 @@ function getAgentMemoryStore(): AgentMemoryStore {
     });
   }
   return agentMemoryStore;
+}
+
+function getAgentWorkLoopStore(): AgentWorkLoopStore {
+  if (!agentWorkLoopStore) {
+    agentWorkLoopStore = new AgentWorkLoopStore({
+      workspace: config.workspace,
+      dataDir: config.dataDir,
+      collaborationSessionStore: getCollaborationSessionStore(),
+    });
+  }
+  return agentWorkLoopStore;
 }
 
 function getCollaborationSessionStore(): CollaborationSessionStore {
@@ -596,6 +609,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
         getAgentTaskStore(),
         collaborationBootstrap,
         memoryStore,
+        collaborationBootstrap ? getAgentWorkLoopStore() : undefined,
       );
       dispose = onceAsync(handle.dispose);
       let managed: ManagedTransport | undefined;
@@ -726,6 +740,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
       getAgentTaskStore(),
       collaborationBootstrap,
       memoryStore,
+      collaborationBootstrap ? getAgentWorkLoopStore() : undefined,
     );
     dispose = onceAsync(handle.dispose);
     const managed = createManagedTransport(
