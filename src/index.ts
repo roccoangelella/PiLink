@@ -25,6 +25,7 @@ import { ToolAuditLog } from "./audit.js";
 import { AgentTaskStore } from "./tasks.js";
 import { CollaborationSessionStore } from "./collaboration-sessions.js";
 import { CollaborationBootstrap } from "./collaboration-bootstrap.js";
+import { AgentMemoryStore } from "./memory.js";
 
 loadEnvironment();
 const config = loadRuntimeConfig();
@@ -109,6 +110,7 @@ let agentChatBroker: AgentChatBroker | undefined;
 let toolAuditLog: ToolAuditLog | undefined;
 let agentTaskStore: AgentTaskStore | undefined;
 let collaborationSessionStore: CollaborationSessionStore | undefined;
+let agentMemoryStore: AgentMemoryStore | undefined;
 
 function getAgentChatBroker(): AgentChatBroker {
   if (!agentChatBroker) {
@@ -138,6 +140,16 @@ function getAgentTaskStore(): AgentTaskStore {
     });
   }
   return agentTaskStore;
+}
+
+function getAgentMemoryStore(): AgentMemoryStore {
+  if (!agentMemoryStore) {
+    agentMemoryStore = new AgentMemoryStore({
+      workspace: config.workspace,
+      dataDir: config.dataDir,
+    });
+  }
+  return agentMemoryStore;
 }
 
 function getCollaborationSessionStore(): CollaborationSessionStore {
@@ -550,6 +562,9 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       const collaborationBootstrap = canBootstrap(sessionClient.scope)
         ? createConnectionCollaborationBootstrap(sessionClient.identity)
         : undefined;
+      const memoryStore = effectiveCapabilities(sessionClient.scope).has("read")
+        ? getAgentMemoryStore()
+        : undefined;
       const handle = createMcpServer(
         policy,
         sessionClient.scope,
@@ -559,6 +574,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
         undefined,
         getAgentTaskStore(),
         collaborationBootstrap,
+        memoryStore,
       );
       dispose = onceAsync(handle.dispose);
       let managed: ManagedTransport | undefined;
@@ -673,6 +689,9 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     const collaborationBootstrap = canBootstrap(sessionClient.scope)
       ? createConnectionCollaborationBootstrap(sessionClient.identity)
       : undefined;
+    const memoryStore = effectiveCapabilities(sessionClient.scope).has("read")
+      ? getAgentMemoryStore()
+      : undefined;
     const transport = new SSEServerTransport("/messages", res);
     const handle = createMcpServer(
       policy,
@@ -683,6 +702,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
       undefined,
       getAgentTaskStore(),
       collaborationBootstrap,
+      memoryStore,
     );
     dispose = onceAsync(handle.dispose);
     const managed = createManagedTransport(

@@ -156,6 +156,10 @@ test("read-only OAuth sessions stay generic and create no collaboration state", 
 
   const tools = (await connected.client.listTools()).tools;
   assert.equal(tools.some((tool) => tool.name === "collaboration_bootstrap"), false);
+  assert.deepEqual(
+    tools.filter((tool) => tool.name.startsWith("agent_memory_")).map((tool) => tool.name).sort(),
+    ["agent_memory_boot_read", "agent_memory_get", "agent_memory_manifest_read", "agent_memory_query"],
+  );
   const guidance = parseTextString(await connected.client.callTool({
     name: "get_system_prompt",
     arguments: {},
@@ -171,9 +175,23 @@ test("read-only OAuth sessions stay generic and create no collaboration state", 
   ]) {
     assert.equal(guidance.includes(specializedFragment), false);
   }
+  const memoryResult = parseText(await connected.client.callTool({
+    name: "agent_memory_query",
+    arguments: {},
+  }));
+  assert.equal(memoryResult.abstained, true);
+  assert.equal(memoryResult.entries.length, 0);
+  const boot = parseText(await connected.client.callTool({
+    name: "agent_memory_boot_read",
+    arguments: { maximum_bytes: 4096 },
+  }));
+  assert.match(boot.markdown, /generated non-authoritative view/i);
+  assert.match(boot.markdown, /untrusted evidence-bearing data/i);
+
   const listing = await connected.client.callTool({ name: "ls", arguments: {} });
   assert.equal(listing.isError, undefined);
   assert.equal(await collaborationStateExists(fixture.dataDir), false);
+  assert.equal(await projectStateFileExists(fixture.dataDir, "agent-memory.json"), false);
 });
 
 test("failed post-reservation setup always returns pending capacity to zero", async (t) => {
@@ -252,6 +270,25 @@ async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false }) {
   });
   await waitForHealth(`${serverUrl}/health`, server, diagnostics);
   return { root, workspace, dataDir, serverUrl, clients, server, diagnostics };
+}
+
+async function projectStateFileExists(dataDir, filename) {
+  try {
+    const entries = await fs.readdir(path.join(dataDir, "projects"), { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      try {
+        await fs.access(path.join(dataDir, "projects", entry.name, filename));
+        return true;
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+    return false;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function collaborationStateExists(dataDir) {

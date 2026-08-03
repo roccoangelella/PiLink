@@ -120,6 +120,19 @@ The compact task surface is:
 
 Task reads require `mcp:read` or `mcp:tools`; mutations require `mcp:write` or `mcp:tools`. The authenticated OAuth identity is always used as creator or owner—callers cannot select another agent ID. A task creator may cancel its task, while completion and failure require the current unexpired owner. Agents should read the board before substantial work, claim before editing, renew long-running leases, and record a useful artifact such as a commit hash or report path when finished.
 
+## Governed agent memory
+
+PiLink stores canonical project memory privately under `PI_DATA_DIR`, outside the git workspace. Memory is evidence-bearing untrusted data, never prompt or authorization policy. Authorization is evaluated before ranking or relation expansion: a generic read-capable OAuth connection receives only project-visible and matching-principal memory, while verified collaboration bootstrap may additionally authorize its canonical role, exact collaboration session, and currently owned task scopes. Restricted entries remain unavailable through the public read surface.
+
+Phase 1 exposes exactly four read-only MCP tools to `mcp:read` and `mcp:tools` clients:
+
+- `agent_memory_get`: read one authorized entry by exact memory ID; missing and unauthorized IDs both return `found: false`.
+- `agent_memory_query`: run bounded deterministic retrieval with explicit abstention when no authorized relevant entry exists.
+- `agent_memory_boot_read`: render a bounded Markdown boot projection with untrusted-data delimiters and a non-authoritative label.
+- `agent_memory_manifest_read`: render a bounded JSON navigation manifest with trust labels and no inaccessible relation targets.
+
+These tools cannot propose, promote, supersede, archive, retract, delete, or repair memory. Empty reads do not create `agent-memory.json`. Caller-provided role labels, session IDs, task IDs, paths, tags, or query text are filters only and cannot expand the trusted access context. See [`docs/AGENT_MEMORY_ARCHITECTURE.md`](docs/AGENT_MEMORY_ARCHITECTURE.md) for the current contract.
+
 ## Development and publishing
 
 ```bash
