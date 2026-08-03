@@ -6,6 +6,16 @@ import {
   type CollaborationRoleRequestKind,
   type VerifiedCollaborationRoleAssignment,
 } from "./collaboration-roles.js";
+import {
+  LINUX_BOOT_ID_PATTERN,
+  LOCAL_RUNTIME_OWNER,
+  PROCESS_START_MARKER_PATTERN,
+  RUNTIME_INSTANCE_ID_PATTERN,
+  classifyPersistedRuntimeOwner,
+  requireLocalRuntimeOwner,
+  sameRuntimeOwner,
+  type RuntimeOwner as StoredRuntimeOwner,
+} from "./runtime-owner.js";
 
 export const COLLABORATION_SESSION_STATUSES = ["active", "expired", "released", "revoked"] as const;
 export type CollaborationSessionStatus = typeof COLLABORATION_SESSION_STATUSES[number];
@@ -39,6 +49,8 @@ const RESUME_REQUEST_MAC_DOMAIN = "pilink/collaboration-session/resume-request-m
 const RESUME_SECRET_DOMAIN = "pilink/collaboration-session/resume-secret/v1";
 const LEGACY_TOMBSTONE_DOMAIN = "pilink/collaboration-session/legacy-tombstone/v1";
 const STATE_KEY_BINDING_DOMAIN = "pilink/collaboration-session/state-key-binding/v1";
+
+type StoredRevocationReason = "runtime_lost";
 
 export interface CollaborationSessionIdentity {
   agentId: string;
@@ -136,6 +148,9 @@ interface StoredResumeRecovery {
 interface StoredCollaborationSession extends CollaborationSession {
   /** Deprecated v1/v2 provenance. Never returned publicly or written by new starts. */
   requestedRoleId?: string;
+  /** Private process ownership used only to reclaim unreachable crash orphans. */
+  runtimeOwner?: StoredRuntimeOwner;
+  revocationReason?: StoredRevocationReason;
   credentialVerifier: StoredCredentialVerifier;
   resumeRecovery?: StoredResumeRecovery;
 }
@@ -147,6 +162,13 @@ interface StoredCredentialKeyBinding {
 }
 
 interface StoredCollaborationSessionState {
+  version: 3;
+  projectKey: string;
+  credentialKeyBinding: StoredCredentialKeyBinding;
+  sessions: StoredCollaborationSession[];
+}
+
+interface VersionTwoStoredCollaborationSessionState {
   version: 2;
   projectKey: string;
   credentialKeyBinding: StoredCredentialKeyBinding;
@@ -218,6 +240,9 @@ export class CollaborationSessionStore {
   private readonly sharedState: SharedSessionState;
 
   public constructor(options: CollaborationSessionStoreOptions) {
+    // Validate the module-shared local owner before this store can inspect or
+    // reclaim durable state. Linux must never operate with an incomplete tuple.
+    requireLocalRuntimeOwner();
     const selectedDataDir = options.dataDir || process.env.PI_DATA_DIR;
     if (!selectedDataDir) throw new Error("CollaborationSessionStore requires dataDir or PI_DATA_DIR");
 
@@ -296,6 +321,7 @@ export class CollaborationSessionStore {
         agentName: identity.agentName,
         label,
         ...roleBinding,
+        runtimeOwner: requireLocalRuntimeOwner(),
         status: "active",
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
@@ -330,6 +356,7 @@ export class CollaborationSessionStore {
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
       requireCurrentHandleOwner(session, agentId, handle.secret, this.credentialKey);
+      requireCurrentRuntimeOwner(session);
       requireActiveSession(session);
       if (now.getTime() - Date.parse(session.lastSeenAt) < this.touchIntervalSeconds * 1_000) {
         return publicSession(session);
@@ -355,6 +382,7 @@ export class CollaborationSessionStore {
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
       requireCurrentHandleOwner(session, agentId, handle.secret, this.credentialKey);
+      requireCurrentRuntimeOwner(session);
       return publicSession(session);
     });
   }
@@ -388,6 +416,21 @@ export class CollaborationSessionStore {
         this.credentialKey,
       );
       if (!currentMatches) {
+        const recovery = session.resumeRecovery;
+        const previousMatches = recovery !== undefined &&
+          Date.parse(recovery.recoveryUntil) >= now.getTime() &&
+          credentialVerifierMatches(
+            session,
+            recovery.previousCredentialVerifier,
+            handle.secret,
+            this.credentialKey,
+          );
+        if (!previousMatches) {
+          throw new Error("Invalid collaboration session handle or resume request");
+        }
+        // A valid previous-generation bearer is still runtime-bound. Gate before
+        // deterministic recovery can derive or return the rotated credential.
+        requireCurrentRuntimeOwner(session);
         const recovered = recoverCompletedResume(
           session,
           handle.secret,
@@ -400,6 +443,14 @@ export class CollaborationSessionStore {
         throw new Error("Invalid collaboration session handle or resume request");
       }
 
+      if (session.status === "released") {
+        throw new Error("Collaboration session was released; start a new session and reassign its tasks");
+      }
+      if (session.status === "revoked") {
+        throw new Error("Collaboration session was revoked; start a new session and reassign its tasks");
+      }
+      requireCurrentRuntimeOwner(session);
+
       if (session.resumeRecovery && resumeRequestMatches(
         session,
         session.resumeRecovery,
@@ -407,12 +458,6 @@ export class CollaborationSessionStore {
         this.credentialKey,
       )) {
         throw new Error("Resume request already completed; retry with the previous handle during recovery or use a new request ID");
-      }
-      if (session.status === "released") {
-        throw new Error("Collaboration session was released; start a new session and reassign its tasks");
-      }
-      if (session.status === "revoked") {
-        throw new Error("Collaboration session was revoked; start a new session and reassign its tasks");
       }
       if (session.status === "expired" && now.getTime() > Date.parse(session.resumeUntil)) {
         throw new Error("Collaboration session expired beyond its resume window; start a new session and reassign its tasks");
@@ -434,6 +479,8 @@ export class CollaborationSessionStore {
         ...session,
         agentName: identity.agentName,
         status: "active",
+        runtimeOwner: requireLocalRuntimeOwner(),
+        revocationReason: undefined,
         lastSeenAt: rotatedAt,
         updatedAt: rotatedAt,
         expiresAt: expiresAt.toISOString(),
@@ -483,11 +530,14 @@ export class CollaborationSessionStore {
       const state = await this.readAndExpire(now);
       const session = requireSession(state, handle.sessionId);
       requireCurrentHandleOwner(session, agentId, handle.secret, this.credentialKey);
+      requireCurrentRuntimeOwner(session);
       if (session.status === "revoked") throw new Error("Collaboration session is revoked");
       if (session.status === "released") return publicSession(session);
       const updated: StoredCollaborationSession = {
         ...session,
         status: "released",
+        runtimeOwner: undefined,
+        revocationReason: undefined,
         releasedAt: now.toISOString(),
         updatedAt: now.toISOString(),
         resumeRecovery: undefined,
@@ -509,6 +559,8 @@ export class CollaborationSessionStore {
       const updated: StoredCollaborationSession = {
         ...session,
         status: "revoked",
+        runtimeOwner: undefined,
+        revocationReason: undefined,
         revokedAt: now.toISOString(),
         releasedAt: undefined,
         updatedAt: now.toISOString(),
@@ -533,19 +585,30 @@ export class CollaborationSessionStore {
     });
   }
 
-  private async readAndExpire(now: Date): Promise<StoredCollaborationSessionState> {
+  private async readAndExpire(
+    now: Date,
+    reclaimOrphans = true,
+  ): Promise<StoredCollaborationSessionState> {
     const state = await this.readStateFile(now);
     let changed = false;
     const sessions = state.sessions.map((session) => {
-      const shouldExpire = session.status === "active" && Date.parse(session.expiresAt) <= now.getTime();
+      const shouldRevokeOrphan = reclaimOrphans &&
+        (session.status === "active" || session.status === "expired") &&
+        (!session.runtimeOwner || classifyPersistedRuntimeOwner(session.runtimeOwner) === "dead");
+      const shouldExpire = !shouldRevokeOrphan &&
+        session.status === "active" && Date.parse(session.expiresAt) <= now.getTime();
       const shouldClearRecovery = session.resumeRecovery !== undefined &&
         Date.parse(session.resumeRecovery.recoveryUntil) < now.getTime();
-      if (!shouldExpire && !shouldClearRecovery) return session;
+      if (!shouldRevokeOrphan && !shouldExpire && !shouldClearRecovery) return session;
       changed = true;
       return {
         ...session,
-        status: shouldExpire ? "expired" as const : session.status,
-        resumeRecovery: shouldClearRecovery ? undefined : session.resumeRecovery,
+        status: shouldRevokeOrphan ? "revoked" as const : shouldExpire ? "expired" as const : session.status,
+        runtimeOwner: shouldRevokeOrphan ? undefined : session.runtimeOwner,
+        revocationReason: shouldRevokeOrphan ? "runtime_lost" as const : session.revocationReason,
+        releasedAt: shouldRevokeOrphan ? undefined : session.releasedAt,
+        revokedAt: shouldRevokeOrphan ? now.toISOString() : session.revokedAt,
+        resumeRecovery: shouldRevokeOrphan || shouldClearRecovery ? undefined : session.resumeRecovery,
         updatedAt: now.toISOString(),
         revision: session.revision + 1,
       };
@@ -647,6 +710,12 @@ export class CollaborationSessionStore {
       await this.persistState(migrated);
       return migrated;
     }
+    if (isRecord(parsed) && parsed.version === 2) {
+      const versionTwo = validateVersionTwoState(parsed, this.projectKey, this.maxSessions, this.credentialKey);
+      const migrated = migrateVersionTwoState(versionTwo, this.credentialKey, now);
+      await this.persistState(migrated);
+      return migrated;
+    }
     return validateState(parsed, this.projectKey, this.maxSessions, this.credentialKey);
   }
 
@@ -706,9 +775,9 @@ function emptyState(
   credentialKey: ValidatedCredentialKey,
 ): StoredCollaborationSessionState {
   return {
-    version: 2,
+    version: 3,
     projectKey,
-    credentialKeyBinding: createCredentialKeyBinding(credentialKey, projectKey),
+    credentialKeyBinding: createCredentialKeyBinding(credentialKey, projectKey, 3),
     sessions: [],
   };
 }
@@ -762,6 +831,8 @@ function requireActiveSession(session: StoredCollaborationSession): void {
 function publicSession(session: StoredCollaborationSession): CollaborationSession {
   const {
     requestedRoleId: _legacyRequestedRoleId,
+    runtimeOwner: _runtimeOwner,
+    revocationReason: _revocationReason,
     credentialVerifier: _credentialVerifier,
     resumeRecovery: _resumeRecovery,
     ...publicFields
@@ -784,13 +855,14 @@ function generateSessionId(): string {
 function createCredentialKeyBinding(
   credentialKey: ValidatedCredentialKey,
   projectKey: string,
+  stateVersion: 2 | 3,
 ): StoredCredentialKeyBinding {
   return {
     version: COLLABORATION_SESSION_CREDENTIAL_VERSION,
     keyId: credentialKey.keyId,
     mac: keyedDigest(credentialKey, STATE_KEY_BINDING_DOMAIN, [
       projectKey,
-      "state-version:2",
+      `state-version:${stateVersion}`,
     ]),
   };
 }
@@ -799,6 +871,7 @@ function validateCredentialKeyBinding(
   value: unknown,
   credentialKey: ValidatedCredentialKey,
   projectKey: string,
+  stateVersion: 2 | 3,
 ): StoredCredentialKeyBinding {
   if (!isRecord(value)) {
     throw new Error("Malformed collaboration session state: missing credential key binding");
@@ -812,7 +885,7 @@ function validateCredentialKeyBinding(
     throw new Error("Collaboration session credential key ID does not match the configured server key");
   }
   const mac = validateMac(value.mac, "credential key binding MAC");
-  const expected = createCredentialKeyBinding(credentialKey, projectKey);
+  const expected = createCredentialKeyBinding(credentialKey, projectKey, stateVersion);
   if (!constantTimeMacEqual(mac, expected.mac)) {
     throw new Error("Collaboration session credential key material does not match persisted state");
   }
@@ -1011,7 +1084,7 @@ function validateState(
   maxSessions: number,
   credentialKey: ValidatedCredentialKey,
 ): StoredCollaborationSessionState {
-  if (!isRecord(value) || value.version !== 2 || value.projectKey !== expectedProjectKey || !Array.isArray(value.sessions)) {
+  if (!isRecord(value) || value.version !== 3 || value.projectKey !== expectedProjectKey || !Array.isArray(value.sessions)) {
     throw new Error("Malformed or mismatched collaboration session state");
   }
   assertOnlyKeys(
@@ -1026,10 +1099,40 @@ function validateState(
     value.credentialKeyBinding,
     credentialKey,
     expectedProjectKey,
+    3,
   );
   const ids = new Set<string>();
   const sessions = value.sessions.map((candidate) =>
-    validateStoredSession(candidate, expectedProjectKey, credentialKey.keyId, ids));
+    validateStoredSession(candidate, expectedProjectKey, credentialKey.keyId, ids, "required-for-live"));
+  return { version: 3, projectKey: expectedProjectKey, credentialKeyBinding, sessions };
+}
+
+function validateVersionTwoState(
+  value: unknown,
+  expectedProjectKey: string,
+  maxSessions: number,
+  credentialKey: ValidatedCredentialKey,
+): VersionTwoStoredCollaborationSessionState {
+  if (!isRecord(value) || value.version !== 2 || value.projectKey !== expectedProjectKey || !Array.isArray(value.sessions)) {
+    throw new Error("Malformed or mismatched version 2 collaboration session state");
+  }
+  assertOnlyKeys(
+    value,
+    ["version", "projectKey", "credentialKeyBinding", "sessions"],
+    "version 2 collaboration session state",
+  );
+  if (value.sessions.length > maxSessions) {
+    throw new Error("Malformed collaboration session state: session limit exceeded");
+  }
+  const credentialKeyBinding = validateCredentialKeyBinding(
+    value.credentialKeyBinding,
+    credentialKey,
+    expectedProjectKey,
+    2,
+  );
+  const ids = new Set<string>();
+  const sessions = value.sessions.map((candidate) =>
+    validateStoredSession(candidate, expectedProjectKey, credentialKey.keyId, ids, "forbidden"));
   return { version: 2, projectKey: expectedProjectKey, credentialKeyBinding, sessions };
 }
 
@@ -1038,6 +1141,7 @@ function validateStoredSession(
   expectedProjectKey: string,
   expectedKeyId: string,
   ids: Set<string>,
+  runtimeOwnerMode: "forbidden" | "required-for-live",
 ): StoredCollaborationSession {
   if (!isRecord(value)) throw new Error("Malformed collaboration session state: invalid session");
   assertOnlyKeys(value, [
@@ -1047,6 +1151,7 @@ function validateStoredSession(
     "agentName",
     "label",
     "requestedRoleId",
+    ...(runtimeOwnerMode === "required-for-live" ? ["runtimeOwner", "revocationReason"] : []),
     "requestKind",
     "requestedRoleFingerprint",
     "assignedRoleId",
@@ -1073,6 +1178,12 @@ function validateStoredSession(
   if (value.projectKey !== expectedProjectKey) throw new Error("Malformed collaboration session state: mismatched project key");
   const status = validateStatus(value.status);
   const roleBinding = validateStoredRoleBinding(value);
+  const runtimeOwner = runtimeOwnerMode === "required-for-live"
+    ? validateOptionalRuntimeOwner(value.runtimeOwner)
+    : undefined;
+  const revocationReason = runtimeOwnerMode === "required-for-live"
+    ? validateOptionalRevocationReason(value.revocationReason)
+    : undefined;
   validateOptionalIdentifier(value.requestedRoleId, "requestedRoleId", COLLABORATION_SESSION_ROLE_MAX_BYTES);
   const credentialGeneration = validateGeneration(value.credentialGeneration, "credentialGeneration");
   const credentialVerifier = validateCredentialVerifier(value.credentialVerifier, expectedKeyId);
@@ -1086,6 +1197,8 @@ function validateStoredSession(
     agentName: validateRequiredText(value.agentName, "agentName", 100),
     label: validateOptionalText(value.label, "label", COLLABORATION_SESSION_LABEL_MAX_BYTES),
     ...roleBinding,
+    runtimeOwner,
+    revocationReason,
     status,
     createdAt: validateDate(value.createdAt, "createdAt"),
     updatedAt: validateDate(value.updatedAt, "updatedAt"),
@@ -1136,6 +1249,21 @@ function validateStoredSession(
   }
   if ((status === "released" || status === "revoked") && session.resumeRecovery) {
     throw new Error("Malformed collaboration session state: terminal session retains resume recovery");
+  }
+  if (runtimeOwnerMode === "required-for-live" &&
+      (status === "active" || status === "expired") && !session.runtimeOwner) {
+    throw new Error("Malformed collaboration session state: live or resumable session lacks runtime owner");
+  }
+  if (runtimeOwnerMode === "required-for-live" && process.platform === "linux" &&
+      (status === "active" || status === "expired") &&
+      (!session.runtimeOwner?.bootId || !session.runtimeOwner.processStartMarker)) {
+    throw new Error("Malformed collaboration session state: Linux live owner tuple is incomplete");
+  }
+  if ((status === "released" || status === "revoked") && session.runtimeOwner) {
+    throw new Error("Malformed collaboration session state: terminal session retains runtime owner");
+  }
+  if (session.revocationReason && status !== "revoked") {
+    throw new Error("Malformed collaboration session state: non-revoked session has revocation reason");
   }
   return session;
 }
@@ -1262,6 +1390,29 @@ function migrateLegacyState(
   }));
 }
 
+function migrateVersionTwoState(
+  versionTwo: VersionTwoStoredCollaborationSessionState,
+  credentialKey: ValidatedCredentialKey,
+  now: Date,
+): StoredCollaborationSessionState {
+  const migratedAt = now.toISOString();
+  const state = emptyState(versionTwo.projectKey, credentialKey);
+  return withSessions(state, versionTwo.sessions.map((session) => {
+    if (session.status === "released" || session.status === "revoked") return session;
+    return {
+      ...session,
+      status: "revoked" as const,
+      runtimeOwner: undefined,
+      revocationReason: "runtime_lost" as const,
+      updatedAt: migratedAt,
+      releasedAt: undefined,
+      revokedAt: migratedAt,
+      resumeRecovery: undefined,
+      revision: session.revision + 1,
+    };
+  }));
+}
+
 type StoredRoleBindingFields = Pick<
   CollaborationSession,
   | "requestKind"
@@ -1352,6 +1503,59 @@ function validateRoleFingerprint(value: unknown): string {
     throw new Error("roleBinding.requestedRoleFingerprint must be a 16-character lowercase hexadecimal value");
   }
   return value;
+}
+
+function validateOptionalRevocationReason(value: unknown): StoredRevocationReason | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "runtime_lost") {
+    throw new Error("Malformed collaboration session state: invalid revocation reason");
+  }
+  return value;
+}
+
+function validateOptionalRuntimeOwner(value: unknown): StoredRuntimeOwner | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new Error("Malformed collaboration session state: invalid runtime owner");
+  }
+  assertOnlyKeys(
+    value,
+    ["version", "runtimeInstanceId", "pid", "bootId", "processStartMarker"],
+    "collaboration session runtime owner",
+  );
+  if (value.version !== 1 ||
+      typeof value.runtimeInstanceId !== "string" ||
+      !RUNTIME_INSTANCE_ID_PATTERN.test(value.runtimeInstanceId) ||
+      !Number.isSafeInteger(value.pid) || (value.pid as number) < 1) {
+    throw new Error("Malformed collaboration session state: invalid runtime owner identity");
+  }
+  if (value.bootId !== undefined &&
+      (typeof value.bootId !== "string" || !LINUX_BOOT_ID_PATTERN.test(value.bootId))) {
+    throw new Error("Malformed collaboration session state: invalid Linux boot ID");
+  }
+  if (value.processStartMarker !== undefined &&
+      (typeof value.processStartMarker !== "string" ||
+       !PROCESS_START_MARKER_PATTERN.test(value.processStartMarker))) {
+    throw new Error("Malformed collaboration session state: invalid process start marker");
+  }
+  return {
+    version: 1,
+    runtimeInstanceId: value.runtimeInstanceId,
+    pid: value.pid as number,
+    bootId: value.bootId as string | undefined,
+    processStartMarker: value.processStartMarker as string | undefined,
+  };
+}
+
+function requireCurrentRuntimeOwner(session: StoredCollaborationSession): void {
+  // Terminal tombstones intentionally clear their runtime owner. A valid bearer
+  // may still inspect the terminal status or receive its precise terminal error,
+  // but no released/revoked session can be resumed or mutated. Active and
+  // expired-resumable sessions remain pinned to the complete runtime tuple.
+  if (session.status === "released" || session.status === "revoked") return;
+  if (!session.runtimeOwner || !sameRuntimeOwner(session.runtimeOwner, LOCAL_RUNTIME_OWNER)) {
+    throw new Error("Collaboration session belongs to a different PiLink runtime");
+  }
 }
 
 function validateIdentity(value: CollaborationSessionIdentity): CollaborationSessionIdentity {

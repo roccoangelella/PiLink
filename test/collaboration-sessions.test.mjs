@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -7,12 +8,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { CollaborationSessionStore } from "../dist/collaboration-sessions.js";
 import {
+  classifyRuntimeOwnerLiveness,
+  parseLinuxProcessStatStartTime,
+  validateLocalRuntimeOwnerForPlatform,
+} from "../dist/runtime-owner.js";
+import {
   createNewCollaborationRoleAssignment,
   resolveCollaborationRoleRequest,
 } from "../dist/collaboration-roles.js";
 
 const startWorkerPath = fileURLToPath(new URL("fixtures/collaboration-session-worker.mjs", import.meta.url));
-const resumeWorkerPath = fileURLToPath(new URL("fixtures/collaboration-session-resume-worker.mjs", import.meta.url));
+const handleWorkerPath = fileURLToPath(new URL("fixtures/collaboration-session-handle-worker.mjs", import.meta.url));
+const orphanWorkerPath = fileURLToPath(new URL("fixtures/collaboration-session-orphan-worker.mjs", import.meta.url));
 const credentialKey = Object.freeze({
   keyId: "test-key-v1",
   keyMaterial: Buffer.alloc(32, 0x5a).toString("base64url"),
@@ -90,19 +97,17 @@ function runStartWorker({ workspace, dataDir, agentId, label, readyPath = "", ga
   ]);
 }
 
-function runResumeWorker({
+function runHandleWorker({
+  action,
   workspace,
   dataDir,
   agentId,
   agentName,
   collaborationSessionHandle,
-  resumeRequestId,
-  ttlSeconds,
   nowIso,
-  readyPath = "",
-  gatePath = "",
 }) {
-  return spawnJson(resumeWorkerPath, [
+  return spawnJson(handleWorkerPath, [
+    action,
     workspace,
     dataDir,
     credentialKey.keyId,
@@ -110,12 +115,29 @@ function runResumeWorker({
     agentId,
     agentName,
     collaborationSessionHandle,
-    resumeRequestId,
-    String(ttlSeconds),
     nowIso,
-    readyPath,
-    gatePath,
   ]);
+}
+
+function spawnOrphanOwner({ workspace, dataDir, agentId, count, readyPath, nowIso }) {
+  const child = spawn(process.execPath, [
+    orphanWorkerPath,
+    workspace,
+    dataDir,
+    credentialKey.keyId,
+    credentialKey.keyMaterial,
+    agentId,
+    String(count),
+    readyPath,
+    nowIso,
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  return {
+    child,
+    diagnostics() { return stderr; },
+  };
 }
 
 async function waitForFiles(paths, timeoutMs = 5_000) {
@@ -133,6 +155,14 @@ async function waitForFiles(paths, timeoutMs = 5_000) {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for collaboration session workers");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function collaborationStateKeyBindingMac(projectKey, stateVersion) {
+  return createHmac("sha256", Buffer.from(credentialKey.keyMaterial, "base64url"))
+    .update("pilink/collaboration-session/state-key-binding/v1", "utf8")
+    .update("\0", "utf8")
+    .update(JSON.stringify([credentialKey.keyId, projectKey, `state-version:${stateVersion}`]), "utf8")
+    .digest("base64url");
 }
 
 async function writeOldLock(lockPath, owner) {
@@ -156,6 +186,21 @@ async function exitedChildPid() {
     });
   });
 }
+
+test("parses Linux process starttime after complex command names", () => {
+  const suffix = [
+    "S",
+    ...Array.from({ length: 18 }, (_, index) => String(index + 4)),
+    "424242",
+    "99",
+  ];
+  assert.equal(
+    parseLinuxProcessStatStartTime(`123 (worker ) with spaces)) ${suffix.join(" ")}`),
+    "424242",
+  );
+  assert.equal(parseLinuxProcessStatStartTime("123 malformed stat"), undefined);
+  assert.equal(parseLinuxProcessStatStartTime("123 (short) S 1 2"), undefined);
+});
 
 test("requires a validated server key and persists only versioned HMAC verifiers", async (t) => {
   const value = await fixture();
@@ -203,10 +248,11 @@ test("requires a validated server key and persists only versioned HMAC verifiers
   assert.equal(Object.hasOwn(credential.session, "resumeRecovery"), false);
   assert.equal(Object.hasOwn(credential.session, "requestedRoleId"), false);
   assert.equal(Object.hasOwn(credential.session, "requestedRoleLabel"), false);
+  assert.equal(Object.hasOwn(credential.session, "runtimeOwner"), false);
 
   const persistedText = await fs.readFile(store.statePath, "utf8");
   const persisted = JSON.parse(persistedText);
-  assert.equal(persisted.version, 2);
+  assert.equal(persisted.version, 3);
   assert.deepEqual(persisted.credentialKeyBinding, {
     version: 1,
     keyId: credentialKey.keyId,
@@ -222,6 +268,18 @@ test("requires a validated server key and persists only versioned HMAC verifiers
   });
   assert.match(persisted.sessions[0].credentialVerifier.mac, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(Object.hasOwn(persisted.sessions[0], "credentialHash"), false);
+  assert.deepEqual(persisted.sessions[0].runtimeOwner, {
+    version: 1,
+    runtimeInstanceId: persisted.sessions[0].runtimeOwner.runtimeInstanceId,
+    pid: process.pid,
+    bootId: persisted.sessions[0].runtimeOwner.bootId,
+    processStartMarker: persisted.sessions[0].runtimeOwner.processStartMarker,
+  });
+  if (process.platform === "linux") {
+    assert.match(persisted.sessions[0].runtimeOwner.bootId, /^[0-9a-f-]{36}$/);
+    assert.match(persisted.sessions[0].runtimeOwner.processStartMarker, /^[0-9]+$/);
+  }
+  assert.match(persisted.sessions[0].runtimeOwner.runtimeInstanceId, /^[0-9a-f]{32}$/);
   assert.equal(persistedText.includes(credential.collaborationSessionHandle), false);
   assert.equal(persistedText.includes(credential.collaborationSessionHandle.split(".")[1]), false);
   assert.equal(persistedText.includes(credentialKey.keyMaterial), false);
@@ -309,6 +367,52 @@ test("binds handles to one OAuth actor and throttles liveness revisions", async 
   );
 });
 
+test("pins every private bearer operation to the exact PiLink runtime", async (t) => {
+  const value = await fixture("pilink-collaboration-session-runtime-pin-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const created = await store.start({ ...alice, ttlSeconds: 120 });
+
+  for (const action of ["authenticate", "inspect", "resume", "release"]) {
+    await assert.rejects(
+      runHandleWorker({
+        action,
+        workspace: value.workspace,
+        dataDir: value.dataDir,
+        agentId: alice.agentId,
+        agentName: alice.agentName,
+        collaborationSessionHandle: created.collaborationSessionHandle,
+        nowIso: value.nowIso(),
+      }),
+      /different PiLink runtime/,
+    );
+  }
+
+  const wrongHandle = `${created.session.collaborationSessionId}.${"A".repeat(43)}`;
+  await assert.rejects(
+    runHandleWorker({
+      action: "resume",
+      workspace: value.workspace,
+      dataDir: value.dataDir,
+      agentId: alice.agentId,
+      agentName: alice.agentName,
+      collaborationSessionHandle: wrongHandle,
+      nowIso: value.nowIso(),
+    }),
+    (error) => /Invalid collaboration session handle or resume request/.test(error.message) &&
+      !/different PiLink runtime/.test(error.message),
+  );
+
+  assert.equal((await store.authenticate({
+    agentId: alice.agentId,
+    collaborationSessionHandle: created.collaborationSessionHandle,
+  })).status, "active");
+  assert.equal((await store.inspect({
+    agentId: alice.agentId,
+    collaborationSessionHandle: created.collaborationSessionHandle,
+  })).status, "active");
+});
+
 test("resume rotation is generation-bound and idempotent after response loss", async (t) => {
   const value = await fixture("pilink-collaboration-session-resume-");
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
@@ -340,6 +444,18 @@ test("resume rotation is generation-bound and idempotent after response loss", a
   assert.equal(resumed.session.credentialGeneration, 2);
   assert.equal(resumed.session.lastCredentialRotatedAt, value.nowIso());
   assert.notEqual(resumed.collaborationSessionHandle, created.collaborationSessionHandle);
+  await assert.rejects(
+    runHandleWorker({
+      action: "resume",
+      workspace: value.workspace,
+      dataDir: value.dataDir,
+      agentId: alice.agentId,
+      agentName: alice.agentName,
+      collaborationSessionHandle: created.collaborationSessionHandle,
+      nowIso: value.nowIso(),
+    }),
+    /different PiLink runtime/,
+  );
 
   const retry = await store.resume({
     ...alice,
@@ -464,10 +580,40 @@ test("released and revoked sessions fail closed and erase retry recovery", async
     collaborationSessionHandle: rotated.collaborationSessionHandle,
   });
   assert.equal(released.status, "released");
+  assert.deepEqual(await store.release({
+    agentId: alice.agentId,
+    collaborationSessionHandle: rotated.collaborationSessionHandle,
+  }), released);
+  assert.equal((await store.inspect({
+    agentId: alice.agentId,
+    collaborationSessionHandle: rotated.collaborationSessionHandle,
+  })).status, "released");
+  await assert.rejects(
+    store.inspect({
+      agentId: bob.agentId,
+      collaborationSessionHandle: rotated.collaborationSessionHandle,
+    }),
+    (error) => /different OAuth actor/.test(error.message) && !/released|runtime/.test(error.message),
+  );
+  await assert.rejects(
+    store.inspect({
+      agentId: alice.agentId,
+      collaborationSessionHandle: `${released.collaborationSessionId}.${"A".repeat(43)}`,
+    }),
+    (error) => /Invalid collaboration session handle/.test(error.message) && !/released|runtime/.test(error.message),
+  );
   await assert.rejects(
     store.authenticate({
       agentId: alice.agentId,
       collaborationSessionHandle: rotated.collaborationSessionHandle,
+    }),
+    /was released; start a new session/,
+  );
+  await assert.rejects(
+    store.resume({
+      ...alice,
+      collaborationSessionHandle: rotated.collaborationSessionHandle,
+      resumeRequestId: "released-current-handle-01",
     }),
     /was released; start a new session/,
   );
@@ -483,10 +629,30 @@ test("released and revoked sessions fail closed and erase retry recovery", async
   const revocable = await store.start({ ...alice, label: "Revoke me" });
   const revoked = await store.revoke(revocable.session.collaborationSessionId);
   assert.equal(revoked.status, "revoked");
+  assert.equal((await store.inspect({
+    agentId: alice.agentId,
+    collaborationSessionHandle: revocable.collaborationSessionHandle,
+  })).status, "revoked");
+  await assert.rejects(
+    store.resume({
+      ...bob,
+      collaborationSessionHandle: revocable.collaborationSessionHandle,
+      resumeRequestId: "revoked-wrong-actor-01",
+    }),
+    (error) => /different OAuth actor/.test(error.message) && !/revoked|runtime/.test(error.message),
+  );
   await assert.rejects(
     store.authenticate({
       agentId: alice.agentId,
       collaborationSessionHandle: revocable.collaborationSessionHandle,
+    }),
+    /was revoked; start a new session/,
+  );
+  await assert.rejects(
+    store.resume({
+      ...alice,
+      collaborationSessionHandle: revocable.collaborationSessionHandle,
+      resumeRequestId: "revoked-current-handle-01",
     }),
     /was revoked; start a new session/,
   );
@@ -548,7 +714,7 @@ test("migrates unkeyed legacy sessions to revoked keyed tombstones", async (t) =
 
   const persistedText = await fs.readFile(store.statePath, "utf8");
   const persisted = JSON.parse(persistedText);
-  assert.equal(persisted.version, 2);
+  assert.equal(persisted.version, 3);
   assert.equal(persisted.sessions[0].status, "revoked");
   assert.equal(Object.hasOwn(persisted.sessions[0], "credentialHash"), false);
   assert.equal(persistedText.includes("A".repeat(43)), false);
@@ -559,6 +725,238 @@ test("migrates unkeyed legacy sessions to revoked keyed tombstones", async (t) =
     }),
     /Invalid collaboration session handle/,
   );
+});
+
+test("migrates ownerless version 2 sessions to revoked version 3 tombstones", async (t) => {
+  const value = await fixture("pilink-collaboration-session-v2-runtime-owner-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const created = await store.start({ ...alice, label: "Version two orphan" });
+  const versionTwo = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+  versionTwo.version = 2;
+  versionTwo.credentialKeyBinding.mac = collaborationStateKeyBindingMac(store.projectKey, 2);
+  delete versionTwo.sessions[0].runtimeOwner;
+  await fs.writeFile(store.statePath, `${JSON.stringify(versionTwo)}\n`, { mode: 0o600 });
+
+  const restarted = value.store({ maxLiveSessionsPerActor: 1 });
+  const sessions = await restarted.listByActor(alice.agentId);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].collaborationSessionId, created.session.collaborationSessionId);
+  assert.equal(sessions[0].status, "revoked");
+  assert.equal(Object.hasOwn(sessions[0], "runtimeOwner"), false);
+  const migrated = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+  assert.equal(migrated.version, 3);
+  assert.equal(migrated.sessions[0].status, "revoked");
+  assert.equal(Object.hasOwn(migrated.sessions[0], "runtimeOwner"), false);
+  assert.equal((await restarted.start({ ...alice, label: "Safe replacement" })).session.status, "active");
+});
+
+test("reclaims a stale same-PID owner tuple and clears private ownership", async (t) => {
+  const value = await fixture("pilink-collaboration-session-stale-owner-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const created = await store.start({ ...alice, label: "Stale owner" });
+  const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+  const owner = persisted.sessions[0].runtimeOwner;
+  owner.processStartMarker = owner.processStartMarker === "1" ? "2" : "1";
+  await fs.writeFile(store.statePath, `${JSON.stringify(persisted)}\n`, { mode: 0o600 });
+
+  const sessions = await store.listByActor(alice.agentId);
+  assert.equal(sessions[0].collaborationSessionId, created.session.collaborationSessionId);
+  assert.equal(sessions[0].status, "revoked");
+  assert.equal(Object.hasOwn(sessions[0], "runtimeOwner"), false);
+  assert.equal(Object.hasOwn(sessions[0], "revocationReason"), false);
+  const reclaimed = JSON.parse(await fs.readFile(store.statePath, "utf8")).sessions[0];
+  assert.equal(reclaimed.status, "revoked");
+  assert.equal(reclaimed.revocationReason, "runtime_lost");
+  assert.equal(Object.hasOwn(reclaimed, "runtimeOwner"), false);
+});
+
+test("classifies PID reuse, reboot, and ambiguous liveness deterministically", () => {
+  const currentOwner = {
+    version: 1,
+    runtimeInstanceId: "a".repeat(32),
+    pid: 100,
+    bootId: "11111111-1111-1111-1111-111111111111",
+    processStartMarker: "1000",
+  };
+  const foreignOwner = {
+    version: 1,
+    runtimeInstanceId: "b".repeat(32),
+    pid: 200,
+    bootId: currentOwner.bootId,
+    processStartMarker: "2000",
+  };
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: currentOwner,
+    currentOwner,
+    platform: "linux",
+    processExistence: "exists",
+    observedProcessStartMarker: "1000",
+  }), "alive");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: { ...foreignOwner, pid: currentOwner.pid },
+    currentOwner,
+    platform: "linux",
+    processExistence: "exists",
+    observedProcessStartMarker: currentOwner.processStartMarker,
+  }), "dead");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: { ...foreignOwner, bootId: "22222222-2222-2222-2222-222222222222" },
+    currentOwner,
+    platform: "linux",
+    processExistence: "exists",
+    observedProcessStartMarker: foreignOwner.processStartMarker,
+  }), "dead");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: foreignOwner,
+    currentOwner,
+    platform: "linux",
+    processExistence: "absent",
+  }), "dead");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: foreignOwner,
+    currentOwner,
+    platform: "linux",
+    processExistence: "exists",
+    observedProcessStartMarker: "2001",
+  }), "dead");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: foreignOwner,
+    currentOwner,
+    platform: "linux",
+    processExistence: "exists",
+    observedProcessStartMarker: "2000",
+  }), "alive");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: foreignOwner,
+    currentOwner,
+    platform: "linux",
+    processExistence: "ambiguous",
+  }), "ambiguous");
+  assert.equal(classifyRuntimeOwnerLiveness({
+    owner: foreignOwner,
+    currentOwner,
+    platform: "linux",
+    processExistence: "exists",
+  }), "ambiguous");
+});
+
+test("Linux local owner acquisition fails closed when identity is incomplete", () => {
+  const incomplete = {
+    version: 1,
+    runtimeInstanceId: "c".repeat(32),
+    pid: 123,
+  };
+  assert.throws(
+    () => validateLocalRuntimeOwnerForPlatform(incomplete, "linux"),
+    /Unable to establish the local Linux runtime identity/,
+  );
+  assert.deepEqual(validateLocalRuntimeOwnerForPlatform(incomplete, "darwin"), incomplete);
+});
+
+test("rejects an incomplete persisted Linux owner tuple", async (t) => {
+  if (process.platform !== "linux") return;
+  const value = await fixture("pilink-collaboration-session-incomplete-owner-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  await store.start({ ...alice, label: "Complete before tamper" });
+  const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+  delete persisted.sessions[0].runtimeOwner.bootId;
+  await fs.writeFile(store.statePath, `${JSON.stringify(persisted)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    value.store().listByActor(alice.agentId),
+    /Linux live owner tuple is incomplete/,
+  );
+});
+
+test("reclaims crash-owned capacity but preserves sessions of a live peer process", async (t) => {
+  const value = await fixture("pilink-collaboration-session-crash-owner-");
+  const readyPath = path.join(value.root, "crash-owner-ready.json");
+  const owner = spawnOrphanOwner({
+    workspace: value.workspace,
+    dataDir: value.dataDir,
+    agentId: alice.agentId,
+    count: 2,
+    readyPath,
+    nowIso: value.nowIso(),
+  });
+  t.after(async () => {
+    if (owner.child.exitCode === null && owner.child.signalCode === null) owner.child.kill("SIGKILL");
+    await new Promise((resolve) => {
+      if (owner.child.exitCode !== null || owner.child.signalCode !== null) resolve();
+      else owner.child.once("exit", resolve);
+    });
+    await fs.rm(value.root, { recursive: true, force: true });
+  });
+
+  await waitForFiles([readyPath]);
+  assert.equal(owner.child.exitCode, null, owner.diagnostics());
+  const { collaborationSessionIds, collaborationSessionHandles } = JSON.parse(
+    await fs.readFile(readyPath, "utf8"),
+  );
+  assert.equal(collaborationSessionIds.length, 2);
+  assert.equal(collaborationSessionHandles.length, 2);
+
+  const peerStore = value.store({ maxLiveSessionsPerActor: 2 });
+  const livePeerSessions = await peerStore.listByActor(alice.agentId);
+  assert.deepEqual(
+    new Set(livePeerSessions.map((session) => session.collaborationSessionId)),
+    new Set(collaborationSessionIds),
+  );
+  assert.equal(livePeerSessions.every((session) => session.status === "active"), true);
+  await assert.rejects(
+    peerStore.start({ ...alice, label: "Must not evict live peer" }),
+    /limit of 2 reached/,
+  );
+
+  const exited = new Promise((resolve, reject) => {
+    owner.child.once("error", reject);
+    owner.child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  assert.equal(owner.child.kill("SIGKILL"), true);
+  const outcome = await exited;
+  assert.equal(outcome.signal, "SIGKILL", owner.diagnostics());
+
+  const replacement = await peerStore.start({ ...alice, label: "After crash" });
+  assert.equal(replacement.session.status, "active");
+  const recovered = await peerStore.listByActor(alice.agentId);
+  for (const sessionId of collaborationSessionIds) {
+    assert.equal(
+      recovered.find((session) => session.collaborationSessionId === sessionId)?.status,
+      "revoked",
+    );
+  }
+  assert.equal(
+    recovered.find((session) => session.collaborationSessionId === replacement.session.collaborationSessionId)?.status,
+    "active",
+  );
+  const persisted = JSON.parse(await fs.readFile(peerStore.statePath, "utf8"));
+  for (const sessionId of collaborationSessionIds) {
+    const crashed = persisted.sessions.find((session) => session.collaborationSessionId === sessionId);
+    assert.equal(crashed.status, "revoked");
+    assert.equal(crashed.revocationReason, "runtime_lost");
+    assert.equal(Object.hasOwn(crashed, "runtimeOwner"), false);
+  }
+
+  const runtimeLostHandle = collaborationSessionHandles[0];
+  assert.equal((await peerStore.inspect({
+    agentId: alice.agentId,
+    collaborationSessionHandle: runtimeLostHandle,
+  })).status, "revoked");
+  await assert.rejects(peerStore.authenticate({
+    agentId: alice.agentId,
+    collaborationSessionHandle: runtimeLostHandle,
+  }), /was revoked; start a new session/);
+  await assert.rejects(peerStore.resume({
+    ...alice,
+    collaborationSessionHandle: runtimeLostHandle,
+    resumeRequestId: "runtime-lost-terminal-01",
+  }), /was revoked; start a new session/);
+  await assert.rejects(peerStore.release({
+    agentId: alice.agentId,
+    collaborationSessionHandle: runtimeLostHandle,
+  }), /is revoked/);
 });
 
 test("serializes synchronized session creation across PiLink processes", async (t) => {
@@ -589,60 +987,36 @@ test("serializes synchronized session creation across PiLink processes", async (
   );
 });
 
-test("same cross-process resume request converges on one deterministic credential", async (t) => {
+test("same-runtime concurrent resume retries converge on one deterministic credential", async (t) => {
   const value = await fixture("pilink-collaboration-session-resume-same-");
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
   const created = await value.store().start({ ...alice });
-  const gatePath = path.join(value.root, "resume-same");
-  const workerCount = 6;
-  const readyPaths = Array.from({ length: workerCount }, (_, index) => path.join(value.root, `resume-same-ready-${index}`));
-  const workers = readyPaths.map((readyPath) => runResumeWorker({
-    workspace: value.workspace,
-    dataDir: value.dataDir,
-    agentId: alice.agentId,
-    agentName: alice.agentName,
+  const stores = Array.from({ length: 6 }, () => value.store());
+  const results = await Promise.all(stores.map((store) => store.resume({
+    ...alice,
     collaborationSessionHandle: created.collaborationSessionHandle,
-    resumeRequestId: "cross-process-same-01",
+    resumeRequestId: "same-runtime-same-01",
     ttlSeconds: 60,
-    nowIso: value.nowIso(),
-    readyPath,
-    gatePath,
-  }));
-
-  await waitForFiles(readyPaths);
-  await fs.writeFile(gatePath, "go\n", { mode: 0o600 });
-  const results = await Promise.all(workers);
+  })));
   assert.equal(new Set(results.map((entry) => entry.collaborationSessionHandle)).size, 1);
   assert.equal(new Set(results.map((entry) => entry.session.credentialGeneration)).size, 1);
   assert.equal(results[0].session.credentialGeneration, 2);
   assert.equal(JSON.parse(await fs.readFile(value.store().statePath, "utf8")).sessions[0].revision, 2);
 });
 
-test("different cross-process resume requests produce exactly one winner", async (t) => {
+test("different same-runtime resume requests produce exactly one winner", async (t) => {
   const value = await fixture("pilink-collaboration-session-resume-conflict-");
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
   const created = await value.store().start({ ...alice });
-  const gatePath = path.join(value.root, "resume-conflict");
-  const workerCount = 6;
-  const readyPaths = Array.from({ length: workerCount }, (_, index) => path.join(value.root, `resume-conflict-ready-${index}`));
-  const workers = readyPaths.map((readyPath, index) => runResumeWorker({
-    workspace: value.workspace,
-    dataDir: value.dataDir,
-    agentId: alice.agentId,
-    agentName: alice.agentName,
+  const stores = Array.from({ length: 6 }, () => value.store());
+  const results = await Promise.allSettled(stores.map((store, index) => store.resume({
+    ...alice,
     collaborationSessionHandle: created.collaborationSessionHandle,
-    resumeRequestId: `cross-process-conflict-${String(index).padStart(2, "0")}`,
+    resumeRequestId: `same-runtime-conflict-${String(index).padStart(2, "0")}`,
     ttlSeconds: 60,
-    nowIso: value.nowIso(),
-    readyPath,
-    gatePath,
-  }));
-
-  await waitForFiles(readyPaths);
-  await fs.writeFile(gatePath, "go\n", { mode: 0o600 });
-  const results = await Promise.allSettled(workers);
+  })));
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-  assert.equal(results.filter((result) => result.status === "rejected").length, workerCount - 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, stores.length - 1);
   for (const result of results.filter((entry) => entry.status === "rejected")) {
     assert.match(result.reason.message, /conflicts with a completed credential rotation/);
   }
@@ -707,7 +1081,7 @@ test("validates storage boundaries, strict state, and repaired malformed files",
   await assert.rejects(store.listByActor(alice.agentId), /invalid JSON/);
   await fs.writeFile(store.statePath, JSON.stringify({ version: 1, projectKey: store.projectKey, sessions: [] }));
   assert.deepEqual(await store.listByActor(alice.agentId), []);
-  assert.equal(JSON.parse(await fs.readFile(store.statePath, "utf8")).version, 2);
+  assert.equal(JSON.parse(await fs.readFile(store.statePath, "utf8")).version, 3);
 
   const created = await store.start({ ...alice });
   const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
