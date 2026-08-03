@@ -6,6 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { CollaborationSessionStore } from "../dist/collaboration-sessions.js";
+import {
+  createNewCollaborationRoleAssignment,
+  resolveCollaborationRoleRequest,
+} from "../dist/collaboration-roles.js";
 
 const startWorkerPath = fileURLToPath(new URL("fixtures/collaboration-session-worker.mjs", import.meta.url));
 const resumeWorkerPath = fileURLToPath(new URL("fixtures/collaboration-session-resume-worker.mjs", import.meta.url));
@@ -166,21 +170,39 @@ test("requires a validated server key and persists only versioned HMAC verifiers
   );
 
   const store = value.store();
+  const resolvedRole = resolveCollaborationRoleRequest("Software Engineer 1");
+  assert.equal(resolvedRole.kind, "recognized");
+  const roleAssignment = createNewCollaborationRoleAssignment({
+    assignmentSource: "server_session_policy",
+    canonicalRoleId: resolvedRole.canonicalRoleId,
+    occupancyLabel: resolvedRole.occupancyLabel,
+  });
   const credential = await store.start({
     ...alice,
     label: "Dev 1 conversation",
-    requestedRoleId: "implementer",
+    roleBinding: {
+      requestKind: resolvedRole.kind,
+      requestedRoleFingerprint: resolvedRole.requestedRoleFingerprint,
+      roleAssignment,
+    },
     ttlSeconds: 30,
   });
   assert.match(credential.session.collaborationSessionId, /^cs_[A-Za-z0-9_-]{24}$/);
   assert.match(credential.collaborationSessionHandle, /^cs_[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{43}$/);
   assert.equal(credential.session.status, "active");
-  assert.equal(credential.session.requestedRoleId, "implementer");
+  assert.equal(credential.session.requestKind, "recognized");
+  assert.equal(credential.session.requestedRoleFingerprint, resolvedRole.requestedRoleFingerprint);
+  assert.equal(credential.session.assignedRoleId, "implementer");
+  assert.equal(credential.session.occupancyLabel, "dev1");
+  assert.equal(credential.session.roleContractId, "pilink-collaboration/implementer");
+  assert.equal(credential.session.roleContractVersion, "1.0.0");
   assert.equal(credential.session.credentialGeneration, 1);
   assert.equal(credential.session.expiresAt, "2026-08-01T10:00:30.000Z");
   assert.equal(credential.session.resumeUntil, "2026-08-01T10:02:30.000Z");
   assert.equal(Object.hasOwn(credential.session, "credentialVerifier"), false);
   assert.equal(Object.hasOwn(credential.session, "resumeRecovery"), false);
+  assert.equal(Object.hasOwn(credential.session, "requestedRoleId"), false);
+  assert.equal(Object.hasOwn(credential.session, "requestedRoleLabel"), false);
 
   const persistedText = await fs.readFile(store.statePath, "utf8");
   const persisted = JSON.parse(persistedText);
@@ -203,6 +225,7 @@ test("requires a validated server key and persists only versioned HMAC verifiers
   assert.equal(persistedText.includes(credential.collaborationSessionHandle), false);
   assert.equal(persistedText.includes(credential.collaborationSessionHandle.split(".")[1]), false);
   assert.equal(persistedText.includes(credentialKey.keyMaterial), false);
+  assert.equal(persistedText.includes("Software Engineer 1"), false);
   assert.equal((await fs.stat(store.statePath)).mode & 0o777, 0o600);
   assert.equal((await fs.stat(path.dirname(store.statePath))).mode & 0o777, 0o700);
 

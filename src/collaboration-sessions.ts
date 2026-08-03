@@ -1,6 +1,11 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  validatePersistedCollaborationRoleAssignment,
+  type CollaborationRoleRequestKind,
+  type VerifiedCollaborationRoleAssignment,
+} from "./collaboration-roles.js";
 
 export const COLLABORATION_SESSION_STATUSES = ["active", "expired", "released", "revoked"] as const;
 export type CollaborationSessionStatus = typeof COLLABORATION_SESSION_STATUSES[number];
@@ -46,7 +51,12 @@ export interface CollaborationSession {
   agentId: string;
   agentName: string;
   label?: string;
-  requestedRoleId?: string;
+  requestKind?: Exclude<CollaborationRoleRequestKind, "none">;
+  requestedRoleFingerprint?: string;
+  assignedRoleId?: string;
+  occupancyLabel?: string;
+  roleContractId?: string;
+  roleContractVersion?: string;
   status: CollaborationSessionStatus;
   createdAt: string;
   updatedAt: string;
@@ -70,6 +80,12 @@ export interface CollaborationSessionCredentialKey {
   keyMaterial: string;
 }
 
+export interface CollaborationSessionRoleBinding {
+  requestKind: Exclude<CollaborationRoleRequestKind, "none">;
+  requestedRoleFingerprint: string;
+  roleAssignment: VerifiedCollaborationRoleAssignment;
+}
+
 export interface CollaborationSessionStoreOptions {
   workspace: string;
   dataDir?: string;
@@ -85,7 +101,7 @@ export interface CollaborationSessionStoreOptions {
 
 export interface CollaborationSessionStartInput extends CollaborationSessionIdentity {
   label?: string;
-  requestedRoleId?: string;
+  roleBinding?: CollaborationSessionRoleBinding;
   ttlSeconds?: number;
 }
 
@@ -118,6 +134,8 @@ interface StoredResumeRecovery {
 }
 
 interface StoredCollaborationSession extends CollaborationSession {
+  /** Deprecated v1/v2 provenance. Never returned publicly or written by new starts. */
+  requestedRoleId?: string;
   credentialVerifier: StoredCredentialVerifier;
   resumeRecovery?: StoredResumeRecovery;
 }
@@ -253,11 +271,7 @@ export class CollaborationSessionStore {
   public async start(input: CollaborationSessionStartInput): Promise<CollaborationSessionCredential> {
     const identity = validateIdentity(input);
     const label = validateOptionalText(input.label, "label", COLLABORATION_SESSION_LABEL_MAX_BYTES);
-    const requestedRoleId = validateOptionalIdentifier(
-      input.requestedRoleId,
-      "requestedRoleId",
-      COLLABORATION_SESSION_ROLE_MAX_BYTES,
-    );
+    const roleBinding = validateRoleBinding(input.roleBinding);
     const ttlSeconds = input.ttlSeconds === undefined
       ? this.defaultTtlSeconds
       : validateTtlSeconds(input.ttlSeconds, "ttlSeconds");
@@ -281,7 +295,7 @@ export class CollaborationSessionStore {
         agentId: identity.agentId,
         agentName: identity.agentName,
         label,
-        requestedRoleId,
+        ...roleBinding,
         status: "active",
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
@@ -747,6 +761,7 @@ function requireActiveSession(session: StoredCollaborationSession): void {
 
 function publicSession(session: StoredCollaborationSession): CollaborationSession {
   const {
+    requestedRoleId: _legacyRequestedRoleId,
     credentialVerifier: _credentialVerifier,
     resumeRecovery: _resumeRecovery,
     ...publicFields
@@ -1032,6 +1047,12 @@ function validateStoredSession(
     "agentName",
     "label",
     "requestedRoleId",
+    "requestKind",
+    "requestedRoleFingerprint",
+    "assignedRoleId",
+    "occupancyLabel",
+    "roleContractId",
+    "roleContractVersion",
     "status",
     "createdAt",
     "updatedAt",
@@ -1051,6 +1072,8 @@ function validateStoredSession(
   ids.add(collaborationSessionId);
   if (value.projectKey !== expectedProjectKey) throw new Error("Malformed collaboration session state: mismatched project key");
   const status = validateStatus(value.status);
+  const roleBinding = validateStoredRoleBinding(value);
+  validateOptionalIdentifier(value.requestedRoleId, "requestedRoleId", COLLABORATION_SESSION_ROLE_MAX_BYTES);
   const credentialGeneration = validateGeneration(value.credentialGeneration, "credentialGeneration");
   const credentialVerifier = validateCredentialVerifier(value.credentialVerifier, expectedKeyId);
   const resumeRecovery = value.resumeRecovery === undefined
@@ -1062,11 +1085,7 @@ function validateStoredSession(
     agentId: validateAgentId(value.agentId),
     agentName: validateRequiredText(value.agentName, "agentName", 100),
     label: validateOptionalText(value.label, "label", COLLABORATION_SESSION_LABEL_MAX_BYTES),
-    requestedRoleId: validateOptionalIdentifier(
-      value.requestedRoleId,
-      "requestedRoleId",
-      COLLABORATION_SESSION_ROLE_MAX_BYTES,
-    ),
+    ...roleBinding,
     status,
     createdAt: validateDate(value.createdAt, "createdAt"),
     updatedAt: validateDate(value.updatedAt, "updatedAt"),
@@ -1241,6 +1260,98 @@ function migrateLegacyState(
       },
     };
   }));
+}
+
+type StoredRoleBindingFields = Pick<
+  CollaborationSession,
+  | "requestKind"
+  | "requestedRoleFingerprint"
+  | "assignedRoleId"
+  | "occupancyLabel"
+  | "roleContractId"
+  | "roleContractVersion"
+>;
+
+function validateRoleBinding(value: unknown): Partial<StoredRoleBindingFields> {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error("roleBinding must be an object");
+  assertOnlyKeys(
+    value,
+    ["requestKind", "requestedRoleFingerprint", "roleAssignment"],
+    "collaboration session role binding",
+  );
+  const requestKind = validateRoleRequestKind(value.requestKind);
+  const requestedRoleFingerprint = validateRoleFingerprint(value.requestedRoleFingerprint);
+  if (!isRecord(value.roleAssignment)) throw new Error("roleBinding.roleAssignment must be an object");
+  assertOnlyKeys(
+    value.roleAssignment,
+    ["assignmentSource", "canonicalRoleId", "occupancyLabel", "contractId", "contractVersion"],
+    "collaboration session role assignment",
+  );
+  const roleAssignment = validatePersistedCollaborationRoleAssignment({
+    assignmentSource: value.roleAssignment.assignmentSource as "server_session_policy",
+    canonicalRoleId: value.roleAssignment.canonicalRoleId,
+    occupancyLabel: value.roleAssignment.occupancyLabel,
+    contractId: value.roleAssignment.contractId,
+    contractVersion: value.roleAssignment.contractVersion,
+  });
+  if (requestKind === "custom") {
+    const expectedOccupancy = `custom-${requestedRoleFingerprint}`;
+    if (roleAssignment.canonicalRoleId !== "collaborator" || roleAssignment.occupancyLabel !== expectedOccupancy) {
+      throw new Error("custom role binding must use the non-privileged collaborator assignment and fingerprint occupancy");
+    }
+  }
+  return {
+    requestKind,
+    requestedRoleFingerprint,
+    assignedRoleId: roleAssignment.canonicalRoleId,
+    occupancyLabel: roleAssignment.occupancyLabel,
+    roleContractId: roleAssignment.contractId,
+    roleContractVersion: roleAssignment.contractVersion,
+  };
+}
+
+function validateStoredRoleBinding(
+  value: Record<string, unknown>,
+): Partial<StoredRoleBindingFields> {
+  const fields = [
+    "requestKind",
+    "requestedRoleFingerprint",
+    "assignedRoleId",
+    "occupancyLabel",
+    "roleContractId",
+    "roleContractVersion",
+  ] as const;
+  const present = fields.filter((field) => value[field] !== undefined);
+  if (present.length === 0) return {};
+  if (present.length !== fields.length) {
+    throw new Error("Malformed collaboration session state: role binding must include all provenance and assignment fields");
+  }
+  return validateRoleBinding({
+    requestKind: value.requestKind,
+    requestedRoleFingerprint: value.requestedRoleFingerprint,
+    roleAssignment: {
+      assignmentSource: "server_session_policy",
+      canonicalRoleId: value.assignedRoleId,
+      occupancyLabel: value.occupancyLabel,
+      contractId: value.roleContractId,
+      contractVersion: value.roleContractVersion,
+    },
+  });
+}
+
+function validateRoleRequestKind(value: unknown): Exclude<CollaborationRoleRequestKind, "none"> {
+  if (value !== "recognized" && value !== "custom") {
+    throw new Error("roleBinding.requestKind must be recognized or custom");
+  }
+  return value;
+}
+
+function validateRoleFingerprint(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{16}$/.test(value)) {
+    throw new Error("roleBinding.requestedRoleFingerprint must be a 16-character lowercase hexadecimal value");
+  }
+  return value;
 }
 
 function validateIdentity(value: CollaborationSessionIdentity): CollaborationSessionIdentity {
