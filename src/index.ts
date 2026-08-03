@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { createHmac, randomUUID } from "node:crypto";
+import fs from "node:fs";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -31,6 +32,25 @@ loadEnvironment();
 const config = loadRuntimeConfig();
 const policy = createHarnessPolicy(config);
 const { port: PORT, host: HOST, serverUrl: SERVER_URL } = config;
+
+const launchEventFd = parseLaunchEventFd(process.env.PI_LAUNCH_EVENT_FD);
+let launchConnectionEventSent = false;
+
+function parseLaunchEventFd(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const fd = Number(value);
+  return Number.isSafeInteger(fd) && fd >= 3 ? fd : undefined;
+}
+
+function notifyParentOfMcpConnection(): void {
+  if (launchConnectionEventSent || launchEventFd === undefined) return;
+  launchConnectionEventSent = true;
+  try {
+    fs.writeSync(launchEventFd, "mcp-connected\n", undefined, "utf8");
+  } catch {
+    // The launcher event channel is optional. A closed parent must not affect MCP service.
+  }
+}
 
 const app = express();
 app.set("trust proxy", config.trustProxy);
@@ -537,6 +557,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
         try {
           await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
           managed.established = true;
+          notifyParentOfMcpConnection();
         } catch (error) {
           await closeManagedTransport(sessionId, managed, "MCP");
           throw error;
@@ -624,6 +645,7 @@ app.post("/sse", authenticateBearer, async (req, res) => {
       try {
         await handle.server.connect(transport);
         await withManagedRequest(managed, () => transport.handleRequest(req, res, req.body));
+        notifyParentOfMcpConnection();
       } catch (error) {
         cleanup();
         await dispose();
@@ -662,6 +684,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
     const transport = managed.transport;
     if (transport instanceof StreamableHTTPServerTransport) {
       managed.established = true;
+      notifyParentOfMcpConnection();
       console.error(`[MCP] Streamable HTTP SSE stream opened for session: ${sessionId}`);
       try {
         await withManagedStream(managed, () => transport.handleRequest(req, res));
@@ -734,6 +757,7 @@ app.get("/sse", authenticateBearer, async (req, res) => {
 
     try {
       await handle.server.connect(transport);
+      notifyParentOfMcpConnection();
     } catch (error) {
       cleanup();
       await dispose();
@@ -808,6 +832,7 @@ app.post("/messages", authenticateBearer, async (req, res) => {
   try {
     await withManagedRequest(managed, () => transport.handlePostMessage(req, res, req.body));
     managed.established = true;
+    notifyParentOfMcpConnection();
   } catch (error) {
     await closeManagedTransport(sessionId, managed, "MCP");
     console.error("[MCP] Error handling legacy SSE message:", error);

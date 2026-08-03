@@ -20,6 +20,24 @@ The first run creates `~/.config/pilink/.env` with mode `0600`, asks how to expo
 
 Set `PI_CLOUDFLARED_PATH` when your preferred `cloudflared` binary is outside `PATH`, or `PI_CLOUDFLARED_URL` to use a custom mirror for automatic downloads.
 
+## Interactive chat monitor
+
+When `pilink start` or `pilink serve` runs in an interactive terminal, PiLink waits for the first authenticated MCP connection and then opens the bundled `pilink-chat-cli` full-screen monitor in that same terminal. This works inside tmux: tmux passes terminal sizing, keyboard input, mouse events, and alternate-screen rendering to the Textual application. The MCP server and tunnel continue running as managed child processes while routine server logs stay hidden behind the monitor.
+
+The same tmux pane is the default because it is reliable over SSH and does not depend on a desktop terminal emulator. Opening a new terminal automatically would be platform-specific and often impossible on a headless host. To keep the launch terminal unchanged and open an additional monitor yourself in another terminal, tmux window, or tmux pane, run:
+
+```bash
+pilink chat
+```
+
+The automatic monitor requires Python 3 with Textual 0.51.x:
+
+```bash
+python3 -m pip install "textual>=0.51,<0.52"
+```
+
+Set `PI_CHAT_CLI=off` to disable automatic takeover, or `PI_CHAT_CLI_PYTHON=/path/to/python3` to select a specific interpreter. Auto-launch is skipped for non-interactive/redirected sessions and CI. In the automatically launched monitor, `Ctrl+Q` exits the UI and stops the associated PiLink server and hosting process; a separately launched `pilink chat` exits only that viewer.
+
 ## Public hosting choices
 
 The first `pilink start` asks which public hosting mode to save. When an existing configuration is found, `pilink start --setup` first asks whether to create a new separate instance with a new config directory and port (leaving the original instance untouched) or completely overwrite/reset the existing instance (which deletes PiLink-generated state, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh). It does not delete your repository or workspace:
@@ -161,7 +179,7 @@ npm link
 
 After that, `pilink start --setup` works from any directory. The default npm global prefix may be `/usr`, where `npm link` fails with `EACCES` for non-root users; do not use `sudo` to work around that error.
 
-The package contains only `dist`, this README, and the MIT license.
+The package contains the compiled `dist` runtime, the bundled `chat-cli` source, documentation, this README, and the MIT license.
 
 ## Credits & Acknowledgments
 

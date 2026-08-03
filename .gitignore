@@ -19,3 +19,7 @@ bin/cloudflared
 /LONG_MEMORY.md
 /PROJECT_MEMORY.md
 /PROJECT_STATUS.md
+
+# Bundled Python chat monitor bytecode/cache.
+__pycache__/
+*.py[cod]

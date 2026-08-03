@@ -140,6 +140,26 @@ With direct `nip.io` hosting selected, PiLink instead downloads Caddy on Linux a
 
 The URL ending in **`/sse`** is the URL to paste in ChatGPT. The bare HTTPS URL is used internally for OAuth endpoints. A Quick Tunnel URL changes each time you restart PiLink; it requires a new ChatGPT connector and OAuth client. A direct `nip.io` URL remains stable only while your public IPv4 address remains unchanged.
 
+### Full-screen chat monitor and tmux
+
+PiLink includes the `pilink-chat-cli` Textual monitor. When `pilink start` or `pilink serve` owns an interactive terminal, the launch terminal remains on setup and startup output until the first authenticated MCP session completes initialization. PiLink then starts the monitor in the same terminal or tmux pane, using the canonical private `agent-chat.json` and `agent-tasks.json` files for the configured workspace. Empty files are not required: before the first chat post or task mutation, the monitor displays a healthy empty board.
+
+Tmux supports this interactive CLI directly. It forwards terminal resize events and keyboard/mouse input, and Textual uses the alternate screen so the monitor becomes the only normal content visible in the pane. The server, Cloudflare tunnel, or Caddy process remains alive behind it. This same-pane design is preferred to opening a desktop terminal automatically, which is not portable and does not work reliably over SSH or on headless machines.
+
+Install the pinned UI dependency once for the Python interpreter PiLink will use:
+
+```bash
+python3 -m pip install "textual>=0.51,<0.52"
+```
+
+Useful controls and alternatives:
+
+- `Ctrl+Q` closes an automatically launched monitor and stops its PiLink server/hosting process.
+- `pilink chat` opens another viewer in the current terminal without starting or taking ownership of a server; use it in a new terminal or `tmux new-window` when you want separate logs and UI.
+- `PI_CHAT_CLI=off` disables automatic takeover.
+- `PI_CHAT_CLI_PYTHON=/absolute/path/to/python3` chooses the interpreter.
+- Non-TTY launches, redirected output, and `CI=true` never auto-launch the monitor.
+
 ## 6. Register the ChatGPT OAuth client
 
 On the first start, PiLink prints an interactive guide and waits for the callback URL. In ChatGPT, open **Settings → Apps/Connectors** (or the MCP connections page), add a connection, paste the displayed `/sse` connection URL, select **OAuth**, then in **Advanced OAuth settings** choose **Registration method: User defined**. Copy the callback URL that ChatGPT shows and paste it into the waiting PiLink terminal.
@@ -223,3 +243,4 @@ One OAuth client ID is one durable agent identity, not one ChatGPT conversation.
 - If a preferred hosting binary is not on `PATH`, start with `PI_CLOUDFLARED_PATH=/path/to/cloudflared` or `PI_CADDY_PATH=/path/to/caddy` before the command.
 - If the server refuses to start, check that `JWT_SECRET` and `PI_BOOTSTRAP_SECRET` remain at least 32 characters and that `PI_WORK_DIR` exists.
 - If ChatGPT gets a 401 during setup, confirm that its configured OAuth client ID/secret match the registration response and that the selected hosting process is still running.
+- If the chat monitor does not open, verify `python3 -c 'import textual; print(textual.__version__)'` reports a 0.51.x release, that the launch command owns a TTY, and that `PI_CHAT_CLI` is not `off`. Run `pilink chat` to test the viewer manually.

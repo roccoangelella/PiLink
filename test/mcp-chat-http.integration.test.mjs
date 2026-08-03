@@ -19,6 +19,7 @@ test("authenticated HTTP MCP sessions use OAuth identities and a shared agent ch
   const port = await availablePort();
   const serverUrl = `http://127.0.0.1:${port}`;
   const clients = [];
+  let launchEvents = "";
   const server = spawn(process.execPath, [path.resolve("dist/index.js")], {
     cwd: root,
     env: {
@@ -30,9 +31,11 @@ test("authenticated HTTP MCP sessions use OAuth identities and a shared agent ch
       PI_DATA_DIR: dataDir,
       JWT_SECRET: "a".repeat(32),
       PI_BOOTSTRAP_SECRET: "b".repeat(32),
+      PI_LAUNCH_EVENT_FD: "3",
     },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "ignore", "pipe"],
   });
+  server.stdio[3].on("data", (chunk) => { launchEvents += chunk.toString(); });
 
   t.after(async () => {
     await Promise.all(clients.map((client) => client.close().catch(() => undefined)));
@@ -57,6 +60,7 @@ test("authenticated HTTP MCP sessions use OAuth identities and a shared agent ch
   const senderClient = new Client({ name: "http-sender", version: "1.0.0" });
   clients.push(senderClient);
   await senderClient.connect(senderTransport);
+  await waitFor(() => launchEvents.includes("mcp-connected\n"));
 
   const sessionId = senderTransport.sessionId;
   assert.ok(sessionId);
@@ -85,6 +89,7 @@ test("authenticated HTTP MCP sessions use OAuth identities and a shared agent ch
   receiverClient.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => notifications.push(notification));
   await receiverClient.connect(receiverTransport);
   await receiverClient.subscribeResource({ uri: AGENT_CHAT_URI });
+  assert.equal((launchEvents.match(/mcp-connected\n/g) || []).length, 1);
 
   const forged = await senderClient.callTool({
     name: "agent_chat_post",
