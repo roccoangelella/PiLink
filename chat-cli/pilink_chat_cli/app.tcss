@@ -116,6 +116,14 @@ Screen {
     color: #38bdf8;
 }
 
+.status-dot.input_required {
+    color: #fbbf24;
+}
+
+.status-dot.closed {
+    color: #94a3b8;
+}
+
 .status-dot.cancelled {
     color: #8b9cb5;
 }
@@ -159,6 +167,33 @@ Screen {
     background: #38bdf8;
     color: #0b0f19;
     text-style: bold;
+}
+
+.compact-ui #tab-btn-chat,
+.compact-ui #tab-btn-tasks {
+    width: 10;
+    min-width: 0;
+}
+
+.compact-ui #tab-btn-json {
+    width: 8;
+    min-width: 0;
+}
+
+.compact-ui .subtitle {
+    display: none;
+}
+
+.very-compact-ui .status-pill {
+    display: none;
+}
+
+.compact-ui .role-filters {
+    display: none;
+}
+
+.very-compact-ui .search-box {
+    width: 1fr;
 }
 
 .badge-count {
@@ -228,6 +263,17 @@ Screen {
     border: round #38bdf8;
 }
 
+.role-filters {
+    width: 1fr;
+    height: 4;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-size-horizontal: 1;
+    scrollbar-color: #334155;
+    scrollbar-color-hover: #38bdf8;
+    scrollbar-color-active: #0e7490;
+}
+
 .role-chip {
     background: #111827;
     border: round #334155;
@@ -248,6 +294,38 @@ Screen {
 }
 
 /* --- Message cards -------------------------------------------------------- */
+
+#chat-stream {
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: #334155;
+    scrollbar-color-hover: #38bdf8;
+    scrollbar-color-active: #0e7490;
+}
+
+.chat-jump-row {
+    layout: horizontal;
+    height: 1;
+    align-horizontal: right;
+    padding: 0 1;
+}
+
+.chat-jump-latest {
+    width: 16;
+    height: 1;
+    min-width: 0;
+    border: none;
+    background: #0e7490;
+    color: #f8fafc;
+    text-style: bold;
+}
+
+.chat-jump-latest:hover,
+.chat-jump-latest:focus {
+    background: #38bdf8;
+    color: #0b0f19;
+}
 
 .message-card {
     height: auto;
@@ -337,67 +415,150 @@ Screen {
 
 /* --- Kanban --------------------------------------------------------------- */
 
-.kanban-grid {
+KanbanView {
+    height: 1fr;
+    width: 1fr;
+}
+
+.kanban-status-tabs {
+    display: none;
     layout: horizontal;
+    height: 3;
+    padding: 0 1;
+    background: #0b0f19;
+}
+
+.kanban-status-tab {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    padding: 0 1;
+    border: none;
+    background: #111827;
+    color: #94a3b8;
+}
+
+.kanban-status-tab.active {
+    background: #38bdf8;
+    color: #0b0f19;
+    text-style: bold;
+}
+
+.kanban-board-scroll {
+    layout: horizontal;
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-size-horizontal: 1;
+    scrollbar-color: #334155;
+    scrollbar-color-hover: #38bdf8;
+    scrollbar-color-active: #0e7490;
+}
+
+.kanban-col {
+    width: 36;
+    min-width: 36;
+    max-width: 36;
     height: 1fr;
     padding: 0 1;
 }
 
-.kanban-col {
+KanbanView.wide .kanban-col {
+    width: 25%;
+    min-width: 30;
+    max-width: 25%;
+}
+
+KanbanView.compact .kanban-status-tabs {
+    display: block;
+}
+
+KanbanView.compact .kanban-board-scroll {
+    overflow-x: hidden;
+    padding: 0;
+}
+
+KanbanView.compact .kanban-col {
     width: 1fr;
-    height: 1fr;
+    min-width: 0;
+    max-width: 1fr;
     padding: 0 1;
 }
 
 .col-header {
     layout: horizontal;
-    height: auto;
+    height: 3;
     padding: 0 1;
     background: #111827;
     border: round #1e293b;
 }
 
 .col-title {
+    width: 1fr;
     height: 1;
     color: #f8fafc;
     text-style: bold;
 }
 
+.kanban-body {
+    width: 1fr;
+    height: 1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: #334155;
+    scrollbar-color-hover: #38bdf8;
+    scrollbar-color-active: #0e7490;
+}
+
 .task-card {
+    width: 100%;
+    min-width: 0;
+    height: auto;
     background: #1e293b;
     border: round #334155;
     padding: 1;
     margin: 0 0 1 0;
+    text-align: left;
+    content-align: left top;
     transition: background 0.2s in_out_cubic 0s, border 0.2s in_out_cubic 0s;
 }
 
 .task-card:hover {
-    /* hover "lift": brighter surface + cyan border */
     background: #334155;
     border: round #38bdf8;
 }
 
-.task-id-tag {
-    color: #38bdf8;
-    text-style: bold;
+.task-card.input_required {
+    border: round #fbbf24;
 }
 
-.task-card-title {
-    color: #f8fafc;
-    text-style: bold;
+.task-card.completed {
+    border: round #34d399;
 }
 
-.task-card-desc {
-    /* dim; 2-line clamp / ellipsis unavailable in 0.51 -> dim + max-width,
-       truncation handled in code */
-    color: #8b9cb5;
-    max-width: 100%;
+.task-card.failed {
+    border: round #f43f5e;
 }
 
-.task-card-footer {
-    layout: horizontal;
-    height: auto;
-    color: #8b9cb5;
+.task-card.cancelled {
+    border: round #8b9cb5;
+}
+
+/* Focus and drawer selection deliberately override lifecycle colors. The
+   status remains explicit in card text, while cyan double borders provide a
+   consistent interaction cue across every status. */
+.task-card:focus {
+    background: #1e293b;
+    border: double #38bdf8;
+    text-style: none;
+}
+
+.task-card.selected {
+    background: #0f3b4d;
+    border: double #38bdf8;
 }
 
 .empty-col {

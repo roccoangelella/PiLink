@@ -14,6 +14,7 @@ from typing import Optional
 
 from rich.markup import escape
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import Button, Static
 
 from pilink_chat_cli.data import ChatStore
@@ -99,6 +100,10 @@ def _status_label(status: str) -> str:
     return status
 
 
+class TaskDrawerClosed(Message):
+    """Posted after an open task drawer is closed."""
+
+
 class TaskDrawer(Vertical):
     """Right-docked slide-over panel with task metadata + lifecycle timeline."""
 
@@ -145,9 +150,12 @@ class TaskDrawer(Vertical):
         self._populate(code)
 
     def close_drawer(self) -> None:
-        """Hide (display = none)."""
+        """Hide and notify the app so focus can return to the invoking card."""
+        was_open = self._open
         self._open = False
         self.styles.display = "none"
+        if was_open:
+            self.post_message(TaskDrawerClosed())
 
     def is_open(self) -> bool:
         return self._open

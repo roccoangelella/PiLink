@@ -38,6 +38,8 @@ python3 -m pip install "textual>=0.51,<0.52"
 
 Set `PI_CHAT_CLI=off` to disable automatic takeover, or `PI_CHAT_CLI_PYTHON=/path/to/python3` to select a specific interpreter. Auto-launch is skipped for non-interactive/redirected sessions and CI. In the automatically launched monitor, `Ctrl+Q` exits the UI and stops the associated PiLink server and hosting process; a separately launched `pilink chat` exits only that viewer.
 
+The chat feed follows the newest message until you scroll upward with the mouse wheel or keyboard. While detached, new messages leave the current reading position unchanged and expose a `↓ N new` control; activate it or press `End` from the focused feed to return to live-tail. The task board shows `Open`, `Working`, `Needs Input`, and `Closed`: wide terminals show all columns, medium terminals use horizontal scrolling (`Shift+wheel` or arrow keys), and terminals narrower than 90 cells show one status column at a time with Left/Right cycling. Each column keeps its header fixed and scrolls its cards independently.
+
 ## Public hosting choices
 
 The first `pilink start` asks which public hosting mode to save. When an existing configuration is found, `pilink start --setup` first asks whether to create a new separate instance with a new config directory and port (leaving the original instance untouched) or completely overwrite/reset the existing instance (which deletes PiLink-generated state, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh). It does not delete your repository or workspace:

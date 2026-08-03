@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Set
 
 from rich.markup import escape
 from rich.text import Text
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
@@ -171,8 +171,24 @@ class MessageCard(Vertical):
             chip.set_classes("task-chip {}".format(status))
 
 
+class ChatViewport(VerticalScroll):
+    """Scrollable message viewport that reports when the live tail is reached."""
+
+    class TailStateChanged(Message):
+        def __init__(self, at_end: bool) -> None:
+            self.at_end = at_end
+            super().__init__()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self.post_message(self.TailStateChanged(self.at_end()))
+
+    def at_end(self, tolerance: float = 2.0) -> bool:
+        return self.max_scroll_y <= tolerance or self.scroll_y >= self.max_scroll_y - tolerance
+
+
 class ChatStream(Vertical):
-    """Toolbar (search + role chips) over an incremental message stream."""
+    """Toolbar (search + role chips) over a scrollable incremental message stream."""
 
     def __init__(self, store: ChatStore, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -182,10 +198,16 @@ class ChatStream(Vertical):
         self._rendered_cursors: Set[str] = set()
         self._rendered_version: Optional[int] = None
         self._was_filtered = False
-        self._stream: Optional[Vertical] = None
+        self._stream: Optional[ChatViewport] = None
         self._empty_state: Optional[Static] = None
         self._toolbar: Optional[Horizontal] = None
         self._search_input: Optional[Input] = None
+        self._jump_latest: Optional[Button] = None
+        self._jump_row: Optional[Horizontal] = None
+        self._unread_count = 0
+        self._initial_tail_applied = False
+        self._pre_filter_scroll_y = 0.0
+        self._pre_filter_follow = True
 
     def compose(self):
         with Horizontal(classes="toolbar") as toolbar:
@@ -200,9 +222,10 @@ class ChatStream(Vertical):
             )
             self._search_input.styles.width = 36
             yield self._search_input
-            with Horizontal(classes="role-filters") as role_filters:
-                # explicit height: a nested container inside a docked toolbar
-                # otherwise collapses the toolbar to full height in 0.51
+            with HorizontalScroll(classes="role-filters") as role_filters:
+                # This row owns its horizontal overflow. On medium terminals,
+                # every role remains reachable by wheel/keyboard and focused
+                # chips are brought into view by Textual's focus scrolling.
                 role_filters.styles.height = "auto"
                 all_btn = Button("All Roles", classes="role-chip active", id="role-chip-all")
                 all_btn.role_key = "all"  # type: ignore[attr-defined]
@@ -215,7 +238,16 @@ class ChatStream(Vertical):
                     )
                     chip.role_key = key  # type: ignore[attr-defined]
                     yield chip
-        self._stream = Vertical(id="chat-stream")
+        self._jump_row = Horizontal(classes="chat-jump-row")
+        self._jump_row.styles.display = "none"
+        with self._jump_row:
+            self._jump_latest = Button(
+                "↓ 0 new",
+                id="chat-jump-latest",
+                classes="chat-jump-latest",
+            )
+            yield self._jump_latest
+        self._stream = ChatViewport(id="chat-stream")
         self._stream.styles.height = "1fr"
         yield self._stream
 
@@ -249,7 +281,18 @@ class ChatStream(Vertical):
             return
         stream = self._stream
         filtered = self._filtered_mode()
+        was_filtered = self._was_filtered
+        filter_changed = filtered != was_filtered
+        at_end_before = stream.at_end()
         version = self._store.version
+
+        # Capture the live-stream state before entering filtered mode. Search
+        # results are a temporary view and must not silently change whether the
+        # user was following the tail or reading older messages.
+        if filter_changed and filtered:
+            self._pre_filter_scroll_y = stream.scroll_y
+            self._pre_filter_follow = at_end_before
+            self._clear_unread()
 
         # Version reset (file rewritten from scratch) -> clean rebuild.
         if version is not None and self._rendered_version is not None and version != self._rendered_version:
@@ -258,19 +301,43 @@ class ChatStream(Vertical):
         self._rendered_version = version
 
         # Transition filtered <-> unfiltered -> full rebuild.
-        if filtered != self._was_filtered:
+        if filter_changed:
             self._clear_cards()
             self._rendered_cursors.clear()
         self._was_filtered = filtered
 
+        new_cards = 0
+        mount_waiters = []
         if filtered:
             self._render_filtered()
         else:
-            self._render_incremental()
+            new_cards, mount_waiters = self._render_incremental()
 
         # Keep existing chips' status classes in sync with the store.
         self._update_existing_chips()
         self._sync_empty_state()
+
+        if filtered:
+            if filter_changed:
+                self.call_after_refresh(stream.scroll_home, animate=False)
+            return
+
+        if filter_changed and was_filtered:
+            if self._pre_filter_follow:
+                self._resume_live_tail_after_mount(mount_waiters)
+            else:
+                self._restore_pre_filter_after_mount(mount_waiters)
+            return
+
+        if not self._initial_tail_applied:
+            self._initial_tail_applied = True
+            self._resume_live_tail_after_mount(mount_waiters)
+        elif new_cards:
+            if at_end_before:
+                self._resume_live_tail_after_mount(mount_waiters)
+            else:
+                self._unread_count += new_cards
+                self._update_unread_affordance()
 
     def _clear_cards(self) -> None:
         if self._stream is None:
@@ -301,10 +368,12 @@ class ChatStream(Vertical):
         else:
             self._remove_empty_state()
 
-    def _render_incremental(self) -> None:
-        """Append-only: existing cards are never rebuilt."""
+    def _render_incremental(self):
+        """Append-only: return mounted count and mount awaitables."""
         if self._stream is None:
-            return
+            return 0, []
+        mounted = 0
+        mount_waiters = []
         for msg in self._store.messages:
             if not isinstance(msg, dict):
                 continue
@@ -314,13 +383,15 @@ class ChatStream(Vertical):
             card = MessageCard(msg, self._store)
             card.styles.opacity = 0.0
             card.add_class("new")
-            self._stream.mount(card)
+            mount_waiters.append(self._stream.mount(card))
             try:
                 card.styles.animate("opacity", 1.0, duration=0.4)
             except Exception:
                 # a failed animation must never leave a card invisible
                 card.styles.opacity = 1.0
             self._rendered_cursors.add(key)
+            mounted += 1
+        return mounted, mount_waiters
 
     def _update_existing_chips(self) -> None:
         if self._stream is None:
@@ -358,6 +429,72 @@ class ChatStream(Vertical):
         else:
             self._remove_empty_state()
 
+    # -- live-tail state --------------------------------------------------
+
+    def _restore_pre_filter_scroll(self) -> None:
+        if self._stream is None:
+            return
+        self._stream.scroll_to(y=min(self._pre_filter_scroll_y, self._stream.max_scroll_y), animate=False)
+
+    def _restore_pre_filter_after_mount(self, mount_waiters) -> None:
+        if not mount_waiters:
+            self.call_after_refresh(self._restore_pre_filter_scroll)
+            return
+        self.run_worker(
+            self._await_mounts_and_restore_pre_filter(mount_waiters),
+            exit_on_error=False,
+        )
+
+    async def _await_mounts_and_restore_pre_filter(self, mount_waiters) -> None:
+        for waiter in mount_waiters:
+            await waiter
+        self.call_after_refresh(self._restore_pre_filter_scroll)
+
+    def resume_live_tail(self) -> None:
+        """Return to the latest message and clear the detached unread count."""
+        self._clear_unread()
+        if self._stream is not None:
+            self.call_after_refresh(self._scroll_tail_after_layout)
+
+    def _resume_live_tail_after_mount(self, mount_waiters) -> None:
+        self._clear_unread()
+        if not mount_waiters:
+            self.resume_live_tail()
+            return
+        self.run_worker(
+            self._await_mounts_and_scroll_tail(mount_waiters),
+            exit_on_error=False,
+        )
+
+    async def _await_mounts_and_scroll_tail(self, mount_waiters) -> None:
+        for waiter in mount_waiters:
+            await waiter
+        self._scroll_tail_after_layout()
+
+    def _scroll_tail_after_layout(self) -> None:
+        """Scroll after mounts settle, then confirm once on the next refresh."""
+        if self._stream is None:
+            return
+        self._stream.scroll_end(animate=False)
+        self.call_after_refresh(self._stream.scroll_end, animate=False)
+
+    def _clear_unread(self) -> None:
+        self._unread_count = 0
+        self._update_unread_affordance()
+
+    def _update_unread_affordance(self) -> None:
+        if self._jump_latest is None or self._jump_row is None:
+            return
+        if self._unread_count > 0 and not self._filtered_mode():
+            self._jump_latest.label = "↓ {} new".format(self._unread_count)
+            self._jump_row.styles.display = "block"
+        else:
+            self._jump_row.styles.display = "none"
+
+    def on_chat_viewport_tail_state_changed(self, event: ChatViewport.TailStateChanged) -> None:
+        if event.at_end and not self._filtered_mode():
+            self._clear_unread()
+
     # -- interactions -----------------------------------------------------
 
     def focus_search(self) -> None:
@@ -371,7 +508,11 @@ class ChatStream(Vertical):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
-        if button.has_class("role-chip"):
+        if button.id == "chat-jump-latest":
+            self.resume_live_tail()
+            if self._stream is not None:
+                self.call_after_refresh(self._stream.focus)
+        elif button.has_class("role-chip"):
             self._toggle_role(button)
         elif button.has_class("task-chip"):
             code = getattr(button, "task_code", None)

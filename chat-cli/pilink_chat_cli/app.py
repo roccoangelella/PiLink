@@ -15,6 +15,7 @@ import sys
 from datetime import datetime
 from typing import List, Optional
 
+from textual import events
 from textual.app import App
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static
@@ -22,14 +23,14 @@ from textual.widgets import Button, Static
 from pilink_chat_cli import __version__
 from pilink_chat_cli.chat_view import ChatStream
 from pilink_chat_cli.data import ChatStore
-from pilink_chat_cli.drawer import TaskDrawer
+from pilink_chat_cli.drawer import TaskDrawer, TaskDrawerClosed
 from pilink_chat_cli.kanban_view import KanbanView
 from pilink_chat_cli.theme import PulseDot
 
 DEFAULT_CHAT_FILE = "/tmp/pilink-chat-web/chat.json"
 DEFAULT_TASKS_FILE = "/tmp/pilink-chat-web/tasks.json"
 
-FOOTER_HINTS = "1/2/3 tabs · / search · r refresh · esc close · ctrl+q quit"
+FOOTER_HINTS = "wheel scroll · 1/2/3 tabs · / search · r refresh · esc close · ctrl+q quit"
 
 
 class PiLinkApp(App):
@@ -61,6 +62,10 @@ class PiLinkApp(App):
         self.poll_interval = poll_interval
         self.active_tab = "chat"
         self._store_stopped = False
+        self._viewport_width = 120
+        self._message_count = 0
+        self._task_count = 0
+        self._drawer_focus_target = None
         # The store is created here (not in on_mount) because the views take
         # the store in their constructors and are composed before on_mount.
         # ChatStore.start() is deferred to on_mount: it must run on a live
@@ -85,9 +90,12 @@ class PiLinkApp(App):
                 with Vertical() as brand_titles:
                     # fixed width: `auto` collapses containers to 0 in 0.51
                     # (title is 26 cols + padding)
+                    self.brand_titles = brand_titles
                     brand_titles.styles.width = 30
-                    yield Static("PiLink Live Chat & Lifecycle", classes="brand-title")
-                    yield Static("terminal edition", classes="subtitle")
+                    self.brand_title = Static("PiLink Live Chat & Lifecycle", classes="brand-title")
+                    self.subtitle = Static("terminal edition", classes="subtitle")
+                    yield self.brand_title
+                    yield self.subtitle
             self.status_pill = Horizontal(classes="status-pill")
             with self.status_pill:
                 self.pulse_dot = PulseDot()
@@ -137,7 +145,8 @@ class PiLinkApp(App):
                 )
                 yield self.json_tasks
 
-        yield Static(FOOTER_HINTS, classes="footer-hints", id="footer-hints")
+        self.footer_hints = Static(FOOTER_HINTS, classes="footer-hints", id="footer-hints")
+        yield self.footer_hints
 
         # Task drawer: mounted last, docked right, hidden until opened.
         self.drawer = TaskDrawer(self.store)
@@ -148,6 +157,7 @@ class PiLinkApp(App):
         self.json_pane.styles.display = "none"
 
     async def on_mount(self) -> None:
+        self._apply_responsive_layout(self.size.width)
         # start() must be called from a running asyncio loop.
         result = self.store.start()
         if asyncio.iscoroutine(result):
@@ -162,6 +172,9 @@ class PiLinkApp(App):
 
     def on_unmount(self) -> None:
         self._stop_store()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_responsive_layout(event.size.width)
 
     # --------------------------------------------------------------- tabs
 
@@ -182,10 +195,13 @@ class PiLinkApp(App):
         }
         for tab_name, button in buttons.items():
             button.set_class(tab_name == name, "active")
-        if name == "tasks":
+        if name == "chat":
+            self.chat_stream.resume_live_tail()
+        elif name == "tasks":
             self.kanban.refresh_from_store()
         elif name == "json":
             self._refresh_json_views()
+        self._update_footer_hints()
 
     def action_tab_chat(self) -> None:
         self._set_tab("chat")
@@ -235,10 +251,70 @@ class PiLinkApp(App):
             self.action_tab_json()
 
     def on_task_chip_pressed(self, event) -> None:
+        self._drawer_focus_target = self.focused
         self.drawer.open_task(event.code)
+        self.call_after_refresh(self._focus_drawer_close)
 
     def on_task_card_pressed(self, event) -> None:
+        self._drawer_focus_target = event.button
+        self.kanban.set_selected(event.code)
         self.drawer.open_task(event.code)
+        self.call_after_refresh(self._focus_drawer_close)
+
+    def on_task_drawer_closed(self, _event: TaskDrawerClosed) -> None:
+        self.kanban.set_selected(None)
+        target = self._drawer_focus_target
+        self._drawer_focus_target = None
+        if target is not None and getattr(target, "is_attached", False):
+            try:
+                target.focus()
+            except Exception:
+                pass
+
+    def _focus_drawer_close(self) -> None:
+        try:
+            self.drawer.query_one("#drawer-close", Button).focus()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------ responsive UI
+
+    def _apply_responsive_layout(self, width: int) -> None:
+        self._viewport_width = max(1, int(width))
+        compact = self._viewport_width < 110
+        very_compact = self._viewport_width < 80
+        self.set_class(compact, "compact-ui")
+        self.set_class(very_compact, "very-compact-ui")
+        if hasattr(self, "brand_title"):
+            self.brand_title.update("PiLink" if compact else "PiLink Live Chat & Lifecycle")
+            self.brand_titles.styles.width = 9 if compact else 30
+        if hasattr(self, "kanban"):
+            self.kanban.set_viewport_width(self._viewport_width)
+        self._update_nav_labels()
+        self._update_footer_hints()
+
+    def _update_nav_labels(self) -> None:
+        if not hasattr(self, "chat_tab_btn"):
+            return
+        if self._viewport_width < 110:
+            self.chat_tab_btn.label = "💬 {}".format(self._message_count)
+            self.tasks_tab_btn.label = "📋 {}".format(self._task_count)
+            self.json_tab_btn.label = "JSON"
+        else:
+            self.chat_tab_btn.label = "💬 Live Chat ({})".format(self._message_count)
+            self.tasks_tab_btn.label = "📋 Task Board ({})".format(self._task_count)
+            self.json_tab_btn.label = "🔍 Live JSON"
+
+    def _update_footer_hints(self) -> None:
+        if not hasattr(self, "footer_hints"):
+            return
+        if self.active_tab == "tasks" and self._viewport_width < 90:
+            text = "←/→ columns · wheel cards · 1/2/3 tabs · esc close · ctrl+q quit"
+        elif self.active_tab == "tasks":
+            text = "wheel cards · shift+wheel board · 1/2/3 tabs · esc close · ctrl+q quit"
+        else:
+            text = FOOTER_HINTS
+        self.footer_hints.update(text)
 
     # ------------------------------------------------------ store wiring
 
@@ -249,8 +325,9 @@ class PiLinkApp(App):
         self.pulse_dot.set_state(True)
         self.status_pill.set_class(False, "error")
         self.status_text.update("Live · {0}".format(now))
-        self.chat_tab_btn.label = "💬 Live Chat ({0})".format(len(messages))
-        self.tasks_tab_btn.label = "📋 Task Board ({0})".format(len(tasks))
+        self._message_count = len(messages)
+        self._task_count = len(tasks)
+        self._update_nav_labels()
         self.chat_stream.refresh_from_store()
         self.kanban.refresh_from_store()
         self.drawer.refresh_from_store()
