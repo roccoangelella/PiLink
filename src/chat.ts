@@ -1,6 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  copyAgentChatRoleSnapshot,
+  createGenericAgentChatRoleSnapshot,
+  validateAgentChatRoleSnapshot,
+  type AgentChatRoleSnapshot,
+} from "./chat-provenance.js";
 
 export const AGENT_CHAT_URI = "pilink://agent-chat";
 export const AGENT_CHAT_HISTORY_LIMIT = 20;
@@ -12,6 +18,8 @@ export interface AgentChatMessage {
   agentId: string;
   agentInstanceId: string;
   agentName: string;
+  collaborationSessionId?: string;
+  authorRole: AgentChatRoleSnapshot;
   agentMessage: string;
 }
 
@@ -37,11 +45,13 @@ export interface AgentChatPostInput {
   agentId: string;
   agentInstanceId?: string;
   agentName: string;
+  collaborationSessionId?: string;
+  authorRole?: AgentChatRoleSnapshot;
   agentMessage: string;
 }
 
 interface StoredAgentChatState {
-  version: 2;
+  version: 3;
   projectKey: string;
   nextCursor: number;
   messages: AgentChatMessage[];
@@ -95,6 +105,13 @@ export class AgentChatStore {
     const agentInstanceId = validateAgentInstanceId(input.agentInstanceId ?? legacyAgentInstanceId(agentId));
     const agentName = validateText(input.agentName, "agentName", AGENT_CHAT_AGENT_NAME_MAX_BYTES);
     const agentMessage = validateText(input.agentMessage, "agentMessage", AGENT_CHAT_MESSAGE_MAX_BYTES);
+    const authorRole = validateAgentChatRoleSnapshot(
+      input.authorRole ?? createGenericAgentChatRoleSnapshot("generic_actor"),
+    );
+    const collaborationSessionId = validateMessageCollaborationSession(
+      input.collaborationSessionId,
+      authorRole,
+    );
 
     return this.enqueueMutation(async () => {
       const current = await this.loadState();
@@ -103,10 +120,12 @@ export class AgentChatStore {
         agentId,
         agentInstanceId,
         agentName,
+        ...(collaborationSessionId ? { collaborationSessionId } : {}),
+        authorRole,
         agentMessage,
       };
       const next: StoredAgentChatState = {
-        version: 2,
+        version: 3,
         projectKey: this.projectKey,
         nextCursor: current.nextCursor + 1,
         messages: [...current.messages, message].slice(-AGENT_CHAT_HISTORY_LIMIT),
@@ -183,7 +202,7 @@ export class AgentChatStore {
       throw new Error("Malformed agent chat state: invalid JSON");
     }
     const state = validateState(parsed, this.projectKey);
-    if (isRecord(parsed) && parsed.version === 1) await this.persistState(state);
+    if (isRecord(parsed) && parsed.version !== 3) await this.persistState(state);
     return state;
   }
 
@@ -277,12 +296,15 @@ export class AgentChatBroker {
 }
 
 function emptyState(projectKey: string): StoredAgentChatState {
-  return { version: 2, projectKey, nextCursor: 1, messages: [] };
+  return { version: 3, projectKey, nextCursor: 1, messages: [] };
 }
 
 function validateState(value: unknown, expectedProjectKey: string): StoredAgentChatState {
-  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || value.projectKey !== expectedProjectKey) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || value.projectKey !== expectedProjectKey) {
     throw new Error("Malformed or mismatched agent chat state");
+  }
+  if (value.version === 3) {
+    assertExactRecordKeys(value, ["version", "projectKey", "nextCursor", "messages"], "agent chat state");
   }
   if (!Number.isSafeInteger(value.nextCursor) || value.nextCursor < 1 || !Array.isArray(value.messages)) {
     throw new Error("Malformed agent chat state");
@@ -294,12 +316,29 @@ function validateState(value: unknown, expectedProjectKey: string): StoredAgentC
   const messages: AgentChatMessage[] = [];
   let previousCursor: number | undefined;
   for (const candidate of value.messages) {
+    if (value.version === 3 && isRecord(candidate)) {
+      assertExactRecordKeys(candidate, [
+        "cursor",
+        "agentId",
+        "agentInstanceId",
+        "agentName",
+        "collaborationSessionId",
+        "authorRole",
+        "agentMessage",
+      ], "agent chat message");
+    }
     if (!isRecord(candidate) ||
         !Number.isSafeInteger(candidate.cursor) ||
         candidate.cursor < 1 ||
         (previousCursor !== undefined && candidate.cursor !== previousCursor + 1)) {
       throw new Error("Malformed agent chat state: invalid cursors");
     }
+    const authorRole = value.version === 3
+      ? validateAgentChatRoleSnapshot(candidate.authorRole)
+      : createGenericAgentChatRoleSnapshot("legacy_unverified");
+    const collaborationSessionId = value.version === 3
+      ? validateMessageCollaborationSession(candidate.collaborationSessionId, authorRole)
+      : undefined;
     const message: AgentChatMessage = {
       cursor: candidate.cursor,
       agentId: validateAgentId(candidate.agentId),
@@ -307,6 +346,8 @@ function validateState(value: unknown, expectedProjectKey: string): StoredAgentC
         value.version === 1 ? legacyAgentInstanceId(candidate.agentId) : candidate.agentInstanceId,
       ),
       agentName: validateText(candidate.agentName, "agentName", AGENT_CHAT_AGENT_NAME_MAX_BYTES),
+      ...(collaborationSessionId ? { collaborationSessionId } : {}),
+      authorRole,
       agentMessage: validateText(candidate.agentMessage, "agentMessage", AGENT_CHAT_MESSAGE_MAX_BYTES),
     };
     if (message.cursor >= value.nextCursor) {
@@ -319,7 +360,7 @@ function validateState(value: unknown, expectedProjectKey: string): StoredAgentC
       (messages.length > 0 && value.nextCursor !== messages[messages.length - 1].cursor + 1)) {
     throw new Error("Malformed agent chat state: invalid cursor counter");
   }
-  return { version: 2, projectKey: expectedProjectKey, nextCursor: value.nextCursor, messages };
+  return { version: 3, projectKey: expectedProjectKey, nextCursor: value.nextCursor, messages };
 }
 
 function validateAgentId(value: unknown): string {
@@ -339,7 +380,23 @@ function legacyAgentInstanceId(agentId: unknown): string {
 }
 
 function copyMessage(message: AgentChatMessage): AgentChatMessage {
-  return { ...message };
+  return { ...message, authorRole: copyAgentChatRoleSnapshot(message.authorRole) };
+}
+
+function validateMessageCollaborationSession(
+  value: unknown,
+  authorRole: AgentChatRoleSnapshot,
+): string | undefined {
+  if (authorRole.source === "verified_collaboration_session") {
+    if (typeof value !== "string" || !/^cs_[A-Za-z0-9_-]{8,64}$/u.test(value)) {
+      throw new Error("verified chat message requires a valid collaborationSessionId");
+    }
+    return value;
+  }
+  if (value !== undefined) {
+    throw new Error("unverified chat message must not contain collaborationSessionId");
+  }
+  return undefined;
 }
 
 function validateText(value: unknown, field: string, maximumBytes: number): string {
@@ -354,6 +411,17 @@ function validateText(value: unknown, field: string, maximumBytes: number): stri
 
 function validateCursor(value: unknown): asserts value is number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error("after must be a non-negative safe integer");
+}
+
+function assertExactRecordKeys(
+  value: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  label: string,
+): void {
+  const allowed = new Set(allowedKeys);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new Error(`Malformed ${label}: unsupported field '${key}'`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

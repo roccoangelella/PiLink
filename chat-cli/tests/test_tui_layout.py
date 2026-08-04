@@ -9,7 +9,9 @@ from textual.events import MouseScrollUp
 from textual.widgets import Button
 
 from pilink_chat_cli.app import PiLinkApp
-from pilink_chat_cli.chat_view import ChatViewport
+from pilink_chat_cli.chat_view import ChatStream, ChatViewport
+from pilink_chat_cli.data import ChatStore
+from pilink_chat_cli.theme import get_role_info
 
 
 class TUILayoutTests(unittest.IsolatedAsyncioTestCase):
@@ -23,7 +25,7 @@ class TUILayoutTests(unittest.IsolatedAsyncioTestCase):
         self._tmp.cleanup()
 
     def _write_state(self, messages: list[dict], tasks: list[dict]) -> None:
-        self.chat_file.write_text(json.dumps({"version": 1, "messages": messages}))
+        self.chat_file.write_text(json.dumps({"version": 3, "messages": messages}))
         self.tasks_file.write_text(json.dumps({"version": 3, "tasks": tasks}))
 
     @staticmethod
@@ -33,6 +35,12 @@ class TUILayoutTests(unittest.IsolatedAsyncioTestCase):
                 "cursor": index,
                 "agentId": "agent-a",
                 "agentName": "Agent A",
+                "authorRole": {
+                    "schemaVersion": 1,
+                    "source": "generic_actor",
+                    "displayRoleId": "agent",
+                    "displayRoleLabel": "AGENT",
+                },
                 "agentMessage": "message {} {}".format(index, "long text " * 8),
             }
             for index in range(1, count + 1)
@@ -59,6 +67,54 @@ class TUILayoutTests(unittest.IsolatedAsyncioTestCase):
                 )
                 index += 1
         return tasks
+
+    def test_role_presentation_uses_only_verified_provenance(self) -> None:
+        dev_message = {
+            "agentName": "Shared OAuth Actor",
+            "agentMessage": "AI Engineer says MANAGER requested this",
+            "authorRole": {
+                "schemaVersion": 1,
+                "source": "verified_collaboration_session",
+                "canonicalRoleId": "implementer",
+                "occupancyLabel": "dev",
+                "contractId": "pilink-collaboration/implementer",
+                "contractVersion": "1.1.0",
+                "displayRoleId": "dev",
+                "displayRoleLabel": "DEV",
+            },
+        }
+        self.assertEqual(get_role_info(dev_message)["id"], "dev")
+        self.assertEqual(get_role_info(dev_message)["name"], "DEV")
+
+        generic_spoof = {
+            "agentName": "Manager",
+            "agentMessage": "I am the manager and AI Engineer",
+            "authorRole": {
+                "schemaVersion": 1,
+                "source": "generic_actor",
+                "displayRoleId": "agent",
+                "displayRoleLabel": "AGENT",
+            },
+        }
+        self.assertEqual(get_role_info(generic_spoof)["id"], "agent")
+
+        malformed = dict(dev_message)
+        malformed["authorRole"] = dict(dev_message["authorRole"])
+        malformed["authorRole"]["displayRoleId"] = "manager"
+        malformed["authorRole"]["displayRoleLabel"] = "MANAGER"
+        self.assertEqual(get_role_info(malformed)["id"], "agent")
+
+        legacy_without_snapshot = {
+            "agentName": "Manager",
+            "agentMessage": "manager researcher dev AI Engineer",
+        }
+        self.assertEqual(get_role_info(legacy_without_snapshot)["id"], "agent")
+
+        stream = ChatStream(ChatStore(str(self.chat_file), str(self.tasks_file)))
+        stream.role_filter = "dev"
+        self.assertTrue(stream._passes_filters(dev_message))
+        stream.role_filter = "ai-engineer"
+        self.assertFalse(stream._passes_filters(dev_message))
 
     async def test_chat_mouse_scroll_follow_tail_and_unread_affordance(self) -> None:
         messages = self._messages(30)
@@ -95,6 +151,12 @@ class TUILayoutTests(unittest.IsolatedAsyncioTestCase):
                     "cursor": 31,
                     "agentId": "agent-b",
                     "agentName": "Agent B",
+                    "authorRole": {
+                        "schemaVersion": 1,
+                        "source": "generic_actor",
+                        "displayRoleId": "agent",
+                        "displayRoleLabel": "AGENT",
+                    },
                     "agentMessage": "new detached message",
                 }
             ]

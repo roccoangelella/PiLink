@@ -26,6 +26,7 @@ import { ToolAuditLog } from "./audit.js";
 import { AgentTaskStore } from "./tasks.js";
 import { CollaborationSessionStore } from "./collaboration-sessions.js";
 import { CollaborationBootstrap } from "./collaboration-bootstrap.js";
+import { CollaborationContextRegistry } from "./collaboration-context-registry.js";
 import { AgentMemoryStore } from "./memory.js";
 import { AgentWorkLoopStore } from "./work-loop.js";
 
@@ -131,6 +132,7 @@ let agentChatBroker: AgentChatBroker | undefined;
 let toolAuditLog: ToolAuditLog | undefined;
 let agentTaskStore: AgentTaskStore | undefined;
 let collaborationSessionStore: CollaborationSessionStore | undefined;
+let collaborationContextRegistry: CollaborationContextRegistry | undefined;
 let agentMemoryStore: AgentMemoryStore | undefined;
 let agentWorkLoopStore: AgentWorkLoopStore | undefined;
 
@@ -202,13 +204,67 @@ function getCollaborationSessionStore(): CollaborationSessionStore {
   return collaborationSessionStore;
 }
 
-function createConnectionCollaborationBootstrap(
+function createRawCollaborationBootstrap(
   identity: Readonly<{ agentId: string; agentName: string }>,
 ): CollaborationBootstrap {
   return new CollaborationBootstrap({
     sessionStore: getCollaborationSessionStore(),
     identity,
   });
+}
+
+function getCollaborationContextRegistry(): CollaborationContextRegistry {
+  if (!collaborationContextRegistry) {
+    const bindingKeyMaterial = createHmac("sha256", config.jwtSecret)
+      .update("pilink/collaboration-context-binding-key/v1", "utf8")
+      .digest();
+    collaborationContextRegistry = new CollaborationContextRegistry({
+      bindingKeyMaterial,
+      detachGraceSeconds: config.collaborationBindingDetachGraceSeconds,
+      createBootstrap: createRawCollaborationBootstrap,
+      onLogicalSessionDispose: async (context) => {
+        await getAgentWorkLoopStore().disconnect(context.collaborationSessionId);
+      },
+      onDisposeError: () => console.error("[COLLABORATION] Failed to dispose a detached logical session"),
+    });
+  }
+  return collaborationContextRegistry;
+}
+
+function createConnectionCollaborationBootstrap(
+  identity: Readonly<{ agentId: string; agentName: string }>,
+  clientVersion: number,
+  logicalBinding?: string,
+): CollaborationBootstrap | ReturnType<CollaborationContextRegistry["attach"]> {
+  if (!logicalBinding) return createRawCollaborationBootstrap(identity);
+  return getCollaborationContextRegistry().attach({
+    identity,
+    clientVersion,
+    logicalBinding,
+  });
+}
+
+function trustedCollaborationBinding(req: express.Request): string | undefined {
+  const headerName = config.collaborationBindingHeader;
+  if (!headerName) return undefined;
+  const raw = req.headers[headerName];
+  if (raw === undefined) return undefined;
+  let occurrences = 0;
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    if (req.rawHeaders[index]?.toLowerCase() === headerName) occurrences += 1;
+  }
+  if (occurrences > 1 || Array.isArray(raw)) {
+    throw new Error(`Trusted collaboration binding header '${headerName}' must occur once`);
+  }
+  const normalized = raw.trim();
+  if (!normalized) throw new Error(`Trusted collaboration binding header '${headerName}' must be non-empty`);
+  if (Buffer.byteLength(normalized, "utf8") > 512) {
+    throw new Error(`Trusted collaboration binding header '${headerName}' exceeds 512 UTF-8 bytes`);
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw new Error(`Trusted collaboration binding header '${headerName}' contains control characters`);
+  }
+  return normalized;
 }
 
 function canBootstrap(scopes: string): boolean {
@@ -588,13 +644,27 @@ app.post("/sse", authenticateBearer, async (req, res) => {
     console.error("[MCP] New Streamable HTTP session initializing...");
     const sessionClient = resolveNewSessionClient(req, res);
     if (!sessionClient) return;
+    let logicalCollaborationBinding: string | undefined;
+    try {
+      logicalCollaborationBinding = trustedCollaborationBinding(req);
+    } catch (error) {
+      res.status(400).json({
+        error: "invalid_request",
+        error_description: error instanceof Error ? error.message : "Invalid trusted collaboration binding",
+      });
+      return;
+    }
     const releaseReservation = await reserveSessionSlot(sessionClient.clientId, res);
     if (!releaseReservation) return;
     let dispose: (() => Promise<void>) | undefined;
     let registered = false;
     try {
       const collaborationBootstrap = canBootstrap(sessionClient.scope)
-        ? createConnectionCollaborationBootstrap(sessionClient.identity)
+        ? createConnectionCollaborationBootstrap(
+          sessionClient.identity,
+          sessionClient.clientVersion,
+          logicalCollaborationBinding,
+        )
         : undefined;
       const memoryStore = effectiveCapabilities(sessionClient.scope).has("read")
         ? getAgentMemoryStore()
@@ -718,13 +788,27 @@ app.get("/sse", authenticateBearer, async (req, res) => {
   console.error("[MCP] Legacy SSE session starting...");
   const sessionClient = resolveNewSessionClient(req, res);
   if (!sessionClient) return;
+  let logicalCollaborationBinding: string | undefined;
+  try {
+    logicalCollaborationBinding = trustedCollaborationBinding(req);
+  } catch (error) {
+    res.status(400).json({
+      error: "invalid_request",
+      error_description: error instanceof Error ? error.message : "Invalid trusted collaboration binding",
+    });
+    return;
+  }
   const releaseReservation = await reserveSessionSlot(sessionClient.clientId, res);
   if (!releaseReservation) return;
   let dispose: (() => Promise<void>) | undefined;
   let registered = false;
   try {
     const collaborationBootstrap = canBootstrap(sessionClient.scope)
-      ? createConnectionCollaborationBootstrap(sessionClient.identity)
+      ? createConnectionCollaborationBootstrap(
+        sessionClient.identity,
+        sessionClient.clientVersion,
+        logicalCollaborationBinding,
+      )
       : undefined;
     const memoryStore = effectiveCapabilities(sessionClient.scope).has("read")
       ? getAgentMemoryStore()
@@ -897,6 +981,7 @@ async function shutdown(): Promise<void> {
   await Promise.all(Object.entries(transports).map(([sessionId, managed]) =>
     closeManagedTransport(sessionId, managed, "shutdown"),
   ));
+  await collaborationContextRegistry?.disposeAll();
   try {
     await toolAuditLog?.flush();
   } catch { /* audit writes are best effort */ }

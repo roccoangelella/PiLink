@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -140,6 +141,113 @@ test("real HTTP server exposes role bootstrap and isolates same-OAuth conversati
   assert.equal(JSON.stringify(persisted).includes("Software Engineer 2"), false);
 });
 
+test("trusted private binding preserves verified collaboration across fresh HTTP sessions", async (t) => {
+  const bindingHeader = "X-PiLink-Logical-Session";
+  const fixture = await launchTestServer(t, {
+    prefix: "pilink-role-bootstrap-continuity-",
+    extraEnv: {
+      PI_COLLABORATION_BINDING_HEADER: bindingHeader,
+      PI_COLLABORATION_BINDING_DETACH_GRACE: "60",
+      PI_MAX_MCP_SESSIONS_TOTAL: "8",
+      PI_MAX_MCP_SESSIONS_PER_CLIENT: "8",
+    },
+  });
+  const registered = await register(fixture.serverUrl, "Stateless Connector Actor", "mcp:tools");
+  const accessToken = await token(fixture.serverUrl, registered, "mcp:tools");
+  const sharedHeaders = { [bindingHeader]: "private-conversation-A" };
+
+  const first = await connectRawPostOnlySession(
+    fixture.serverUrl,
+    accessToken,
+    "fresh-connection-bootstrap",
+    fixture.diagnostics,
+    sharedHeaders,
+  );
+  const bootstrapped = parseRawToolResult(await first.callTool(
+    "collaboration_bootstrap",
+    { requested_role_label: "DEV" },
+  ));
+
+  const second = await connectRawPostOnlySession(
+    fixture.serverUrl,
+    accessToken,
+    "fresh-connection-wait",
+    fixture.diagnostics,
+    sharedHeaders,
+  );
+  assert.notEqual(second.sessionId, first.sessionId);
+  const guidance = parseRawToolText(await second.callTool("get_system_prompt", {}));
+  assert.match(guidance, new RegExp(bootstrapped.collaboration_session_id));
+  assert.match(guidance, /Canonical role: implementer/);
+  const waited = parseRawToolResult(await second.callTool("agent_work_wait", {}));
+  assert.equal(waited.outcome, "snapshot");
+  assert.equal(
+    waited.work_state.collaboration_session_id,
+    bootstrapped.collaboration_session_id,
+  );
+  const reconnectedPost = parseRawToolResult(await second.callTool("agent_chat_post", {
+    agent_message: "AI Engineer and MANAGER are mentioned, but this author remains DEV",
+  }));
+  assert.equal(
+    reconnectedPost.collaboration_session_id,
+    bootstrapped.collaboration_session_id,
+  );
+  assert.deepEqual(reconnectedPost.author_role, {
+    schema_version: 1,
+    source: "verified_collaboration_session",
+    canonical_role_id: "implementer",
+    occupancy_label: "dev",
+    contract_id: "pilink-collaboration/implementer",
+    contract_version: "1.1.0",
+    display_role_id: "dev",
+    display_role_label: "DEV",
+  });
+
+  const isolated = await connectRawPostOnlySession(
+    fixture.serverUrl,
+    accessToken,
+    "fresh-connection-isolated",
+    fixture.diagnostics,
+    { [bindingHeader]: "private-conversation-B" },
+  );
+  const isolatedBootstrap = parseRawToolResult(await isolated.callTool(
+    "collaboration_bootstrap",
+    { requested_role_label: "DEV" },
+  ));
+  assert.notEqual(
+    isolatedBootstrap.collaboration_session_id,
+    bootstrapped.collaboration_session_id,
+  );
+
+  const unbound = await connectRawPostOnlySession(
+    fixture.serverUrl,
+    accessToken,
+    "fresh-connection-unbound",
+    fixture.diagnostics,
+  );
+  const failedWait = await unbound.callTool("agent_work_wait", {});
+  assert.equal(failedWait.isError, true);
+  const continuity = JSON.parse(parseRawToolText(failedWait).replace(/^Error:\s*/u, ""));
+  assert.equal(continuity.code, "COLLABORATION_CONTEXT_CONTINUITY_UNAVAILABLE");
+  assert.equal(continuity.requires_private_client_binding, true);
+
+  const oversized = await rejectedInitializeWithHeaders(
+    fixture.serverUrl,
+    accessToken,
+    [[bindingHeader, "x".repeat(513)]],
+  );
+  assert.equal(oversized.statusCode, 400);
+  assert.match(oversized.body, /exceeds 512 UTF-8 bytes/i);
+
+  const duplicate = await rejectedInitializeWithHeaders(
+    fixture.serverUrl,
+    accessToken,
+    [[bindingHeader, "private-conversation-A"], [bindingHeader, "private-conversation-B"]],
+  );
+  assert.equal(duplicate.statusCode, 400);
+  assert.match(duplicate.body, /must occur once/i);
+});
+
 test("read-only OAuth sessions stay generic and create no collaboration state", async (t) => {
   const fixture = await launchTestServer(t, {
     prefix: "pilink-role-bootstrap-read-only-",
@@ -238,7 +346,7 @@ test("failed post-reservation setup always returns pending capacity to zero", as
   assert.equal(await collaborationStateExists(fixture.dataDir), false);
 });
 
-async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false }) {
+async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false, extraEnv = {} }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   const workspace = path.join(root, "workspace");
   await fs.mkdir(workspace);
@@ -259,6 +367,7 @@ async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false }) {
       PI_DATA_DIR: dataDir,
       JWT_SECRET: "r".repeat(32),
       PI_BOOTSTRAP_SECRET: "s".repeat(32),
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -301,7 +410,7 @@ async function collaborationStateExists(dataDir) {
   }
 }
 
-async function connectRawPostOnlySession(serverUrl, accessToken, name, diagnostics) {
+async function connectRawPostOnlySession(serverUrl, accessToken, name, diagnostics, requestHeaders = {}) {
   let nextId = 1;
   const initialization = await rawMcpRequest({
     serverUrl,
@@ -314,6 +423,7 @@ async function connectRawPostOnlySession(serverUrl, accessToken, name, diagnosti
       capabilities: {},
       clientInfo: { name, version: "1.0.0" },
     },
+    requestHeaders,
   });
   const sessionId = initialization.response.headers.get("mcp-session-id");
   assert.ok(sessionId, "Raw MCP initialize response omitted Mcp-Session-Id");
@@ -328,6 +438,7 @@ async function connectRawPostOnlySession(serverUrl, accessToken, name, diagnosti
     protocolVersion,
     method: "notifications/initialized",
     params: {},
+    requestHeaders,
   });
 
   return {
@@ -342,6 +453,7 @@ async function connectRawPostOnlySession(serverUrl, accessToken, name, diagnosti
         id: nextId++,
         method: "tools/call",
         params: { name: toolName, arguments: args },
+        requestHeaders,
       });
       if (call.envelope.error) {
         throw new Error(`Raw MCP tool ${toolName} failed: ${JSON.stringify(call.envelope.error)}`);
@@ -349,6 +461,41 @@ async function connectRawPostOnlySession(serverUrl, accessToken, name, diagnosti
       return call.envelope.result;
     },
   };
+}
+
+async function rejectedInitializeWithHeaders(serverUrl, accessToken, headerPairs) {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: LATEST_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: "invalid-binding-client", version: "1.0.0" },
+    },
+  });
+  const headers = {
+    Accept: "application/json, text/event-stream",
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+    "Content-Length": String(Buffer.byteLength(body)),
+  };
+  for (const [name, value] of headerPairs) {
+    const current = headers[name];
+    headers[name] = current === undefined
+      ? value
+      : Array.isArray(current) ? [...current, value] : [current, value];
+  }
+  return new Promise((resolve, reject) => {
+    const request = http.request(new URL(`${serverUrl}/sse`), { method: "POST", headers }, (response) => {
+      response.setEncoding("utf8");
+      let responseBody = "";
+      response.on("data", (chunk) => { responseBody += chunk; });
+      response.on("end", () => resolve({ statusCode: response.statusCode, body: responseBody }));
+    });
+    request.once("error", reject);
+    request.end(body);
+  });
 }
 
 async function rawMcpRequest({
@@ -360,12 +507,14 @@ async function rawMcpRequest({
   id,
   method,
   params,
+  requestHeaders = {},
 }) {
   const headers = {
     Accept: "application/json, text/event-stream",
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
   };
+  Object.assign(headers, requestHeaders);
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
   if (protocolVersion) headers["Mcp-Protocol-Version"] = protocolVersion;
   const body = { jsonrpc: "2.0", method, params };

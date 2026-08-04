@@ -7,9 +7,14 @@ imports — so this layer is independently testable.
 
 Data shapes (mirrored by tests/fixtures.py):
 
-- chat.json:  {"version": int, "nextCursor": int,
+- chat.json:  {"version": 3, "nextCursor": int,
                "messages": [{"cursor": int, "agentId": str,
                              "agentInstanceId": str, "agentName": str,
+                             "collaborationSessionId"?: str,
+                             "authorRole": {"schemaVersion": 1,
+                                            "source": str,
+                                            "displayRoleId": str,
+                                            "displayRoleLabel": str, ...},
                              "agentMessage": str}]}
 - tasks.json: {"tasks": [{"taskId": str(uuid), "title": str, "details": str,
                "status": "open" | "working" | "input_required" |

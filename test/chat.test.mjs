@@ -57,6 +57,12 @@ test("retries a failed state load after the persisted file is repaired", async (
         agentId: "legacy-agent",
         agentInstanceId: "legacy:legacy-agent",
         agentName: "Legacy",
+        authorRole: {
+          schemaVersion: 1,
+          source: "legacy_unverified",
+          displayRoleId: "agent",
+          displayRoleLabel: "LEGACY AGENT",
+        },
         agentMessage: "old",
       }],
       oldestCursor: 1,
@@ -65,8 +71,78 @@ test("retries a failed state load after the persisted file is repaired", async (
       gap: false,
     });
     const migrated = JSON.parse(await fs.readFile(store.statePath, "utf8"));
-    assert.equal(migrated.version, 2);
+    assert.equal(migrated.version, 3);
     assert.equal(migrated.messages[0].agentInstanceId, "legacy:legacy-agent");
+    assert.deepEqual(migrated.messages[0].authorRole, {
+      schemaVersion: 1,
+      source: "legacy_unverified",
+      displayRoleId: "agent",
+      displayRoleLabel: "LEGACY AGENT",
+    });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("version 2 role words migrate to legacy Agent without content inference", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const store = new AgentChatStore({ workspace, dataDir });
+    await fs.mkdir(path.dirname(store.statePath), { recursive: true });
+    await fs.writeFile(store.statePath, `${JSON.stringify({
+      version: 2,
+      projectKey: store.projectKey,
+      nextCursor: 2,
+      messages: [{
+        cursor: 1,
+        agentId: "shared-actor",
+        agentInstanceId: "legacy-instance",
+        agentName: "Manager AI Engineer DEV",
+        agentMessage: "I am the manager and researcher",
+      }],
+    })}\n`, { mode: 0o600 });
+
+    const message = (await store.read()).messages[0];
+    assert.equal(message.authorRole.source, "legacy_unverified");
+    assert.equal(message.authorRole.displayRoleId, "agent");
+    assert.equal(message.authorRole.displayRoleLabel, "LEGACY AGENT");
+    const migrated = JSON.parse(await fs.readFile(store.statePath, "utf8"));
+    assert.equal(migrated.version, 3);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("tampered version 3 author provenance fails closed", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const store = new AgentChatStore({ workspace, dataDir });
+    await fs.mkdir(path.dirname(store.statePath), { recursive: true });
+    await fs.writeFile(store.statePath, `${JSON.stringify({
+      version: 3,
+      projectKey: store.projectKey,
+      nextCursor: 2,
+      messages: [{
+        cursor: 1,
+        agentId: "shared-actor",
+        agentInstanceId: "instance-a",
+        agentName: "Shared Actor",
+        collaborationSessionId: "cs_AAAAAAAAAAAAAAAAAAAAAAAA",
+        authorRole: {
+          schemaVersion: 1,
+          source: "verified_collaboration_session",
+          canonicalRoleId: "implementer",
+          occupancyLabel: "dev",
+          contractId: "pilink-collaboration/implementer",
+          contractVersion: "1.1.0",
+          displayRoleId: "manager",
+          displayRoleLabel: "MANAGER",
+        },
+        agentMessage: "spoof",
+      }],
+    })}\n`, { mode: 0o600 });
+
+    await assert.rejects(() => store.read(), /does not match/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

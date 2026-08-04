@@ -14,6 +14,12 @@ import { isToolAllowed, sanitizeToolArguments, type HarnessPolicy, type ToolName
 import { VERSION } from "./config.js";
 import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { AGENT_CHAT_URI, type AgentChatBroker, type AgentChatMessage, type AgentChatReadResult } from "./chat.js";
+import {
+  AGENT_CHAT_DISPLAY_ROLE_IDS,
+  AGENT_CHAT_ROLE_PROVENANCE_SOURCES,
+  createGenericAgentChatRoleSnapshot,
+  createVerifiedAgentChatRoleSnapshot,
+} from "./chat-provenance.js";
 import type { ToolAuditEventInput } from "./audit.js";
 import { executeRunProfile, RUN_PROFILES, type RunProfileResult } from "./run.js";
 import {
@@ -72,6 +78,7 @@ export interface ConnectionCollaborationContext extends AuthenticatedAgentIdenti
  */
 export interface ConnectionCollaborationBootstrap {
   readonly initialized: boolean;
+  readonly sharedLogicalSession?: boolean;
   initialize(requestedRoleLabel: string): Promise<Readonly<ConnectionCollaborationContext>>;
   verify(): Promise<Readonly<ConnectionCollaborationContext>>;
   dispose(): Promise<void>;
@@ -122,7 +129,7 @@ export function createMcpServer(
   const authenticatedIdentity = identity ? normalizeAuthenticatedIdentity(identity) : undefined;
   let verifiedCollaborationContext: Readonly<ConnectionCollaborationContext> | undefined;
   let collaborationConnectionState: "pristine" | "bootstrapping" | "bootstrapped" | "generic_locked" = collaborationBootstrap
-    ? "pristine"
+    ? collaborationBootstrap.initialized ? "bootstrapped" : "pristine"
     : "generic_locked";
   let bootstrapAttemptsInFlight = 0;
   let collaborationVerificationFault: Error | undefined;
@@ -289,8 +296,8 @@ export function createMcpServer(
   };
 
   const verifyCollaborationContext = async (): Promise<Readonly<ConnectionCollaborationContext>> => {
-    if (!collaborationBootstrap || collaborationConnectionState !== "bootstrapped" || !verifiedCollaborationContext) {
-      throw new Error("Verified collaboration context is unavailable");
+    if (!collaborationBootstrap || collaborationConnectionState !== "bootstrapped") {
+      throw collaborationContinuityError();
     }
     if (collaborationVerificationFault) throw collaborationVerificationFault;
     try {
@@ -314,9 +321,10 @@ export function createMcpServer(
     if (!workLoopStore || tool === "collaboration_bootstrap" || tool === "get_system_prompt" || tool === "agent_work_wait") {
       return undefined;
     }
-    if (collaborationConnectionState !== "bootstrapped" || !verifiedCollaborationContext) return undefined;
+    if (collaborationConnectionState !== "bootstrapped") return undefined;
     try {
-      const state = await workLoopStore.get(verifiedCollaborationContext.collaborationSessionId);
+      const context = await verifyCollaborationContext();
+      const state = await workLoopStore.get(context.collaborationSessionId);
       if (state.lifecycle !== "released") return undefined;
       return `This collaboration session was permanently released by the manager: ${state.releaseReason || "no reason recorded"}`;
     } catch {
@@ -389,6 +397,7 @@ export function createMcpServer(
       if (collaborationConnectionState === "generic_locked") {
         return toolError("Collaboration bootstrap is locked after project content or tools were accessed; create a new MCP session");
       }
+      const initializedBeforeAttempt = collaborationBootstrap.initialized;
       if (collaborationConnectionState === "pristine") collaborationConnectionState = "bootstrapping";
       bootstrapAttemptsInFlight += 1;
       try {
@@ -415,7 +424,7 @@ export function createMcpServer(
           structuredContent: result,
         };
       } catch (error) {
-        if (!verifiedCollaborationContext && collaborationBootstrap.initialized) {
+        if (!verifiedCollaborationContext && !initializedBeforeAttempt && collaborationBootstrap.initialized) {
           collaborationConnectionState = "generic_locked";
           await collaborationBootstrap.dispose();
         }
@@ -694,11 +703,23 @@ export function createMcpServer(
     });
 
     const chatGuidance = "Before beginning a task, use agent_chat_read; after a notification, use it again at a safe task boundary. Only post actionable project coordination. Persisted state is authoritative and notifications are best effort.";
+    const chatAuthorRoleSchema = z.object({
+      schema_version: z.literal(1),
+      source: z.enum(AGENT_CHAT_ROLE_PROVENANCE_SOURCES),
+      canonical_role_id: z.enum(["manager", "researcher", "implementer", "ai-engineer", "collaborator"]).optional(),
+      occupancy_label: z.string().optional(),
+      contract_id: z.string().optional(),
+      contract_version: z.string().optional(),
+      display_role_id: z.enum(AGENT_CHAT_DISPLAY_ROLE_IDS),
+      display_role_label: z.string(),
+    }).strict();
     const chatMessageSchema = z.object({
       cursor: z.number().int().positive(),
       agent_id: z.string(),
       agent_instance_id: z.string(),
       agent_name: z.string(),
+      collaboration_session_id: z.string().optional(),
+      author_role: chatAuthorRoleSchema,
       agent_message: z.string(),
     }).strict();
     const chatSnapshotSchema = z.object({
@@ -740,10 +761,19 @@ export function createMcpServer(
         return toolError("agent_name must match the authenticated agent identity when provided");
       }
       try {
+        const collaborationContext = collaborationConnectionState === "bootstrapped"
+          ? await verifyCollaborationContext()
+          : undefined;
         const message = toChatMessage(await broker.post({
           agentId: authenticatedIdentity.agentId,
           agentInstanceId: connectionAgentInstanceId,
           agentName: authenticatedIdentity.agentName,
+          ...(collaborationContext ? {
+            collaborationSessionId: collaborationContext.collaborationSessionId,
+            authorRole: createVerifiedAgentChatRoleSnapshot(collaborationContext.roleAssignment),
+          } : {
+            authorRole: createGenericAgentChatRoleSnapshot("generic_actor"),
+          }),
           agentMessage: args.agent_message,
         }));
         return {
@@ -1195,7 +1225,7 @@ export function createMcpServer(
       unsubscribeBroker();
       subscriptions.clear();
       disposePromise = (async () => {
-        if (workLoopStore && verifiedCollaborationContext) {
+        if (workLoopStore && verifiedCollaborationContext && collaborationBootstrap?.sharedLogicalSession !== true) {
           try {
             await workLoopStore.disconnect(verifiedCollaborationContext.collaborationSessionId);
           } catch {
@@ -1238,6 +1268,27 @@ function toChatMessage(message: AgentChatMessage) {
     agent_id: message.agentId,
     agent_instance_id: message.agentInstanceId,
     agent_name: message.agentName,
+    ...(message.collaborationSessionId ? {
+      collaboration_session_id: message.collaborationSessionId,
+    } : {}),
+    author_role: {
+      schema_version: message.authorRole.schemaVersion,
+      source: message.authorRole.source,
+      ...(message.authorRole.canonicalRoleId ? {
+        canonical_role_id: message.authorRole.canonicalRoleId,
+      } : {}),
+      ...(message.authorRole.occupancyLabel ? {
+        occupancy_label: message.authorRole.occupancyLabel,
+      } : {}),
+      ...(message.authorRole.contractId ? {
+        contract_id: message.authorRole.contractId,
+      } : {}),
+      ...(message.authorRole.contractVersion ? {
+        contract_version: message.authorRole.contractVersion,
+      } : {}),
+      display_role_id: message.authorRole.displayRoleId,
+      display_role_label: message.authorRole.displayRoleLabel,
+    },
     agent_message: message.agentMessage,
   };
 }
@@ -1560,6 +1611,15 @@ function normalizeRequestedRoleFingerprint(value: unknown): string {
     throw new Error("requestedRoleFingerprint must be a 16-character lowercase hexadecimal value");
   }
   return value;
+}
+
+function collaborationContinuityError(): Error {
+  return new Error(JSON.stringify({
+    code: "COLLABORATION_CONTEXT_CONTINUITY_UNAVAILABLE",
+    message: "Verified collaboration context is unavailable on this transport",
+    retryable: false,
+    requires_private_client_binding: true,
+  }));
 }
 
 function safeBootstrapError(error: unknown): string {

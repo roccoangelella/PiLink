@@ -30,10 +30,11 @@ async function fixture() {
 }
 
 class FakeBootstrap {
-  constructor(identity, collaborationSessionId) {
+  constructor(identity, collaborationSessionId, { sharedLogicalSession = false } = {}) {
     this.identity = identity;
     this.collaborationSessionId = collaborationSessionId;
     this.context = undefined;
+    this.sharedLogicalSession = sharedLogicalSession;
   }
 
   get initialized() {
@@ -67,8 +68,8 @@ class FakeBootstrap {
   async dispose() {}
 }
 
-async function connect(value, { identity, sessionId, role, instanceId, scopes = "mcp:tools" }) {
-  const bootstrap = new FakeBootstrap(identity, sessionId);
+async function connect(value, { identity, sessionId, role, instanceId, scopes = "mcp:tools", bootstrap }) {
+  const selectedBootstrap = bootstrap || new FakeBootstrap(identity, sessionId);
   const handle = createMcpServer(
     value.policy,
     scopes,
@@ -77,7 +78,7 @@ async function connect(value, { identity, sessionId, role, instanceId, scopes = 
     undefined,
     instanceId,
     value.taskStore,
-    bootstrap,
+    selectedBootstrap,
     undefined,
     value.workLoopStore,
   );
@@ -91,7 +92,7 @@ async function connect(value, { identity, sessionId, role, instanceId, scopes = 
     });
     assert.notEqual(result.isError, true);
   }
-  return { client, handle };
+  return { client, handle, bootstrap: selectedBootstrap };
 }
 
 function text(result) {
@@ -263,6 +264,20 @@ test("bounded wait wakes on task change and only a verified manager can permanen
     /permanently released by the manager/i,
   );
 
+  const reattached = await connect(value, {
+    identity: workerIdentity,
+    sessionId: workerSessionId,
+    instanceId: "worker-reattached-instance",
+    bootstrap: worker.bootstrap,
+  });
+  t.after(() => close(reattached));
+  const blockedOnFirstReattachedCall = await reattached.client.callTool({
+    name: "agent_task_read",
+    arguments: { statuses: ["open"] },
+  });
+  assert.equal(blockedOnFirstReattachedCall.isError, true);
+  assert.match(text(blockedOnFirstReattachedCall), /permanently released by the manager/i);
+
   const releasedWait = json(await worker.client.callTool({
     name: "agent_work_wait",
     arguments: {
@@ -273,6 +288,39 @@ test("bounded wait wakes on task change and only a verified manager can permanen
   }));
   assert.equal(releasedWait.outcome, "released");
   assert.equal(releasedWait.work_state.lifecycle, "released");
+});
+
+test("disposing one shared logical handle does not mark another active handle offline", async (t) => {
+  const value = await fixture();
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const identity = Object.freeze({ agentId: "shared-worker", agentName: "Shared Worker" });
+  const sessionId = "cs_SSSSSSSSSSSSSSSSSSSSSSSS";
+  const bootstrap = new FakeBootstrap(identity, sessionId, { sharedLogicalSession: true });
+  const first = await connect(value, {
+    identity,
+    sessionId,
+    role: "AI Engineer",
+    instanceId: "shared-worker-one",
+    bootstrap,
+  });
+  const second = await connect(value, {
+    identity,
+    sessionId,
+    instanceId: "shared-worker-two",
+    bootstrap,
+  });
+  try {
+    const initial = json(await first.client.callTool({ name: "agent_work_wait", arguments: {} }));
+    assert.equal(initial.work_state.lifecycle, "working");
+    const prompt = await second.client.callTool({ name: "get_system_prompt", arguments: {} });
+    assert.notEqual(prompt.isError, true);
+
+    await close(first);
+    const afterOneClose = await value.workLoopStore.get(sessionId);
+    assert.equal(afterOneClose.lifecycle, "working");
+  } finally {
+    await close(second);
+  }
 });
 
 test("task claim and manager release are serialized by the durable work lifecycle", async (t) => {

@@ -7,6 +7,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { AgentChatBroker, AgentChatStore, AGENT_CHAT_URI } from "../dist/chat.js";
+import {
+  createNewCollaborationRoleAssignment,
+  resolveCollaborationRoleRequest,
+} from "../dist/collaboration-roles.js";
 import { createMcpServer } from "../dist/mcp.js";
 
 async function fixture() {
@@ -22,7 +26,7 @@ async function fixture() {
   };
 }
 
-async function connected(fixtureValue, scopes, identity, agentInstanceId) {
+async function connected(fixtureValue, scopes, identity, agentInstanceId, collaborationBootstrap) {
   const handle = createMcpServer(
     fixtureValue.policy,
     scopes,
@@ -30,6 +34,8 @@ async function connected(fixtureValue, scopes, identity, agentInstanceId) {
     fixtureValue.broker,
     undefined,
     agentInstanceId,
+    undefined,
+    collaborationBootstrap,
   );
   const client = new Client({ name: "mcp-chat-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -42,8 +48,48 @@ function text(result) {
 }
 
 async function closeConnection(connection) {
-  connection.handle.dispose();
+  await connection.handle.dispose();
   await connection.client.close();
+}
+
+class FakeCollaborationBootstrap {
+  constructor(identity, collaborationSessionId) {
+    this.identity = identity;
+    this.collaborationSessionId = collaborationSessionId;
+    this.context = undefined;
+    this.failVerification = false;
+  }
+
+  get initialized() {
+    return this.context !== undefined;
+  }
+
+  async initialize(label) {
+    const request = resolveCollaborationRoleRequest(label);
+    if (request.kind === "none") throw new Error("role required");
+    if (!this.context) {
+      this.context = Object.freeze({
+        ...this.identity,
+        collaborationSessionId: this.collaborationSessionId,
+        requestKind: request.kind,
+        requestedRoleFingerprint: request.requestedRoleFingerprint,
+        roleAssignment: createNewCollaborationRoleAssignment({
+          assignmentSource: "server_session_policy",
+          canonicalRoleId: request.canonicalRoleId,
+          occupancyLabel: request.occupancyLabel,
+        }),
+      });
+    }
+    return this.context;
+  }
+
+  async verify() {
+    if (this.failVerification) throw new Error("verification failed");
+    if (!this.context) throw new Error("not initialized");
+    return this.context;
+  }
+
+  async dispose() {}
 }
 
 test("discovers tools with precise schemas, annotations, and server instructions", async () => {
@@ -78,7 +124,7 @@ test("discovers tools with precise schemas, annotations, and server instructions
     assert.deepEqual(Object.keys(post.inputSchema.properties).sort(), ["agent_message", "agent_name"]);
     assert.equal(post.annotations.destructiveHint, false);
     assert.equal(post.outputSchema.additionalProperties, false);
-    assert.deepEqual(post.outputSchema.required, ["cursor", "agent_id", "agent_instance_id", "agent_name", "agent_message"]);
+    assert.deepEqual(post.outputSchema.required, ["cursor", "agent_id", "agent_instance_id", "agent_name", "author_role", "agent_message"]);
     const read = tools.find((tool) => tool.name === "agent_chat_read");
     assert.equal(read.inputSchema.additionalProperties, false);
     assert.deepEqual(read.inputSchema.required, undefined);
@@ -87,6 +133,14 @@ test("discovers tools with precise schemas, annotations, and server instructions
 
     assert.equal((await connection.client.callTool({ name: "agent_chat_post", arguments: { agent_name: "Agent A" } })).isError, true);
     assert.equal((await connection.client.callTool({ name: "agent_chat_post", arguments: { agent_message: "do this", extra: true } })).isError, true);
+    assert.equal((await connection.client.callTool({
+      name: "agent_chat_post",
+      arguments: {
+        agent_message: "do this",
+        author_role: { display_role_id: "manager" },
+        collaboration_session_id: "cs_forged00000000",
+      },
+    })).isError, true);
   } finally {
     await closeConnection(connection);
     await fs.rm(value.root, { recursive: true, force: true });
@@ -112,6 +166,12 @@ test("enforces scopes, binds posts to the authenticated identity, and maps resul
       agent_id: "authenticated-id",
       agent_instance_id: "writer-instance",
       agent_name: "Authenticated Name",
+      author_role: {
+        schema_version: 1,
+        source: "generic_actor",
+        display_role_id: "agent",
+        display_role_label: "AGENT",
+      },
       agent_message: "action",
     });
     assert.deepEqual(postedResult.structuredContent, posted);
@@ -129,6 +189,91 @@ test("enforces scopes, binds posts to the authenticated identity, and maps resul
   } finally {
     await closeConnection(writer);
     await closeConnection(reader);
+    await fs.rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("verified parallel sessions snapshot immutable author roles without text inference", async () => {
+  const value = await fixture();
+  const identity = Object.freeze({ agentId: "shared-oauth-actor", agentName: "Shared OAuth Actor" });
+  const devBootstrap = new FakeCollaborationBootstrap(identity, "cs_AAAAAAAAAAAAAAAAAAAAAAAA");
+  const aiBootstrap = new FakeCollaborationBootstrap(identity, "cs_BBBBBBBBBBBBBBBBBBBBBBBB");
+  const dev = await connected(value, "mcp:tools", identity, "dev-instance", devBootstrap);
+  const ai = await connected(value, "mcp:tools", identity, "ai-instance", aiBootstrap);
+  try {
+    await dev.client.callTool({
+      name: "collaboration_bootstrap",
+      arguments: { requested_role_label: "DEV" },
+    });
+    await ai.client.callTool({
+      name: "collaboration_bootstrap",
+      arguments: { requested_role_label: "AI Engineer" },
+    });
+
+    const devPost = text(await dev.client.callTool({
+      name: "agent_chat_post",
+      arguments: { agent_message: "AI Engineer and MANAGER completed the design" },
+    }));
+    const aiPost = text(await ai.client.callTool({
+      name: "agent_chat_post",
+      arguments: { agent_message: "DEV says the manager requested this" },
+    }));
+
+    assert.equal(devPost.collaboration_session_id, "cs_AAAAAAAAAAAAAAAAAAAAAAAA");
+    assert.deepEqual(devPost.author_role, {
+      schema_version: 1,
+      source: "verified_collaboration_session",
+      canonical_role_id: "implementer",
+      occupancy_label: "dev",
+      contract_id: "pilink-collaboration/implementer",
+      contract_version: "1.1.0",
+      display_role_id: "dev",
+      display_role_label: "DEV",
+    });
+    assert.equal(aiPost.collaboration_session_id, "cs_BBBBBBBBBBBBBBBBBBBBBBBB");
+    assert.deepEqual(aiPost.author_role, {
+      schema_version: 1,
+      source: "verified_collaboration_session",
+      canonical_role_id: "ai-engineer",
+      occupancy_label: "ai-engineer",
+      contract_id: "pilink-collaboration/ai-engineer",
+      contract_version: "1.1.0",
+      display_role_id: "ai-engineer",
+      display_role_label: "AI ENGINEER",
+    });
+
+    const messages = (await value.broker.read()).messages;
+    assert.deepEqual(messages.map((message) => message.collaborationSessionId), [
+      "cs_AAAAAAAAAAAAAAAAAAAAAAAA",
+      "cs_BBBBBBBBBBBBBBBBBBBBBBBB",
+    ]);
+    assert.deepEqual(messages.map((message) => message.authorRole.displayRoleId), ["dev", "ai-engineer"]);
+  } finally {
+    await closeConnection(dev);
+    await closeConnection(ai);
+    await fs.rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("verified chat post fails closed when collaboration verification fails", async () => {
+  const value = await fixture();
+  const identity = Object.freeze({ agentId: "shared-oauth-actor", agentName: "Shared OAuth Actor" });
+  const bootstrap = new FakeCollaborationBootstrap(identity, "cs_CCCCCCCCCCCCCCCCCCCCCCCC");
+  const connection = await connected(value, "mcp:tools", identity, "faulted-instance", bootstrap);
+  try {
+    await connection.client.callTool({
+      name: "collaboration_bootstrap",
+      arguments: { requested_role_label: "DEV" },
+    });
+    bootstrap.failVerification = true;
+    const failed = await connection.client.callTool({
+      name: "agent_chat_post",
+      arguments: { agent_message: "should not persist as generic" },
+    });
+    assert.equal(failed.isError, true);
+    assert.equal((await value.broker.read()).messages.length, 0);
+  } finally {
+    await closeConnection(connection);
     await fs.rm(value.root, { recursive: true, force: true });
   }
 });

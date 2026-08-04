@@ -1,7 +1,7 @@
 """Theme / design system for the PiLink chat CLI.
 
 Exact port of the web frontend design tokens (dark glassmorphism look) into
-Textual: palette, agent roles, role detection, status maps and the animated
+Textual: palette, verified agent-role presentation, status maps and the animated
 ``PulseDot`` widget.
 
 This module is the dependency-free base: it imports ONLY from ``textual``
@@ -40,11 +40,11 @@ PALETTE: Dict[str, str] = {
 # Agent roles: key -> {name, icon, color}. Icons match the web frontend.
 ROLE_CONFIG: Dict[str, Dict[str, str]] = {
     "manager": {"name": "Manager", "icon": "👑", "color": "#c084fc"},
-    "aieng": {"name": "AI Engineer", "icon": "🧠", "color": "#38bdf8"},
+    "ai-engineer": {"name": "AI Engineer", "icon": "🧠", "color": "#38bdf8"},
     "dev": {"name": "Dev", "icon": "⚡", "color": "#60a5fa"},
     "researcher": {"name": "Researcher", "icon": "🔬", "color": "#34d399"},
-    "reviewer": {"name": "Reviewer", "icon": "🛡️", "color": "#fbbf24"},
-    "default": {"name": "Agent", "icon": "🤖", "color": "#38bdf8"},
+    "collaborator": {"name": "Collaborator", "icon": "🤝", "color": "#fbbf24"},
+    "agent": {"name": "Agent", "icon": "🤖", "color": "#38bdf8"},
 }
 
 # Task lifecycle status keys -> human labels.
@@ -85,35 +85,97 @@ def sanitize_text(text) -> str:
     return _CONTROL_RE.sub("", "" if text is None else str(text))
 
 
-def get_role_info(msg_text: str, agent_name: str) -> Dict[str, str]:
-    """Detect the agent role for a chat message.
+def get_role_info(message: object) -> Dict[str, str]:
+    """Return role presentation only from the server-authored snapshot.
 
-    Same detection rules as the web frontend, case-insensitive over the
-    message text plus the agent name:
-
-    * ``"manager"`` -> manager
-    * ``"ai engineer"`` or ``"aieng"`` -> aieng
-    * ``"dev1"``, ``"dev2"`` or ``"dev "`` -> dev
-    * ``"researcher"`` -> researcher
-    * ``"reviewer"`` -> reviewer
-    * anything else -> default
-
-    Returns the matching ``ROLE_CONFIG`` entry.
+    Free-form message text and OAuth display names are deliberately ignored.
+    Missing, legacy, malformed, or unknown provenance always degrades to the
+    Agent presentation rather than guessing a privileged role.
     """
-    # Trailing space lets a terminal "dev" token (e.g. bare agent name "Dev")
-    # satisfy the web's "dev " rule.
-    haystack = "{} {} ".format(msg_text or "", agent_name or "").lower()
-    if "manager" in haystack:
-        return ROLE_CONFIG["manager"]
-    if "ai engineer" in haystack or "aieng" in haystack:
-        return ROLE_CONFIG["aieng"]
-    if "dev1" in haystack or "dev2" in haystack or "dev " in haystack:
-        return ROLE_CONFIG["dev"]
-    if "researcher" in haystack:
-        return ROLE_CONFIG["researcher"]
-    if "reviewer" in haystack:
-        return ROLE_CONFIG["reviewer"]
-    return ROLE_CONFIG["default"]
+    default = dict(ROLE_CONFIG["agent"])
+    default["id"] = "agent"
+    if not isinstance(message, dict):
+        return default
+    snapshot = message.get("authorRole")
+    if snapshot is None:
+        snapshot = message.get("author_role")
+    if not isinstance(snapshot, dict):
+        return default
+
+    schema_version = snapshot.get("schemaVersion", snapshot.get("schema_version"))
+    source = snapshot.get("source")
+    role_id = snapshot.get("displayRoleId", snapshot.get("display_role_id"))
+    label = snapshot.get("displayRoleLabel", snapshot.get("display_role_label"))
+    if schema_version != 1 or source not in {
+        "verified_collaboration_session", "generic_actor", "legacy_unverified"
+    }:
+        return default
+    if not isinstance(role_id, str) or role_id not in ROLE_CONFIG:
+        return default
+    if not isinstance(label, str):
+        return default
+    label = label.strip()
+    if not label or len(label.encode("utf-8")) > 64 or sanitize_text(label) != label:
+        return default
+
+    if source in {"generic_actor", "legacy_unverified"}:
+        if role_id != "agent":
+            return default
+        expected_label = "LEGACY AGENT" if source == "legacy_unverified" else "AGENT"
+        if label != expected_label:
+            return default
+        for field in (
+            "canonicalRoleId", "canonical_role_id", "occupancyLabel",
+            "occupancy_label", "contractId", "contract_id",
+            "contractVersion", "contract_version",
+        ):
+            if field in snapshot:
+                return default
+    else:
+        canonical = snapshot.get("canonicalRoleId", snapshot.get("canonical_role_id"))
+        occupancy = snapshot.get("occupancyLabel", snapshot.get("occupancy_label"))
+        contract_id = snapshot.get("contractId", snapshot.get("contract_id"))
+        contract_version = snapshot.get("contractVersion", snapshot.get("contract_version"))
+        expected_role = {
+            "manager": "manager",
+            "researcher": "researcher",
+            "implementer": "dev",
+            "ai-engineer": "ai-engineer",
+            "collaborator": "collaborator",
+        }.get(canonical)
+        expected_contract = {
+            "manager": "pilink-collaboration/manager",
+            "researcher": "pilink-collaboration/researcher",
+            "implementer": "pilink-collaboration/implementer",
+            "ai-engineer": "pilink-collaboration/ai-engineer",
+            "collaborator": "pilink-collaboration/collaborator",
+        }.get(canonical)
+        if expected_role != role_id or expected_contract != contract_id:
+            return default
+        if not isinstance(occupancy, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", occupancy):
+            return default
+        if not isinstance(contract_version, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.-]{0,63}", contract_version):
+            return default
+        if canonical == "implementer":
+            expected_label = {
+                "dev1": "DEV 1",
+                "dev2": "DEV 2",
+                "software-engineer": "SOFTWARE ENGINEER",
+            }.get(occupancy, "DEV")
+        else:
+            expected_label = {
+                "manager": "MANAGER",
+                "researcher": "RESEARCHER",
+                "ai-engineer": "AI ENGINEER",
+                "collaborator": "COLLABORATOR",
+            }[canonical]
+        if label != expected_label:
+            return default
+
+    info = dict(ROLE_CONFIG[role_id])
+    info["id"] = role_id
+    info["name"] = label
+    return info
 
 
 class PulseDot(Static):

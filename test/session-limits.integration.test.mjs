@@ -26,6 +26,8 @@ test("runtime configuration validates MCP session lifecycle settings", async () 
     assert.equal(defaults.maxMcpSessionsPerClient, 16);
     assert.equal(defaults.mcpSessionIdleTimeoutSeconds, 600);
     assert.equal(defaults.mcpSessionReclaimGraceSeconds, 5);
+    assert.equal(defaults.collaborationBindingHeader, undefined);
+    assert.equal(defaults.collaborationBindingDetachGraceSeconds, 600);
 
     const configured = loadRuntimeConfig({
       ...base,
@@ -33,11 +35,15 @@ test("runtime configuration validates MCP session lifecycle settings", async () 
       PI_MAX_MCP_SESSIONS_PER_CLIENT: "3",
       PI_MCP_SESSION_IDLE_TIMEOUT: "45",
       PI_MCP_SESSION_RECLAIM_GRACE: "7",
+      PI_COLLABORATION_BINDING_HEADER: "X-PiLink-Logical-Session",
+      PI_COLLABORATION_BINDING_DETACH_GRACE: "90",
     });
     assert.equal(configured.maxMcpSessionsTotal, 12);
     assert.equal(configured.maxMcpSessionsPerClient, 3);
     assert.equal(configured.mcpSessionIdleTimeoutSeconds, 45);
     assert.equal(configured.mcpSessionReclaimGraceSeconds, 7);
+    assert.equal(configured.collaborationBindingHeader, "x-pilink-logical-session");
+    assert.equal(configured.collaborationBindingDetachGraceSeconds, 90);
     assert.throws(
       () => loadRuntimeConfig({
         ...base,
@@ -45,6 +51,13 @@ test("runtime configuration validates MCP session lifecycle settings", async () 
         PI_MAX_MCP_SESSIONS_PER_CLIENT: "3",
       }),
       /cannot exceed/,
+    );
+    assert.throws(
+      () => loadRuntimeConfig({
+        ...base,
+        PI_COLLABORATION_BINDING_HEADER: "Authorization",
+      }),
+      /cannot reuse/,
     );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });

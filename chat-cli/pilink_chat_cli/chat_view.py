@@ -93,7 +93,7 @@ class MessageCard(Vertical):
 
     def compose(self) -> None:
         msg = self._msg
-        role = get_role_info(msg.get("agentMessage", ""), msg.get("agentName", ""))
+        role = get_role_info(msg)
         color = role["color"]
         cursor = msg.get("cursor")
 
@@ -257,11 +257,9 @@ class ChatStream(Vertical):
     # -- filtering --------------------------------------------------------
 
     def _passes_filters(self, msg: dict) -> bool:
-        role = get_role_info(msg.get("agentMessage", ""), msg.get("agentName", ""))
-        if self.role_filter != "all":
-            cfg = ROLE_CONFIG.get(self.role_filter)
-            if cfg and role["name"] != cfg["name"]:
-                return False
+        role = get_role_info(msg)
+        if self.role_filter != "all" and role.get("id") != self.role_filter:
+            return False
         query = self.search_query.strip().lower()
         if query:
             text = (msg.get("agentMessage", "") or "").lower()

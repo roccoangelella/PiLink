@@ -2,8 +2,8 @@
 
 Status: current specification and implemented runtime contract
 Maintainer: AI Engineer, collaboration runtime maintainer, and project manager
-Last reviewed: 2026-08-03
-Implementation: `src/work-loop.ts`, `src/mcp.ts`, and `src/index.ts`
+Last reviewed: 2026-08-04
+Implementation: `src/work-loop.ts`, `src/mcp.ts`, `src/index.ts`, and the optional trusted-binding adapter in `src/collaboration-context-registry.ts`
 
 ## Purpose
 
@@ -37,6 +37,14 @@ RELEASED
 `WAITING_FOR_TASK` is active participation, not completion or permanent idle. `OFFLINE` records transport absence; a surviving trusted runtime may restore it, while a new logical connection normally registers a new session ID. `RELEASED` is terminal for the named collaboration session and cannot be reversed by reconnect, prompt text, chat, or re-registration.
 
 ## MCP surface
+
+### Transport-continuity precondition
+
+The preferred continuity path is protocol-native: a client reuses the server-issued `Mcp-Session-Id`, which routes later calls to the same MCP server handle and private verified collaboration context.
+
+PiLink also implements an optional process-shared adapter for stateless clients behind a trusted intermediary. When `PI_COLLABORATION_BINDING_HEADER` is configured, the intermediary must strip any inbound copy and inject a unique hidden value per logical conversation; PiLink binds it to the OAuth actor and client version, retains the private bootstrap only in server memory, and re-verifies the immutable role tuple on every role-gated call.
+
+A fresh physical session carrying neither the original `Mcp-Session-Id` nor a genuinely trusted hidden binding fails closed with `COLLABORATION_CONTEXT_CONTINUITY_UNAVAILABLE`. OAuth actor identity, public collaboration session IDs, role labels, and model-visible headers never authenticate continuation. The observed ChatGPT connector currently opens a new MCP session per tool invocation and exposes no private per-conversation binding, so the server adapter does not constitute an end-to-end connector fix. Details and acceptance boundaries are specified in [`agent-work-loop-transport-continuity.md`](agent-work-loop-transport-continuity.md).
 
 ### `agent_work_wait`
 
@@ -86,7 +94,7 @@ Free-form text such as “go idle”, “stop polling”, or “you are no longe
 - Task claiming remains a separate compare-and-swap operation with renewable leases. A wake-up never auto-claims a task.
 - A changed task-board token means the worker must reread and select work; it does not prove that any particular task is compatible.
 - A released session may call `agent_work_wait` only to observe the terminal result. Other project tools fail closed.
-- Transport disposal records `OFFLINE`; it does not silently convert absence into permanent release.
+- Disposing a connection-local transport records `OFFLINE`. Under the shared trusted-binding adapter, closing one physical handle only detaches that handle; the logical session is marked `OFFLINE` when the final registry entry is disposed after its detach grace or during shutdown. Neither path converts absence into permanent release.
 - Backoff is capped and jittered to avoid synchronized hot polling and unbounded resource use.
 
 ## Recovery and races
@@ -98,7 +106,7 @@ Free-form text such as “go idle”, “stop polling”, or “you are no longe
 - If a manager reads an old work-state revision, release fails as stale and the manager must list again.
 - If release occurs during a long poll, the next bounded check returns `released`.
 - If the MCP request is cancelled, the server cancels the wait rather than leaving an unbounded timer.
-- If the connection closes, the session becomes `OFFLINE`; task leases and collaboration-session recovery continue to follow their own stores.
+- If a connection-local session closes, its work lifecycle becomes `OFFLINE`. For a shared logical session, one physical close leaves the lifecycle unchanged while another attachment survives; final logical-entry disposal records `OFFLINE`. Task leases and collaboration-session recovery continue to follow their own stores.
 - On later reads or registration, nonterminal work states are reconciled against authoritative collaboration-session status. Missing, normally released, or crash-revoked logical sessions become `OFFLINE`, allowing bounded retention to reclaim orphan entries without treating them as permanently released.
 
 ## Verification
@@ -106,7 +114,9 @@ Free-form text such as “go idle”, “stop polling”, or “you are no longe
 The implementation is covered by:
 
 - `test/work-loop.test.mjs`: lifecycle persistence, backoff bounds, stale revisions, release provenance, terminal non-revival, and offline reconnect;
-- `test/mcp-work-loop.test.mjs`: bounded server wait, wake-up on task change, manager-only listing/release, owned-task release rejection, post-release tool blocking, and terminal wait result;
+- `test/mcp-work-loop.test.mjs`: bounded server wait, wake-up on task change, manager-only listing/release, owned-task release rejection, post-release blocking on the first call of a reattached handle, terminal wait results, and shared-handle disconnect semantics;
+- `test/collaboration-context-registry.test.mjs`: trusted-binding derivation, actor/version isolation, reference counting, no premature logical `OFFLINE` transition, detach grace, conflicting bootstrap rejection, and exactly-once final disposal;
+- `test/role-bootstrap-http.integration.test.mjs` and `test/session-limits.integration.test.mjs`: real-HTTP fresh-session attachment, unbound fail-closed behavior, duplicate/invalid header rejection, isolation, cleanup, and quota interaction;
 - `test/collaboration-roles.test.mjs`: prompt-contract requirements and golden contract digests;
 - `test/tool-contract.test.mjs`: strict tool schemas, annotations, and continuous-work guidance;
 - the full repository suite through `npm test`.

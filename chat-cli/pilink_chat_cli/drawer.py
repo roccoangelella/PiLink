@@ -77,17 +77,17 @@ def _dict_get(obj: object, key: str, fallback: object = None) -> object:
         return fallback
 
 
-def _role_info(msg_text: str, agent_name: str) -> dict:
-    """Role info (icon/name/color) for a chat message, defensively."""
+def _role_info(message: object) -> dict:
+    """Verified role info for a chat message, defensively."""
     if _theme is None:
         return {}
     try:
-        info = _theme.get_role_info(msg_text, agent_name)
+        info = _theme.get_role_info(message)
     except Exception:
         info = None
     if isinstance(info, dict):
         return info
-    default = _dict_get(getattr(_theme, "ROLE_CONFIG", {}), "default", None)
+    default = _dict_get(getattr(_theme, "ROLE_CONFIG", {}), "agent", None)
     return default if isinstance(default, dict) else {}
 
 
@@ -364,7 +364,7 @@ class TaskDrawer(Vertical):
             text = str(msg.get("agentMessage") or "")
             cursor = msg.get("cursor")
             cursor_label = f"Cursor #{cursor}" if cursor is not None else ""
-            role = _role_info(text, str(msg.get("agentName") or ""))
+            role = _role_info(msg)
             events.append(
                 (
                     f"💬 Chat Handoff / Discussion ({cursor_label})",

@@ -22,6 +22,8 @@ export interface RuntimeConfig {
   maxMcpSessionsPerClient: number;
   mcpSessionIdleTimeoutSeconds: number;
   mcpSessionReclaimGraceSeconds: number;
+  collaborationBindingHeader?: string;
+  collaborationBindingDetachGraceSeconds: number;
   corsOrigins: string[];
   trustProxy: boolean;
 }
@@ -45,6 +47,15 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const maxMcpSessionsPerClient = positiveInteger(env.PI_MAX_MCP_SESSIONS_PER_CLIENT, 16, "PI_MAX_MCP_SESSIONS_PER_CLIENT");
   const mcpSessionIdleTimeoutSeconds = positiveInteger(env.PI_MCP_SESSION_IDLE_TIMEOUT, 10 * 60, "PI_MCP_SESSION_IDLE_TIMEOUT");
   const mcpSessionReclaimGraceSeconds = positiveInteger(env.PI_MCP_SESSION_RECLAIM_GRACE, 5, "PI_MCP_SESSION_RECLAIM_GRACE");
+  const collaborationBindingDetachGraceSeconds = positiveInteger(
+    env.PI_COLLABORATION_BINDING_DETACH_GRACE,
+    10 * 60,
+    "PI_COLLABORATION_BINDING_DETACH_GRACE",
+  );
+  const collaborationBindingHeader = optionalHeaderName(
+    env.PI_COLLABORATION_BINDING_HEADER,
+    "PI_COLLABORATION_BINDING_HEADER",
+  );
   if (maxMcpSessionsPerClient > maxMcpSessionsTotal) {
     throw new Error("PI_MAX_MCP_SESSIONS_PER_CLIENT cannot exceed PI_MAX_MCP_SESSIONS_TOTAL");
   }
@@ -88,6 +99,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     maxMcpSessionsPerClient,
     mcpSessionIdleTimeoutSeconds,
     mcpSessionReclaimGraceSeconds,
+    collaborationBindingHeader,
+    collaborationBindingDetachGraceSeconds,
     corsOrigins: parseAllowedOrigins(serverUrl, env.CORS_ORIGINS),
     trustProxy: env.TRUST_PROXY === "true",
   };
@@ -130,4 +143,16 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   const parsed = Number.parseInt(value || String(fallback), 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
   return parsed;
+}
+
+function optionalHeaderName(value: string | undefined, name: string): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/u.test(normalized)) {
+    throw new Error(`${name} must be a valid HTTP header name`);
+  }
+  if (["authorization", "mcp-session-id", "mcp-protocol-version", "cookie", "set-cookie"].includes(normalized)) {
+    throw new Error(`${name} cannot reuse an authentication or MCP protocol header`);
+  }
+  return normalized;
 }
