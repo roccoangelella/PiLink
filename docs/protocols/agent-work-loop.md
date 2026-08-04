@@ -114,8 +114,8 @@ Free-form text such as “go idle”, “stop polling”, or “you are no longe
 The implementation is covered by:
 
 - `test/work-loop.test.mjs`: lifecycle persistence, backoff bounds, stale revisions, release provenance, terminal non-revival, and offline reconnect;
-- `test/mcp-work-loop.test.mjs`: bounded server wait, wake-up on task change, manager-only listing/release, owned-task release rejection, post-release blocking on the first call of a reattached handle, terminal wait results, and shared-handle disconnect semantics;
-- `test/collaboration-context-registry.test.mjs`: trusted-binding derivation, actor/version isolation, reference counting, no premature logical `OFFLINE` transition, detach grace, conflicting bootstrap rejection, and exactly-once final disposal;
+- `test/mcp-work-loop.test.mjs`: bounded server wait, wake-up on task change, manager-only listing/release, owned-task release rejection, dynamic-prompt adoption by handles attached before or during bootstrap, post-release blocking on their first task/resource/subscription call, terminal wait results, and shared-handle disconnect semantics;
+- `test/collaboration-context-registry.test.mjs`: trusted-binding derivation, actor/version isolation, atomic bootstrap-versus-project-access ordering, deterministic waiting behind in-flight initialization, reference counting, no premature logical `OFFLINE` transition, detach grace, conflicting bootstrap rejection, and exactly-once final disposal;
 - `test/role-bootstrap-http.integration.test.mjs` and `test/session-limits.integration.test.mjs`: real-HTTP fresh-session attachment, unbound fail-closed behavior, duplicate/invalid header rejection, isolation, cleanup, and quota interaction;
 - `test/collaboration-roles.test.mjs`: prompt-contract requirements and golden contract digests;
 - `test/tool-contract.test.mjs`: strict tool schemas, annotations, and continuous-work guidance;

@@ -192,3 +192,104 @@ test("binding is scoped to OAuth client credential version", async (t) => {
   ]);
   assert.notEqual(oldContext.collaborationSessionId, newContext.collaborationSessionId);
 });
+
+test("shared project access waits for an in-flight bootstrap and adopts its context", async (t) => {
+  const value = await fixture();
+  t.after(async () => {
+    await value.registry.disposeAll();
+    await fs.rm(value.root, { recursive: true, force: true });
+  });
+
+  const first = value.registry.attach({
+    identity: actor,
+    clientVersion: 4,
+    logicalBinding: "pre-attached-bootstrap-race",
+  });
+  const second = value.registry.attach({
+    identity: actor,
+    clientVersion: 4,
+    logicalBinding: "pre-attached-bootstrap-race",
+  });
+
+  const initializing = first.initialize("DEV");
+  const preparing = second.prepareSharedProjectAccess();
+  const [initialized, prepared] = await Promise.all([initializing, preparing]);
+  assert.ok(prepared);
+  assert.equal(prepared.collaborationSessionId, initialized.collaborationSessionId);
+  assert.equal((await second.synchronizeSharedContext()).collaborationSessionId, initialized.collaborationSessionId);
+});
+
+test("project access that wins before bootstrap locks the shared logical binding", async (t) => {
+  const value = await fixture();
+  t.after(async () => {
+    await value.registry.disposeAll();
+    await fs.rm(value.root, { recursive: true, force: true });
+  });
+
+  const first = value.registry.attach({
+    identity: actor,
+    clientVersion: 5,
+    logicalBinding: "generic-access-wins-race",
+  });
+  const second = value.registry.attach({
+    identity: actor,
+    clientVersion: 5,
+    logicalBinding: "generic-access-wins-race",
+  });
+
+  assert.equal(await second.prepareSharedProjectAccess(), undefined);
+  await assert.rejects(
+    () => first.initialize("DEV"),
+    /locked after project content or tools were accessed/i,
+  );
+  assert.equal(await first.synchronizeSharedContext(), undefined);
+});
+
+test("shared project access deterministically waits behind initialization already in flight", async () => {
+  let initialized = false;
+  let releaseInitialization;
+  const initializationGate = new Promise((resolve) => { releaseInitialization = resolve; });
+  const context = Object.freeze({ collaborationSessionId: "cs_deferred_shared_context" });
+  const registry = new CollaborationContextRegistry({
+    bindingKeyMaterial: Buffer.alloc(32, 0x63),
+    detachGraceSeconds: 60,
+    createBootstrap() {
+      return {
+        get initialized() { return initialized; },
+        async initialize() {
+          await initializationGate;
+          initialized = true;
+          return context;
+        },
+        async verify() {
+          if (!initialized) throw new Error("not initialized");
+          return context;
+        },
+        async dispose() {},
+      };
+    },
+  });
+  const first = registry.attach({
+    identity: actor,
+    clientVersion: 6,
+    logicalBinding: "deferred-bootstrap-race",
+  });
+  const second = registry.attach({
+    identity: actor,
+    clientVersion: 6,
+    logicalBinding: "deferred-bootstrap-race",
+  });
+
+  const initializing = first.initialize("DEV");
+  let projectAccessSettled = false;
+  const projectAccess = second.prepareSharedProjectAccess().then((value) => {
+    projectAccessSettled = true;
+    return value;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(projectAccessSettled, false, "project access must wait behind the in-flight initializer");
+  releaseInitialization();
+  const [initializedContext, preparedContext] = await Promise.all([initializing, projectAccess]);
+  assert.equal(preparedContext, initializedContext);
+  await registry.disposeAll();
+});

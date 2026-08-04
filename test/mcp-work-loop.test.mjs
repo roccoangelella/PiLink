@@ -10,6 +10,7 @@ import {
   createNewCollaborationRoleAssignment,
   resolveCollaborationRoleRequest,
 } from "../dist/collaboration-roles.js";
+import { CollaborationContextRegistry } from "../dist/collaboration-context-registry.js";
 import { createMcpServer } from "../dist/mcp.js";
 import { AgentTaskStore } from "../dist/tasks.js";
 import { AgentWorkLoopStore } from "../dist/work-loop.js";
@@ -30,11 +31,17 @@ async function fixture() {
 }
 
 class FakeBootstrap {
-  constructor(identity, collaborationSessionId, { sharedLogicalSession = false } = {}) {
+  constructor(identity, collaborationSessionId, {
+    sharedLogicalSession = false,
+    initializationGate,
+    onInitializationStart,
+  } = {}) {
     this.identity = identity;
     this.collaborationSessionId = collaborationSessionId;
     this.context = undefined;
     this.sharedLogicalSession = sharedLogicalSession;
+    this.initializationGate = initializationGate;
+    this.onInitializationStart = onInitializationStart;
   }
 
   get initialized() {
@@ -42,6 +49,8 @@ class FakeBootstrap {
   }
 
   async initialize(label) {
+    this.onInitializationStart?.();
+    if (this.initializationGate) await this.initializationGate;
     const request = resolveCollaborationRoleRequest(label);
     if (request.kind === "none") throw new Error("role required");
     if (!this.context) {
@@ -288,6 +297,268 @@ test("bounded wait wakes on task change and only a verified manager can permanen
   }));
   assert.equal(releasedWait.outcome, "released");
   assert.equal(releasedWait.work_state.lifecycle, "released");
+});
+
+test("pre-attached shared prompt waits behind bootstrap and adopts verified guidance", async (t) => {
+  const value = await fixture();
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const identity = Object.freeze({ agentId: "prompt-race-worker", agentName: "Prompt Race Worker" });
+  const sessionId = "cs_GGGGGGGGGGGGGGGGGGGGGGGG";
+  let releaseInitialization;
+  const initializationGate = new Promise((resolve) => { releaseInitialization = resolve; });
+  let signalInitializationStarted;
+  const initializationStarted = new Promise((resolve) => { signalInitializationStarted = resolve; });
+  const registry = new CollaborationContextRegistry({
+    bindingKeyMaterial: Buffer.alloc(32, 0x52),
+    detachGraceSeconds: 60,
+    createBootstrap: () => new FakeBootstrap(identity, sessionId, {
+      initializationGate,
+      onInitializationStart: signalInitializationStarted,
+    }),
+  });
+  t.after(() => registry.disposeAll());
+  const primary = await connect(value, {
+    identity,
+    sessionId,
+    instanceId: "prompt-race-primary",
+    bootstrap: registry.attach({
+      identity,
+      clientVersion: 1,
+      logicalBinding: "prompt-race-shared-binding",
+    }),
+  });
+  const dormant = await connect(value, {
+    identity,
+    sessionId,
+    instanceId: "prompt-race-dormant",
+    bootstrap: registry.attach({
+      identity,
+      clientVersion: 1,
+      logicalBinding: "prompt-race-shared-binding",
+    }),
+  });
+  t.after(async () => {
+    await close(primary);
+    await close(dormant);
+  });
+
+  const bootstrapping = primary.client.callTool({
+    name: "collaboration_bootstrap",
+    arguments: { requested_role_label: "AI Engineer" },
+  });
+  await initializationStarted;
+  let promptSettled = false;
+  const promptCall = dormant.client.callTool({ name: "get_system_prompt", arguments: {} }).then((result) => {
+    promptSettled = true;
+    return result;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(promptSettled, false, "prompt lookup must wait behind shared bootstrap initialization");
+  releaseInitialization();
+  const [bootstrapResult, promptResult] = await Promise.all([bootstrapping, promptCall]);
+  assert.notEqual(bootstrapResult.isError, true);
+  const prompt = text(promptResult);
+  assert.match(prompt, new RegExp(sessionId));
+  assert.match(prompt, /Canonical role: ai-engineer/i);
+});
+
+test("shared prompt synchronization latches verification faults and never retries", async (t) => {
+  const value = await fixture();
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const identity = Object.freeze({ agentId: "prompt-fault-worker", agentName: "Prompt Fault Worker" });
+  const sessionId = "cs_FFFFFFFFFFFFFFFFFFFFFFFF";
+  const request = resolveCollaborationRoleRequest("AI Engineer");
+  const context = Object.freeze({
+    ...identity,
+    collaborationSessionId: sessionId,
+    requestKind: request.kind,
+    requestedRoleFingerprint: request.requestedRoleFingerprint,
+    roleAssignment: createNewCollaborationRoleAssignment({
+      assignmentSource: "server_session_policy",
+      canonicalRoleId: request.canonicalRoleId,
+      occupancyLabel: request.occupancyLabel,
+    }),
+  });
+  let synchronizationCount = 0;
+  let preparationCount = 0;
+  let initializationCount = 0;
+  let disposeCount = 0;
+  let disposed = false;
+  const bootstrap = {
+    sharedLogicalSession: true,
+    get initialized() { return false; },
+    async initialize() {
+      initializationCount += 1;
+      return context;
+    },
+    async verify() { throw new Error("unexpected verify after fault latch"); },
+    async synchronizeSharedContext() {
+      synchronizationCount += 1;
+      if (synchronizationCount === 1) throw new Error("transient immutable verification failure");
+      return context;
+    },
+    async prepareSharedProjectAccess() {
+      preparationCount += 1;
+      return context;
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      disposeCount += 1;
+    },
+  };
+  const connection = await connect(value, {
+    identity,
+    sessionId,
+    instanceId: "prompt-fault-instance",
+    bootstrap,
+  });
+  t.after(() => close(connection));
+
+  const firstPrompt = await connection.client.callTool({ name: "get_system_prompt", arguments: {} });
+  assert.equal(firstPrompt.isError, true);
+  assert.match(text(firstPrompt), /immutable tuple validation/i);
+  const blockedProject = await connection.client.callTool({
+    name: "agent_task_read",
+    arguments: { statuses: ["open"] },
+  });
+  assert.equal(blockedProject.isError, true);
+  assert.match(text(blockedProject), /immutable tuple validation/i);
+  const blockedRebootstrap = await connection.client.callTool({
+    name: "collaboration_bootstrap",
+    arguments: { requested_role_label: "AI Engineer" },
+  });
+  assert.equal(blockedRebootstrap.isError, true);
+  assert.match(text(blockedRebootstrap), /immutable tuple validation/i);
+  await assert.rejects(
+    () => connection.client.getPrompt({ name: "pilink_system_prompt", arguments: {} }),
+    /immutable tuple validation/i,
+  );
+  const secondToolPrompt = await connection.client.callTool({ name: "get_system_prompt", arguments: {} });
+  assert.equal(secondToolPrompt.isError, true);
+  assert.match(text(secondToolPrompt), /immutable tuple validation/i);
+  assert.equal(synchronizationCount, 1, "a latched verification fault must prevent retrying shared synchronization");
+  assert.equal(preparationCount, 0, "a latched fault must block project access before shared preparation");
+  assert.equal(initializationCount, 0, "a latched fault must block re-bootstrap before initialization");
+  assert.equal(disposeCount, 1, "the failed attachment must be detached exactly once");
+});
+
+test("pre-attached shared handle blocks its first project call after manager release", async (t) => {
+  const value = await fixture();
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const workerIdentity = Object.freeze({ agentId: "pre-attached-worker", agentName: "Pre-attached Worker" });
+  const workerSessionId = "cs_PPPPPPPPPPPPPPPPPPPPPPPP";
+  const registry = new CollaborationContextRegistry({
+    bindingKeyMaterial: Buffer.alloc(32, 0x51),
+    detachGraceSeconds: 60,
+    createBootstrap: () => new FakeBootstrap(workerIdentity, workerSessionId),
+  });
+  t.after(() => registry.disposeAll());
+  const primaryBootstrap = registry.attach({
+    identity: workerIdentity,
+    clientVersion: 1,
+    logicalBinding: "pre-attached-shared-worker",
+  });
+  const dormantBootstrap = registry.attach({
+    identity: workerIdentity,
+    clientVersion: 1,
+    logicalBinding: "pre-attached-shared-worker",
+  });
+  const dormantReadBootstrap = registry.attach({
+    identity: workerIdentity,
+    clientVersion: 1,
+    logicalBinding: "pre-attached-shared-worker",
+  });
+  const dormantSubscribeBootstrap = registry.attach({
+    identity: workerIdentity,
+    clientVersion: 1,
+    logicalBinding: "pre-attached-shared-worker",
+  });
+  const primary = await connect(value, {
+    identity: workerIdentity,
+    sessionId: workerSessionId,
+    instanceId: "pre-attached-primary",
+    bootstrap: primaryBootstrap,
+  });
+  const dormant = await connect(value, {
+    identity: workerIdentity,
+    sessionId: workerSessionId,
+    instanceId: "pre-attached-dormant",
+    bootstrap: dormantBootstrap,
+  });
+  const dormantRead = await connect(value, {
+    identity: workerIdentity,
+    sessionId: workerSessionId,
+    instanceId: "pre-attached-dormant-read",
+    bootstrap: dormantReadBootstrap,
+  });
+  const dormantSubscribe = await connect(value, {
+    identity: workerIdentity,
+    sessionId: workerSessionId,
+    instanceId: "pre-attached-dormant-subscribe",
+    bootstrap: dormantSubscribeBootstrap,
+  });
+  const manager = await connect(value, {
+    identity: Object.freeze({ agentId: "pre-attached-manager", agentName: "Manager" }),
+    sessionId: "cs_MMMMMMMMMMMMMMMMMMMMMMMM",
+    role: "manager",
+    instanceId: "pre-attached-manager",
+  });
+  t.after(async () => {
+    await close(primary);
+    await close(dormant);
+    await close(dormantRead);
+    await close(dormantSubscribe);
+    await close(manager);
+  });
+
+  const bootstrapped = await primary.client.callTool({
+    name: "collaboration_bootstrap",
+    arguments: { requested_role_label: "AI Engineer" },
+  });
+  assert.notEqual(bootstrapped.isError, true);
+  const dormantPrompt = text(await dormant.client.callTool({ name: "get_system_prompt", arguments: {} }));
+  assert.match(dormantPrompt, new RegExp(workerSessionId));
+  assert.match(dormantPrompt, /Canonical role: ai-engineer/i);
+  const initial = json(await primary.client.callTool({ name: "agent_work_wait", arguments: {} }));
+  const waiting = json(await primary.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: initial.chat.next_cursor,
+      task_board_token: initial.task_board_token,
+      maximum_wait_seconds: 1,
+    },
+  }));
+  assert.equal(waiting.work_state.lifecycle, "waiting_for_task");
+  const states = json(await manager.client.callTool({ name: "agent_work_list", arguments: {} }));
+  const workerState = states.work_states.find(
+    (state) => state.collaboration_session_id === workerSessionId,
+  );
+  assert.ok(workerState);
+  const released = await manager.client.callTool({
+    name: "agent_work_release",
+    arguments: {
+      target_collaboration_session_id: workerSessionId,
+      expected_revision: workerState.revision,
+      reason: "Pre-attached race regression",
+    },
+  });
+  assert.notEqual(released.isError, true);
+
+  const blocked = await dormant.client.callTool({
+    name: "agent_task_read",
+    arguments: { statuses: ["open"] },
+  });
+  assert.equal(blocked.isError, true);
+  assert.match(text(blocked), /permanently released by the manager/i);
+  await assert.rejects(
+    () => dormantRead.client.readResource({ uri: AGENT_CHAT_URI }),
+    /permanently released by the manager/i,
+  );
+  await assert.rejects(
+    () => dormantSubscribe.client.subscribeResource({ uri: AGENT_CHAT_URI }),
+    /permanently released by the manager/i,
+  );
 });
 
 test("disposing one shared logical handle does not mark another active handle offline", async (t) => {

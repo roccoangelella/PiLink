@@ -138,7 +138,7 @@ The implemented `CollaborationContextRegistry` is shared by all MCP server handl
 - reference count / active request count;
 - last-seen time and configurable detach grace;
 - terminal/released state;
-- a per-entry mutex or serialized queue.
+- an atomic shared access mode (`pristine`, `bootstrapping`, `bootstrapped`, or `generic_locked`) plus the in-flight initialization promise.
 
 The private collaboration-session bearer remains inside trusted process memory. This preserves the existing rule that process restart or loss of the private runtime cannot be resumed from OAuth identity or public IDs alone.
 
@@ -149,9 +149,10 @@ When a new physical MCP connection arrives with a trusted binding:
 1. authenticate OAuth and derive `bindingKey`;
 2. attach the MCP server handle to an existing registry entry, if present;
 3. re-verify the private collaboration session and immutable tuple before any role-gated operation;
-4. otherwise remain `pristine` until `collaboration_bootstrap` creates the registry entry;
-5. serialize concurrent bootstrap attempts for the same binding;
-6. reject a conflicting role request without replacing the existing entry.
+4. keep every pre-attached physical handle on one shared access state instead of snapshotting initialization only at handle construction;
+5. if bootstrap is already in flight, make dynamic prompt reads and project access wait and adopt the resulting verified context before the operation continues;
+6. if project access wins while the shared entry is still pristine, atomically lock the whole binding in generic mode so a later bootstrap cannot race past it;
+7. serialize concurrent bootstrap attempts for the same binding and reject conflicting role requests without replacing the entry.
 
 `src/index.ts` now attaches a registry controller when the trusted binding header is present; otherwise it creates the original connection-local `CollaborationBootstrap`. `createMcpServer()` receives either lifecycle controller through the same private bootstrap interface.
 
@@ -199,7 +200,7 @@ Do not suggest using the public session ID, role text, or OAuth actor as recover
 - A binding cannot change its pinned role request, canonical role, occupancy, contract ID, or contract version.
 - Manager authority is re-verified from the private attached context on every manager-only operation.
 - `RELEASED` remains terminal across reconnects using the same binding.
-- Concurrent attach/bootstrap/wait/release operations serialize per logical session.
+- Concurrent attach/bootstrap/project-access/wait/release operations share one logical state machine. A handle created before bootstrap cannot remain locally pristine after another attachment establishes or releases the shared session.
 - No raw binding, HMAC key, private handle, verifier, or recovery material reaches model-visible surfaces.
 - Transport disposal, task leases, collaboration-session expiry, and durable work-loop lifecycle remain distinct state machines.
 - Missing continuity metadata never degrades to generic actor-scoped role authority.
@@ -218,7 +219,7 @@ Do not suggest using the public session ID, role text, or OAuth actor as recover
 5. Initialize one real Streamable HTTP client, capture the server-issued `Mcp-Session-Id`, bootstrap, and invoke `agent_work_wait` on a later HTTP request carrying that same header. Assert one MCP handle, one `agent_instance_id`, one collaboration session, and the same verified role tuple.
 6. Repeat 100 sequential tool calls using the same `Mcp-Session-Id`. Assert exactly one logical collaboration session and no registry/header bridge involvement.
 7. Run parallel HTTP requests under the same `Mcp-Session-Id`. Assert the transport serializes or rejects unsupported concurrency safely without duplicating the private collaboration session.
-8. Only when a real trusted injector exists, bootstrap on physical connection A with hidden binding X and invoke `agent_work_wait` on fresh connection B with X. Assert the same public collaboration session ID, role tuple, and work state.
+8. Only when a real trusted injector exists, create physical connections A and B with hidden binding X before bootstrap, bootstrap A, and read dynamic guidance or invoke a role-gated operation from B. Assert B waits behind any in-flight initializer, adopts the same public collaboration session ID and role tuple in its prompt, and cannot bypass a later manager release on its first task, chat-resource, or subscription operation.
 
 ### Isolation
 
@@ -266,7 +267,7 @@ Do not suggest using the public session ID, role text, or OAuth actor as recover
 The repository now separates the relevant Streamable HTTP topologies:
 
 1. **Protocol-native session reuse:** existing sessionful transport tests verify that requests carrying the same server-issued `Mcp-Session-Id` route to one managed MCP handle.
-2. **Trusted-binding adapter:** `test/collaboration-context-registry.test.mjs`, `test/role-bootstrap-http.integration.test.mjs`, and `test/session-limits.integration.test.mjs` cover HMAC binding, actor/client-version isolation, fresh-session reattachment, duplicate or malformed header rejection, detach grace, cleanup, quota interaction, and unbound fail-closed behavior.
+2. **Trusted-binding adapter:** `test/collaboration-context-registry.test.mjs`, `test/mcp-work-loop.test.mjs`, `test/role-bootstrap-http.integration.test.mjs`, and `test/session-limits.integration.test.mjs` cover HMAC binding, actor/client-version isolation, pre-attached and in-flight bootstrap races, prompt-context adoption, latched prompt verification faults, first-operation blocking after manager release, fresh-session reattachment, duplicate or malformed header rejection, detach grace, cleanup, quota interaction, and unbound fail-closed behavior.
 3. **Observed ChatGPT connector limitation:** live calls still initialize a new MCP session for each tool invocation and supply no trusted hidden binding. This path correctly returns `COLLABORATION_CONTEXT_CONTINUITY_UNAVAILABLE`; no end-to-end compatibility claim is made.
 
 The remaining implementation target is outside PiLink's server runtime: the connector/harness must cache the initialized `Mcp-Session-Id` per logical conversation and reuse it, or a trusted edge must inject a unique hidden binding after stripping caller input. A positive test using a manually supplied header proves the server adapter only; it does not prove that the current ChatGPT connector provides the required trust boundary.

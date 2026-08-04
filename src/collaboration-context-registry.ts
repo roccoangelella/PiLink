@@ -18,8 +18,12 @@ export interface CollaborationContextAttachment {
   readonly sharedLogicalSession: true;
   initialize: CollaborationBootstrap["initialize"];
   verify: CollaborationBootstrap["verify"];
+  synchronizeSharedContext(): Promise<Readonly<VerifiedCollaborationContext> | undefined>;
+  prepareSharedProjectAccess(): Promise<Readonly<VerifiedCollaborationContext> | undefined>;
   dispose(): Promise<void>;
 }
+
+type RegistryEntryMode = "pristine" | "bootstrapping" | "bootstrapped" | "generic_locked";
 
 interface RegistryEntry {
   readonly key: string;
@@ -27,6 +31,8 @@ interface RegistryEntry {
   readonly actorName: string;
   readonly clientVersion: number;
   readonly bootstrap: CollaborationBootstrap;
+  mode: RegistryEntryMode;
+  initialization?: Promise<Readonly<VerifiedCollaborationContext>>;
   references: number;
   lastSeenAtMs: number;
   disposeTimer?: NodeJS.Timeout;
@@ -79,6 +85,7 @@ export class CollaborationContextRegistry {
         actorName: identity.agentName,
         clientVersion,
         bootstrap: this.createBootstrap(identity),
+        mode: "pristine",
         references: 0,
         lastSeenAtMs: Date.now(),
       };
@@ -100,8 +107,14 @@ export class CollaborationContextRegistry {
       get initialized() {
         return entry!.bootstrap.initialized;
       },
-      initialize: (requestedRoleLabel) => entry!.bootstrap.initialize(requestedRoleLabel),
-      verify: () => entry!.bootstrap.verify(),
+      initialize: (requestedRoleLabel) => this.initializeEntry(entry!, requestedRoleLabel),
+      verify: async () => {
+        const context = await this.synchronizeEntry(entry!, false);
+        if (!context) throw new Error("collaboration bootstrap is not initialized");
+        return context;
+      },
+      synchronizeSharedContext: () => this.synchronizeEntry(entry!, false),
+      prepareSharedProjectAccess: () => this.synchronizeEntry(entry!, true),
       dispose: async () => {
         if (detached) return;
         detached = true;
@@ -119,6 +132,78 @@ export class CollaborationContextRegistry {
       if (entry.disposeTimer) clearTimeout(entry.disposeTimer);
       await this.disposeEntry(entry);
     }));
+  }
+
+  private async initializeEntry(
+    entry: RegistryEntry,
+    requestedRoleLabel: unknown,
+  ): Promise<Readonly<VerifiedCollaborationContext>> {
+    while (true) {
+      if (entry.mode === "generic_locked") {
+        throw new Error("collaboration bootstrap is locked after project content or tools were accessed");
+      }
+      if (entry.mode === "bootstrapped") {
+        return entry.bootstrap.initialize(requestedRoleLabel);
+      }
+      if (entry.mode === "bootstrapping") {
+        const pending = entry.initialization;
+        if (!pending) {
+          entry.mode = entry.bootstrap.initialized ? "bootstrapped" : "pristine";
+          continue;
+        }
+        try {
+          await pending;
+        } catch {
+          // The first initializer owns the transition. Re-evaluate the shared
+          // state so a failed attempt can be retried or a successful one can
+          // validate this caller's role request idempotently.
+        }
+        continue;
+      }
+
+      entry.mode = "bootstrapping";
+      const attempt = entry.bootstrap.initialize(requestedRoleLabel);
+      entry.initialization = attempt;
+      try {
+        const context = await attempt;
+        if (entry.initialization === attempt) {
+          entry.initialization = undefined;
+          entry.mode = "bootstrapped";
+        }
+        return context;
+      } catch (error) {
+        if (entry.initialization === attempt) {
+          entry.initialization = undefined;
+          entry.mode = entry.bootstrap.initialized ? "bootstrapped" : "pristine";
+        }
+        throw error;
+      }
+    }
+  }
+
+  private async synchronizeEntry(
+    entry: RegistryEntry,
+    lockGenericWhenPristine: boolean,
+  ): Promise<Readonly<VerifiedCollaborationContext> | undefined> {
+    while (true) {
+      if (entry.mode === "bootstrapped") return entry.bootstrap.verify();
+      if (entry.mode === "generic_locked") return undefined;
+      if (entry.mode === "pristine") {
+        if (lockGenericWhenPristine) entry.mode = "generic_locked";
+        return undefined;
+      }
+
+      const pending = entry.initialization;
+      if (!pending) {
+        entry.mode = entry.bootstrap.initialized ? "bootstrapped" : "pristine";
+        continue;
+      }
+      try {
+        await pending;
+      } catch {
+        // initializeEntry records the resulting mode; loop and consume it.
+      }
+    }
   }
 
   private detach(entry: RegistryEntry): void {

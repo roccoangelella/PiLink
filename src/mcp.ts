@@ -81,6 +81,8 @@ export interface ConnectionCollaborationBootstrap {
   readonly sharedLogicalSession?: boolean;
   initialize(requestedRoleLabel: string): Promise<Readonly<ConnectionCollaborationContext>>;
   verify(): Promise<Readonly<ConnectionCollaborationContext>>;
+  synchronizeSharedContext?(): Promise<Readonly<ConnectionCollaborationContext> | undefined>;
+  prepareSharedProjectAccess?(): Promise<Readonly<ConnectionCollaborationContext> | undefined>;
   dispose(): Promise<void>;
 }
 
@@ -133,11 +135,38 @@ export function createMcpServer(
     : "generic_locked";
   let bootstrapAttemptsInFlight = 0;
   let collaborationVerificationFault: Error | undefined;
+  let collaborationVerificationAttachmentDisposed = false;
   let connectionDisposed = false;
-  const lockGenericCollaboration = (): string | undefined => {
+  const latchCollaborationVerificationFault = async (): Promise<Error> => {
+    if (!collaborationVerificationFault) {
+      collaborationVerificationFault = new Error("Verified collaboration context failed immutable tuple validation");
+    }
+    if (!collaborationVerificationAttachmentDisposed && collaborationBootstrap) {
+      collaborationVerificationAttachmentDisposed = true;
+      try {
+        await collaborationBootstrap.dispose();
+      } catch {
+        // The verification fault remains authoritative even if best-effort detach fails.
+      }
+    }
+    return collaborationVerificationFault;
+  };
+  const prepareProjectCollaboration = async (): Promise<string | undefined> => {
     if (connectionDisposed) return "MCP connection is disposed";
+    if (collaborationVerificationFault) return collaborationVerificationFault.message;
     if (collaborationConnectionState === "bootstrapping") {
       return "Collaboration bootstrap is in progress; retry the project operation after it completes";
+    }
+    if (collaborationConnectionState === "pristine" &&
+        collaborationBootstrap?.sharedLogicalSession === true &&
+        collaborationBootstrap.prepareSharedProjectAccess) {
+      try {
+        const context = await collaborationBootstrap.prepareSharedProjectAccess();
+        if (context) acceptVerifiedContext(context);
+      } catch {
+        await latchCollaborationVerificationFault();
+        return "Verified collaboration context is unavailable; retry after reconnecting";
+      }
     }
     if (collaborationConnectionState === "pristine") collaborationConnectionState = "generic_locked";
     return undefined;
@@ -167,14 +196,14 @@ export function createMcpServer(
     operation: () => T | Promise<T>,
     outcomeFields?: (result: T) => Partial<Pick<ToolAuditEventInput, "exitCode" | "timedOut" | "cancelled" | "truncated">>,
   ): Promise<T> => {
-    const gateError = tool !== "get_system_prompt" && tool !== "collaboration_bootstrap"
-      ? lockGenericCollaboration()
-      : undefined;
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
     let outcome: ToolAuditEventInput["outcome"] = "error";
     let fields: Partial<ToolAuditEventInput> = {};
     try {
+      const gateError = tool !== "get_system_prompt" && tool !== "collaboration_bootstrap"
+        ? await prepareProjectCollaboration()
+        : undefined;
       if (gateError) return toolError(gateError) as T;
       const workGateError = await releasedWorkStateGate(tool);
       if (workGateError) return toolError(workGateError) as T;
@@ -279,7 +308,8 @@ export function createMcpServer(
   ): Readonly<ConnectionCollaborationContext> => {
     if (!authenticatedIdentity) throw new Error("Authenticated identity is required for collaboration bootstrap");
     if (connectionDisposed) throw new Error("Collaboration bootstrap connection is disposed");
-    if (collaborationConnectionState === "generic_locked" || collaborationConnectionState === "pristine") {
+    if (collaborationConnectionState === "generic_locked" ||
+        (collaborationConnectionState === "pristine" && collaborationBootstrap?.sharedLogicalSession !== true)) {
       throw new Error("Collaboration bootstrap is locked after project content or tools were accessed; create a new MCP session");
     }
     const normalized = normalizeConnectionCollaborationContext(context);
@@ -295,17 +325,32 @@ export function createMcpServer(
     return normalized;
   };
 
-  const verifyCollaborationContext = async (): Promise<Readonly<ConnectionCollaborationContext>> => {
-    if (!collaborationBootstrap || collaborationConnectionState !== "bootstrapped") {
-      throw collaborationContinuityError();
-    }
+  const synchronizeSharedContextIfAvailable = async (): Promise<Readonly<ConnectionCollaborationContext> | undefined> => {
+    if (connectionDisposed) throw new Error("Collaboration bootstrap connection is disposed");
     if (collaborationVerificationFault) throw collaborationVerificationFault;
+    if (collaborationConnectionState !== "pristine" ||
+        collaborationBootstrap?.sharedLogicalSession !== true ||
+        !collaborationBootstrap.synchronizeSharedContext) {
+      return undefined;
+    }
+    try {
+      const synchronized = await collaborationBootstrap.synchronizeSharedContext();
+      return synchronized ? acceptVerifiedContext(synchronized) : undefined;
+    } catch {
+      throw await latchCollaborationVerificationFault();
+    }
+  };
+
+  const verifyCollaborationContext = async (): Promise<Readonly<ConnectionCollaborationContext>> => {
+    if (!collaborationBootstrap) throw collaborationContinuityError();
+    if (collaborationVerificationFault) throw collaborationVerificationFault;
+    const synchronized = await synchronizeSharedContextIfAvailable();
+    if (synchronized) return synchronized;
+    if (collaborationConnectionState !== "bootstrapped") throw collaborationContinuityError();
     try {
       return acceptVerifiedContext(await collaborationBootstrap.verify());
     } catch {
-      collaborationVerificationFault = new Error("Verified collaboration context failed immutable tuple validation");
-      await collaborationBootstrap.dispose();
-      throw collaborationVerificationFault;
+      throw await latchCollaborationVerificationFault();
     }
   };
 
@@ -333,9 +378,12 @@ export function createMcpServer(
   };
 
   const currentSystemPromptText = async (): Promise<string> => {
-    const context = collaborationConnectionState === "bootstrapped"
-      ? await verifyCollaborationContext()
-      : undefined;
+    let context: Readonly<ConnectionCollaborationContext> | undefined;
+    if (collaborationConnectionState === "bootstrapped") {
+      context = await verifyCollaborationContext();
+    } else {
+      context = await synchronizeSharedContextIfAvailable();
+    }
     return buildSystemPrompt(
       policy,
       context,
@@ -394,6 +442,7 @@ export function createMcpServer(
     }, (args, extra) => auditCall("collaboration_bootstrap", extra, async () => {
       if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'collaboration_bootstrap'");
       if (connectionDisposed) return toolError("Collaboration bootstrap connection is disposed");
+      if (collaborationVerificationFault) return toolError(collaborationVerificationFault.message);
       if (collaborationConnectionState === "generic_locked") {
         return toolError("Collaboration bootstrap is locked after project content or tools were accessed; create a new MCP session");
       }
@@ -694,7 +743,7 @@ export function createMcpServer(
       description: "Authoritative persisted coordination messages. Notifications are best effort.",
       mimeType: "application/json",
     }, async () => {
-      const gateError = lockGenericCollaboration();
+      const gateError = await prepareProjectCollaboration();
       if (gateError) throw new Error(gateError);
       const workGateError = await releasedWorkStateGate("agent_chat_resource_read");
       if (workGateError) throw new Error(workGateError);
@@ -1191,7 +1240,7 @@ export function createMcpServer(
     }
 
     server.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
-      const gateError = lockGenericCollaboration();
+      const gateError = await prepareProjectCollaboration();
       if (gateError) throw new Error(gateError);
       const workGateError = await releasedWorkStateGate("agent_chat_subscribe");
       if (workGateError) throw new Error(workGateError);
@@ -1201,7 +1250,7 @@ export function createMcpServer(
       return {};
     });
     server.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
-      const gateError = lockGenericCollaboration();
+      const gateError = await prepareProjectCollaboration();
       if (gateError) throw new Error(gateError);
       requireChatReadScope(scopes);
       if (request.params.uri !== AGENT_CHAT_URI) throw new Error("Unsupported resource URI");

@@ -163,6 +163,13 @@ test("trusted private binding preserves verified collaboration across fresh HTTP
     fixture.diagnostics,
     sharedHeaders,
   );
+  const dormantPreAttached = await connectRawPostOnlySession(
+    fixture.serverUrl,
+    accessToken,
+    "fresh-connection-pre-attached-dormant",
+    fixture.diagnostics,
+    sharedHeaders,
+  );
   const bootstrapped = parseRawToolResult(await first.callTool(
     "collaboration_bootstrap",
     { requested_role_label: "DEV" },
@@ -202,6 +209,48 @@ test("trusted private binding preserves verified collaboration across fresh HTTP
     display_role_id: "dev",
     display_role_label: "DEV",
   });
+
+  const changedAfterPost = parseRawToolResult(await second.callTool("agent_work_wait", {
+    after_chat_cursor: waited.chat.next_cursor,
+    task_board_token: waited.task_board_token,
+    maximum_wait_seconds: 1,
+  }));
+  assert.equal(changedAfterPost.outcome, "changed");
+  const waiting = parseRawToolResult(await second.callTool("agent_work_wait", {
+    after_chat_cursor: changedAfterPost.chat.next_cursor,
+    task_board_token: changedAfterPost.task_board_token,
+    maximum_wait_seconds: 1,
+  }));
+  assert.equal(waiting.outcome, "timeout");
+  assert.equal(waiting.work_state.lifecycle, "waiting_for_task");
+
+  const manager = await connectRawPostOnlySession(
+    fixture.serverUrl,
+    accessToken,
+    "fresh-connection-manager",
+    fixture.diagnostics,
+    { [bindingHeader]: "private-manager-conversation" },
+  );
+  const managerBootstrap = parseRawToolResult(await manager.callTool(
+    "collaboration_bootstrap",
+    { requested_role_label: "manager" },
+  ));
+  assert.equal(managerBootstrap.assigned_role_id, "manager");
+  const states = parseRawToolResult(await manager.callTool("agent_work_list", {}));
+  const workerState = states.work_states.find(
+    (state) => state.collaboration_session_id === bootstrapped.collaboration_session_id,
+  );
+  assert.ok(workerState);
+  const released = parseRawToolResult(await manager.callTool("agent_work_release", {
+    target_collaboration_session_id: bootstrapped.collaboration_session_id,
+    expected_revision: workerState.revision,
+    reason: "Pre-attached real HTTP regression",
+  }));
+  assert.equal(released.lifecycle, "released");
+
+  const blockedDormant = await dormantPreAttached.callTool("agent_task_read", { statuses: ["open"] });
+  assert.equal(blockedDormant.isError, true);
+  assert.match(parseRawToolText(blockedDormant), /permanently released by the manager/i);
 
   const isolated = await connectRawPostOnlySession(
     fixture.serverUrl,
