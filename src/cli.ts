@@ -6,31 +6,177 @@ import https from "node:https";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.js";
-import { loadClients, registerClient } from "./auth.js";
+import { loadEnvironment, loadRuntimeConfig, defaultConfigPath, defaultCoordinationDataDir, type RuntimeConfig } from "./config.js";
+import { chatCliAutoLaunchEnabled, launchChatCli } from "./chat-cli.js";
+import {
+  effectiveClientTokenVersion,
+  isClientActive,
+  loadClients,
+  registerClient,
+  rotateClientSecret,
+  setClientDisabled,
+} from "./auth.js";
 import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublicIpv4, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
+import { assertRequiredNodeVersion } from "./runtime.js";
+import { runHostingCli } from "./hosting/cli.js";
+import { runAgentAuthCli } from "./agents/auth-cli.js";
 
+assertRequiredNodeVersion();
 const [, , command = "start", ...args] = process.argv;
 let configPath = process.env.PILINK_CONFIG || defaultConfigPath();
 const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
+const MAX_VERIFIED_BINARY_DOWNLOAD_BYTES = 128 * 1024 * 1024;
+const BINARY_PROBE_TIMEOUT_MS = 10_000;
+const CLOUDFLARED_VERSION = "2026.7.2";
+const CADDY_VERSION = "2.11.4";
+const CLOUDFLARED_LINUX_SHA256: Readonly<Record<"x64" | "arm64", string>> = {
+  x64: "ec905ea7b7e327ff8abdde8cb64697a2152de74dbcdbf6aec9db8364eb3886cd",
+  arm64: "405df476437e027fc6d18729a5a77155c0a33a6082aeee60a799a688f3052e66",
+};
+const CADDY_LINUX_ARCHIVE_SHA256: Readonly<Record<"x64" | "arm64", string>> = {
+  x64: "527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9",
+  arm64: "52d42ae12b3462097e9868da6dfed3c9648ae12edd3b3638102312af84cb6904",
+};
+const CADDY_LINUX_BINARY_SHA256: Readonly<Record<"x64" | "arm64", string>> = {
+  x64: "b7105518e3ed1c0761f232e44fc09345535533c9cb0abf0e12809416c7ac64d9",
+  arm64: "e1f904038fc11ca897ac5a12fdacfb2a7add02a8720c426d562a37f6fdad2afe",
+};
 let waitingForSetupCallback = false;
 let deferredServerOutput = "";
 let deferredServerOutputTruncated = false;
+let chatCliActive = false;
+let chatCliProcess: ChildProcess | undefined;
+
+installParentShutdownBridge();
 
 if (command === "init") {
   initialize();
 } else if (command === "start") {
   void start(args.includes("--allow-unsafe-full-access"), args.includes("--setup"));
 } else if (command === "serve") {
-  startServer(args.includes("--allow-unsafe-full-access"));
+  serve(args.includes("--allow-unsafe-full-access"));
+} else if (command === "chat") {
+  openChatCli();
 } else if (command === "reset") {
   void reset(args);
+} else if (command === "hosting") {
+  void runHostingCli(args).then((exitCode) => { process.exitCode = exitCode; });
+} else if (command === "agent-auth") {
+  void runAgentAuthCli(args).then((exitCode) => { process.exitCode = exitCode; });
+} else if (command === "clients") {
+  void manageClients(args).catch(() => {
+    console.error("Unable to update the OAuth client store.");
+    process.exitCode = 1;
+  });
 } else {
-  console.error("Usage: pilink <init|start|serve|reset> [--allow-unsafe-full-access] [--setup] [--yes] [--start]");
+  printUsage();
   process.exitCode = 1;
+}
+
+function printUsage(): void {
+  console.error("Usage: pilink <init|start|serve|chat|reset|hosting|agent-auth|clients> [options]");
+  console.error("  pilink chat");
+  console.error("  pilink clients list");
+  console.error("  pilink clients disable <client-id>");
+  console.error("  pilink clients enable <client-id>");
+  console.error("  pilink clients rotate-secret <client-id>");
+}
+
+async function manageClients(commandArgs: string[]): Promise<void> {
+  if (!fs.existsSync(configPath)) {
+    console.error("PiLink is not configured. Run 'pilink init' first.");
+    process.exitCode = 1;
+    return;
+  }
+  loadEnvironment();
+  loadRuntimeConfig();
+
+  const [action = "list", clientId, ...extra] = commandArgs;
+  if (extra.length > 0 || (action === "list" && clientId !== undefined) ||
+      (action !== "list" && !isOAuthClientId(clientId))) {
+    printUsage();
+    process.exitCode = 1;
+    return;
+  }
+
+  if (action === "list") {
+    const clients = loadClients();
+    if (clients.length === 0) {
+      console.log("No OAuth clients are registered.");
+      return;
+    }
+    console.log("CLIENT_ID\tSTATUS\tTOKEN_VERSION\tNAME\tSCOPE\tCREATED_AT");
+    for (const client of clients) {
+      console.log([
+        terminalField(client.client_id),
+        isClientActive(client) ? "active" : "disabled",
+        String(effectiveClientTokenVersion(client)),
+        terminalField(client.client_name),
+        terminalField(client.scope),
+        terminalField(client.created_at),
+      ].join("\t"));
+    }
+    return;
+  }
+
+  if (action === "disable" || action === "enable") {
+    const disabled = action === "disable";
+    const client = await setClientDisabled(clientId, disabled);
+    if (!client) {
+      console.error("OAuth client not found.");
+      process.exitCode = 1;
+      return;
+    }
+    console.error(`${disabled ? "Disabled" : "Enabled"} OAuth client ${terminalField(client.client_id)}.`);
+    if (disabled) console.error("Existing access tokens, refresh tokens, and authenticated MCP requests are now invalid.");
+    return;
+  }
+
+  if (action === "rotate-secret") {
+    const rotated = await rotateClientSecret(clientId);
+    if (!rotated) {
+      console.error("OAuth client not found.");
+      process.exitCode = 1;
+      return;
+    }
+    console.error(`Rotated the secret for OAuth client ${terminalField(rotated.client.client_id)}.`);
+    console.error("Existing access tokens, refresh tokens, and authenticated MCP requests are now invalid.");
+    console.error("Store this new secret now; PiLink will not display it again:");
+    console.log(rotated.client_secret);
+    return;
+  }
+
+  printUsage();
+  process.exitCode = 1;
+}
+
+function isOAuthClientId(value: unknown): value is string {
+  return typeof value === "string" && /^pi_[a-f0-9]{16}$/iu.test(value);
+}
+
+function terminalField(value: string): string {
+  const safe = value.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/gu, " ");
+  return JSON.stringify(safe).slice(1, -1);
+}
+
+function installParentShutdownBridge(): void {
+  if (!process.channel) return;
+  let shutdownRequested = false;
+  process.on("message", (message: unknown) => {
+    if (
+      shutdownRequested ||
+      !message ||
+      typeof message !== "object" ||
+      (message as Record<string, unknown>).type !== "vspilink.shutdown"
+    ) return;
+    shutdownRequested = true;
+    const handled = process.emit("SIGINT");
+    if (!handled) process.exit(0);
+  });
+  process.channel.unref();
 }
 
 function initialize(portOverride?: number): void {
@@ -44,6 +190,7 @@ function initialize(portOverride?: number): void {
     "# Generated by pilink init. Keep this file private.",
     `PI_WORK_DIR=${workspace}`,
     `PI_DATA_DIR=${path.dirname(configPath)}`,
+    `PI_COORDINATION_DATA_DIR=${defaultCoordinationDataDir(configPath)}`,
     `PORT=${portOverride ?? 3200}`,
     `JWT_SECRET=${secret()}`,
     `PI_BOOTSTRAP_SECRET=${secret()}`,
@@ -52,8 +199,21 @@ function initialize(portOverride?: number): void {
     "PI_MAX_MCP_SESSIONS_PER_CLIENT=16",
     "PI_MCP_SESSION_IDLE_TIMEOUT=600",
     "PI_MCP_SESSION_RECLAIM_GRACE=5",
+    "TOKEN_EXPIRY=3600",
+    "PI_REFRESH_TOKEN_EXPIRY=2592000",
+    "PI_OAUTH_CONSENT_MODE=paired",
+    "PI_OAUTH_PUBLIC_CHATGPT_DCR=false",
+    "PI_AGENT_MAX_CONCURRENT=4",
+    "PI_AGENT_THINKING_LEVEL=medium",
+    "# PI_AGENT_PROVIDER=provider-id",
+    "# PI_AGENT_MODEL=model-id",
+    "# PI_AGENT_API_KEY=store-only-in-this-private-file",
+    "# PI_ALLOW_WORKSPACE_EXECUTION=false",
+    "# PI_REQUIRE_EXECUTION_APPROVAL=false",
+    "# PI_CHAT_CLI=auto  # open the original read-only monitor after the first authenticated MCP connection; set off to disable",
     "# PI_UNSAFE_FULL_ACCESS=false",
-    "# CORS_ORIGINS=https://chatgpt.com",
+    "# PI_FULL_ACCESS_CLIENT_IDS=",
+    "# CORS_ORIGINS=https://client.example",
     "",
   ].join("\n");
   fs.writeFileSync(configPath, config, { mode: 0o600 });
@@ -97,6 +257,10 @@ function resetTargets(): string[] {
   const targets = new Set<string>([
     configPath,
     path.join(dataDirectory, "clients.json"),
+    path.join(dataDirectory, "refresh-tokens.json"),
+    path.join(dataDirectory, "revoked-tokens.json"),
+    path.join(dataDirectory, "oauth-client-audit.jsonl"),
+    path.join(dataDirectory, "oauth-state.lock"),
     path.join(configDirectory, "bin", cloudflaredFileName()),
     path.join(configDirectory, "bin", caddyFileName()),
     path.join(configDirectory, "Caddyfile"),
@@ -170,6 +334,88 @@ async function handleSetupMode(): Promise<void> {
   }
 }
 
+function serve(unsafe: boolean): void {
+  const server = startServer(unsafe);
+  armChatCliAutoLaunch(server, Promise.resolve());
+}
+
+function openChatCli(): void {
+  if (!fs.existsSync(configPath)) {
+    console.error(`PiLink configuration does not exist: ${configPath}. Run 'pilink init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    loadEnvironment();
+    const config = loadRuntimeConfig();
+    const result = launchChatCli(config);
+    if (!result.child) {
+      console.error(result.error || "Unable to launch PiLink chat CLI.");
+      process.exitCode = 1;
+      return;
+    }
+    result.child.once("error", (error) => {
+      console.error(`PiLink chat CLI failed: ${error.message}`);
+      process.exitCode = 1;
+    });
+    result.child.once("exit", (code, signal) => {
+      if (code !== 0 && signal === null) process.exitCode = code ?? 1;
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+interface StartedServer {
+  process: ChildProcess;
+  ready: Promise<boolean>;
+  connected: Promise<boolean>;
+  config: RuntimeConfig;
+}
+
+function armChatCliAutoLaunch(server: StartedServer, prerequisite: Promise<unknown>): void {
+  let enabled: boolean;
+  try {
+    enabled = chatCliAutoLaunchEnabled();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  if (!enabled) return;
+
+  void Promise.all([server.connected, prerequisite]).then(([connected]) => {
+    if (!connected || server.process.exitCode !== null || server.process.killed || chatCliProcess) return;
+    const result = launchChatCli(server.config);
+    if (!result.child) {
+      console.error(result.error || "Unable to launch PiLink chat CLI.");
+      return;
+    }
+
+    const child = result.child;
+    chatCliProcess = child;
+    chatCliActive = true;
+    let finished = false;
+    const finish = (code: number | null, signal: NodeJS.Signals | null, error?: Error) => {
+      if (finished) return;
+      finished = true;
+      chatCliActive = false;
+      chatCliProcess = undefined;
+      if (error) console.error(`PiLink chat CLI failed: ${error.message}`);
+      if (server.process.exitCode === null && !server.process.killed) server.process.kill("SIGINT");
+      if (error || (code !== 0 && signal === null)) process.exitCode = code ?? 1;
+    };
+
+    child.once("error", (error) => finish(null, null, error));
+    child.once("exit", (code, signal) => finish(code, signal));
+    server.process.once("exit", () => {
+      if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
+    });
+  }).catch((error) => {
+    console.error(`PiLink chat CLI could not start: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
 async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
   if (forceSetup) {
     await handleSetupMode();
@@ -183,6 +429,8 @@ async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  saveConfig({ PI_OAUTH_PUBLIC_CHATGPT_DCR: "true" });
+  process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
   if (hostingMode === "nip-io") {
     await startNipIo(unsafe, forceSetup);
     return;
@@ -211,11 +459,12 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
       tunnel.stdout?.removeAllListeners("data");
       tunnel.stderr?.removeAllListeners("data");
       printQuickTunnelStartupInstructions(url);
-      const { process: serverProc, ready } = startServer(unsafe, url, tunnel);
-      server = serverProc;
-      void ready.then((serverReady) => {
+      const startedServer = startServer(unsafe, url, tunnel);
+      server = startedServer.process;
+      const setup = startedServer.ready.then((serverReady) => {
         if (serverReady) return runFirstTimeSetup(url, forceSetup);
       });
+      armChatCliAutoLaunch(startedServer, setup);
     }
   };
   tunnel.stdout?.on("data", discoverUrl);
@@ -252,7 +501,8 @@ async function selectHostingMode(forceSetup: boolean): Promise<"quick-tunnel" | 
   const choice = (await readline.question("Select hosting [1/2]: ")).trim();
   readline.close();
   if (choice === "" || choice === "1") {
-    saveConfig({ PI_HOSTING_MODE: "quick-tunnel" });
+    saveConfig({ PI_HOSTING_MODE: "quick-tunnel", PI_OAUTH_PUBLIC_CHATGPT_DCR: "true" });
+    process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
     return "quick-tunnel";
   }
   if (choice !== "2") throw new Error("Hosting setup cancelled: choose 1 or 2.");
@@ -276,9 +526,10 @@ async function configureNipIoHosting(): Promise<void> {
   const automatic = (await readline.question("Allow PiLink to request these temporary router mappings? [Y/n]: ")).trim().toLowerCase();
   readline.close();
   if (automatic === "" || automatic === "y" || automatic === "yes") {
-    saveConfig({ PI_HOSTING_MODE: "nip-io", PI_NIP_IO_NETWORK: "auto" });
+    saveConfig({ PI_HOSTING_MODE: "nip-io", PI_NIP_IO_NETWORK: "auto", PI_OAUTH_PUBLIC_CHATGPT_DCR: "true" });
     process.env.PI_HOSTING_MODE = "nip-io";
     process.env.PI_NIP_IO_NETWORK = "auto";
+    process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
     console.error("PiLink will now try automatic router setup. It can take up to 15 seconds; unsupported routers fall back to manual instructions.");
     return;
   }
@@ -310,11 +561,13 @@ async function configureManualNipIoHosting(): Promise<void> {
     PI_NIP_IO_NETWORK: "manual",
     PI_NIP_IO_HOSTNAME: hostname,
     SERVER_URL: `https://${hostname}`,
+    PI_OAUTH_PUBLIC_CHATGPT_DCR: "true",
   });
   process.env.PI_HOSTING_MODE = "nip-io";
   process.env.PI_NIP_IO_NETWORK = "manual";
   process.env.PI_NIP_IO_HOSTNAME = hostname;
   process.env.SERVER_URL = `https://${hostname}`;
+  process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
   console.error(`PiLink will use the persistent address: https://${hostname}`);
 }
 
@@ -373,7 +626,8 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   }
   const serverUrl = `https://${hostname}`;
   printNipIoStartupInstructions(serverUrl, Boolean(portMappings));
-  const { process: server, ready } = startServer(unsafe, serverUrl, caddy);
+  const startedServer = startServer(unsafe, serverUrl, caddy);
+  const server = startedServer.process;
   let shuttingDown = false;
   let caddyRunning = true;
   let mappingsReleased = false;
@@ -402,9 +656,10 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
     server.kill("SIGINT");
     process.exitCode = code === 0 ? 0 : 1;
   });
-  void Promise.all([ready, certificateReady]).then(([serverReady, certificateObtained]) => {
+  const setup = Promise.all([startedServer.ready, certificateReady]).then(([serverReady, certificateObtained]) => {
     if (serverReady && certificateObtained && caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
   });
+  armChatCliAutoLaunch(startedServer, setup);
 }
 
 function printQuickTunnelStartupInstructions(serverUrl: string): void {
@@ -430,7 +685,7 @@ function printNipIoStartupInstructions(serverUrl: string, automaticMappings: boo
 async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promise<void> {
   try {
     loadEnvironment();
-    loadRuntimeConfig();
+    const runtimeConfig = loadRuntimeConfig();
     const clients = loadClients();
     if (!forceSetup && clients.length > 0) {
       console.error("An OAuth client is already configured. Use 'pilink start --setup' to register another client.");
@@ -453,11 +708,14 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
       return;
     }
     assertHttpUrl(callbackUrl, "callback URL");
+    const ownerPairing = runtimeConfig.oauthConsentMode === "paired"
+      ? await requestOwnerPairing(runtimeConfig.port, runtimeConfig.bootstrapSecret, serverUrl)
+      : undefined;
     const { client, client_secret: clientSecret } = await registerClient(
       "ChatGPT",
       [callbackUrl],
-      ["authorization_code"],
-      "mcp:tools",
+      ["authorization_code", "refresh_token"],
+      "mcp:tools offline_access",
     );
     console.error("\nChatGPT OAuth client registered. Copy these values into ChatGPT now; the secret is shown only once.");
     console.error(`Client ID: ${client.client_id}`);
@@ -465,11 +723,111 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
     console.error("Token endpoint auth method: client_secret_post");
     console.error(`Authorization URL: ${serverUrl}/oauth/authorize`);
     console.error(`Token URL: ${serverUrl}/oauth/token`);
-    console.error("Scope: mcp:tools\n");
+    console.error("Scope: mcp:tools offline_access");
+    if (ownerPairing) openOwnerPairing(ownerPairing);
+    console.error("Back in ChatGPT, click Scan Tools, complete the VSPiLink OAuth approval, and wait for the scan to finish.\n");
   } catch (error) {
     console.error(`First-time ChatGPT setup could not complete: ${error instanceof Error ? error.message : "unknown error"}`);
     console.error("The MCP server is still running. Restart with 'pilink start --setup' to try again.");
   }
+}
+
+interface CliOwnerPairing {
+  pairingUrl: string;
+  expiresAt: string;
+}
+
+async function requestOwnerPairing(
+  port: number,
+  bootstrapSecret: string,
+  expectedServerUrl: string,
+): Promise<CliOwnerPairing> {
+  const response = await fetch(`http://127.0.0.1:${port}/admin/oauth/pairing`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${bootstrapSecret}`,
+      accept: "application/json",
+    },
+    redirect: "error",
+    signal: AbortSignal.timeout(5_000),
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`Owner pairing request failed (HTTP ${response.status})`);
+  if (Buffer.byteLength(body, "utf8") > 16 * 1024) throw new Error("Owner pairing response is too large");
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    throw new Error("Owner pairing response is invalid");
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Owner pairing response is invalid");
+  }
+  const pairingUrl = (payload as Record<string, unknown>).pairing_url;
+  const expiresAt = (payload as Record<string, unknown>).expires_at;
+  if (typeof pairingUrl !== "string" || typeof expiresAt !== "string") {
+    throw new Error("Owner pairing response is invalid");
+  }
+  validateOwnerPairingUrl(pairingUrl, expectedServerUrl, expiresAt);
+  return { pairingUrl, expiresAt };
+}
+
+function validateOwnerPairingUrl(pairingUrl: string, expectedServerUrl: string, expiresAt: string): void {
+  let pairing: URL;
+  let expected: URL;
+  try {
+    pairing = new URL(pairingUrl);
+    expected = new URL(expectedServerUrl);
+  } catch {
+    throw new Error("Owner pairing URL is invalid");
+  }
+  if (
+    pairing.protocol !== expected.protocol || pairing.origin !== expected.origin || pairing.pathname !== "/oauth/pair" ||
+    pairing.username || pairing.password || pairing.hash ||
+    [...pairing.searchParams.keys()].some((key) => key !== "code") ||
+    !/^[A-Za-z0-9_-]{20,512}$/.test(pairing.searchParams.get("code") || "")
+  ) {
+    throw new Error("Owner pairing URL does not match the configured VSPiLink server");
+  }
+  const expiration = Date.parse(expiresAt);
+  if (!Number.isFinite(expiration) || expiration <= Date.now()) throw new Error("Owner pairing URL is already expired");
+}
+
+function openOwnerPairing(pairing: CliOwnerPairing): void {
+  console.error("Open this one-use owner pairing URL in the same browser where you use ChatGPT:");
+  console.error(pairing.pairingUrl);
+  if (!shouldOpenBrowser()) {
+    console.error("Automatic browser opening is disabled for this non-interactive session. Open the URL printed above manually.");
+    return;
+  }
+  const opener = process.platform === "win32"
+    ? { command: "rundll32.exe", args: ["url.dll,FileProtocolHandler", pairing.pairingUrl] }
+    : process.platform === "darwin"
+      ? { command: "open", args: [pairing.pairingUrl] }
+      : { command: "xdg-open", args: [pairing.pairingUrl] };
+  const opened = spawnSync(opener.command, opener.args, {
+    stdio: "ignore",
+    timeout: 10_000,
+    windowsHide: true,
+  }).status === 0;
+  if (opened) {
+    console.error("VSPiLink opened the one-use owner pairing page in your browser. Confirm that it reports success before clicking Scan Tools.");
+    return;
+  }
+  console.error("VSPiLink could not open the owner pairing page automatically.");
+  console.error("Open the URL printed above manually, confirm success, then return to ChatGPT.");
+}
+
+function shouldOpenBrowser(): boolean {
+  const configured = process.env.PI_BROWSER_OPEN?.trim().toLowerCase();
+  if (configured === "always") return true;
+  if (configured === "never") return false;
+  if (configured && configured !== "auto") {
+    console.error("PI_BROWSER_OPEN is invalid; automatic browser opening is disabled. Use auto, always, or never.");
+    return false;
+  }
+  return process.stdin.isTTY === true && process.env.CI !== "true";
 }
 
 function printChatGptSetupInstructions(serverUrl: string): void {
@@ -490,80 +848,177 @@ function assertHttpUrl(value: string, label: string): void {
   }
 }
 
-async function downloadBinaryWithFallback(urls: string[], destination: string, label: string): Promise<void> {
-  const temporary = `${destination}.${process.pid}.tmp`;
-  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+interface VerifiedDownloadSource {
+  url: string;
+  sha256: string;
+}
+
+async function downloadFileWithFallback(sources: VerifiedDownloadSource[], destination: string, label: string): Promise<void> {
+  const destinationDirectory = ensurePrivateManagedDirectory(path.dirname(destination));
 
   let lastError: Error | undefined;
 
-  for (const url of urls) {
-    // Attempt 1: Try system curl if available
+  for (const source of sources) {
+    const temporaryDirectory = fs.mkdtempSync(path.join(destinationDirectory, ".vspilink-download-"));
+    fs.chmodSync(temporaryDirectory, 0o700);
+    const temporary = path.join(temporaryDirectory, "payload");
+    const url = source.url;
+    assertHttpUrl(url, `${label} download URL`);
+    const expectedSha256 = normalizedSha256(source.sha256, `${label} SHA-256`);
     try {
-      if (canRun("curl")) {
-        const res = spawnSync("curl", ["-sSL", "--retry", "3", "--retry-connrefused", "--connect-timeout", "30", "-o", temporary, url], {
-          stdio: "ignore",
-          timeout: 600_000,
-        });
-        if (res.status === 0 && fs.existsSync(temporary) && fs.statSync(temporary).size > 0) {
-          fs.chmodSync(temporary, 0o700);
-          fs.renameSync(temporary, destination);
-          return;
-        }
-      }
-    } catch {
-      // Fall through
-    } finally {
-      if (fs.existsSync(temporary) && !fs.existsSync(destination)) {
-        fs.rmSync(temporary, { force: true });
-      }
-    }
-
-    // Attempt 2: Try system wget if available
-    try {
-      if (canRun("wget")) {
-        const res = spawnSync("wget", ["-q", "--tries=3", "--timeout=30", "-O", temporary, url], {
-          stdio: "ignore",
-          timeout: 600_000,
-        });
-        if (res.status === 0 && fs.existsSync(temporary) && fs.statSync(temporary).size > 0) {
-          fs.chmodSync(temporary, 0o700);
-          fs.renameSync(temporary, destination);
-          return;
-        }
-      }
-    } catch {
-      // Fall through
-    } finally {
-      if (fs.existsSync(temporary) && !fs.existsSync(destination)) {
-        fs.rmSync(temporary, { force: true });
-      }
-    }
-
-    // Attempt 3: Fallback to Node fetch with generous 10-minute timeout
-    try {
-      const response = await fetch(url, {
-        redirect: "follow",
-        signal: AbortSignal.timeout(600_000),
-      });
-      if (!response.ok || !response.body) {
-        throw new Error(`HTTP download failed (${response.status})`);
-      }
-      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { mode: 0o700 }));
-      if (fs.existsSync(temporary) && fs.statSync(temporary).size > 0) {
-        fs.chmodSync(temporary, 0o700);
-        fs.renameSync(temporary, destination);
-        return;
-      }
+      await fetchVerifiedDownload(url, temporary, expectedSha256, label);
+      replaceManagedFile(temporary, destination);
+      return;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     } finally {
-      if (fs.existsSync(temporary) && !fs.existsSync(destination)) {
-        fs.rmSync(temporary, { force: true });
-      }
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   }
 
   throw new Error(`Could not install ${label} automatically: ${lastError ? lastError.message : "download failed"}`);
+}
+
+async function fetchVerifiedDownload(
+  initialUrl: string,
+  destination: string,
+  expectedSha256: string,
+  label: string,
+): Promise<void> {
+  let current = new URL(initialUrl);
+  const loopbackDevelopmentDownload = current.protocol === "http:" && isLoopbackDownloadHost(current.hostname);
+  if (current.protocol !== "https:" && !loopbackDevelopmentDownload) {
+    throw new Error("binary downloads must use HTTPS; plain HTTP is accepted only from loopback for local tests");
+  }
+  const signal = AbortSignal.timeout(600_000);
+
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const response = await fetch(current, {
+      redirect: "manual",
+      signal,
+    });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get("location");
+      if (!location) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error("download redirect did not include a destination");
+      }
+      const next = new URL(location, current);
+      const permitted = next.protocol === "https:" ||
+        (loopbackDevelopmentDownload && next.protocol === "http:" && isLoopbackDownloadHost(next.hostname));
+      await response.body?.cancel().catch(() => undefined);
+      if (!permitted) throw new Error("download redirect attempted to leave the verified HTTPS boundary");
+      current = next;
+      continue;
+    }
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`HTTP download failed (${response.status})`);
+    }
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength && /^\d+$/.test(declaredLength) && BigInt(declaredLength) > BigInt(MAX_VERIFIED_BINARY_DOWNLOAD_BYTES)) {
+      await response.body.cancel().catch(() => undefined);
+      throw new Error(`${label} download exceeds the ${MAX_VERIFIED_BINARY_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit`);
+    }
+
+    const hash = crypto.createHash("sha256");
+    let receivedBytes = 0;
+    const verifier = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        receivedBytes += chunk.length;
+        if (receivedBytes > MAX_VERIFIED_BINARY_DOWNLOAD_BYTES) {
+          callback(new Error(`${label} download exceeds the ${MAX_VERIFIED_BINARY_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit`));
+          return;
+        }
+        hash.update(chunk);
+        callback(null, chunk);
+      },
+    });
+    await pipeline(
+      Readable.fromWeb(response.body),
+      verifier,
+      fs.createWriteStream(destination, { flags: "wx", mode: 0o600 }),
+    );
+    if (receivedBytes === 0) throw new Error(`${label} download was empty`);
+    const actualSha256 = hash.digest("hex");
+    if (actualSha256 !== expectedSha256) {
+      throw new Error(`${label} download failed SHA-256 verification`);
+    }
+    fs.chmodSync(destination, 0o700);
+    return;
+  }
+  throw new Error("download exceeded the maximum redirect count");
+}
+
+function ensurePrivateManagedDirectory(directory: string): string {
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = fs.lstatSync(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Managed binary directory must be a real directory: ${directory}`);
+  }
+  fs.chmodSync(directory, 0o700);
+  return directory;
+}
+
+function replaceManagedFile(source: string, destination: string): void {
+  try {
+    const existing = fs.lstatSync(destination);
+    if (existing.isDirectory()) throw new Error(`Managed binary destination is a directory: ${destination}`);
+    fs.rmSync(destination, { force: true });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  fs.renameSync(source, destination);
+}
+
+function isLoopbackDownloadHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function normalizedSha256(value: string, label: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) throw new Error(`${label} must be exactly 64 hexadecimal characters`);
+  return normalized;
+}
+
+async function sha256RegularFile(file: string, label: string): Promise<string> {
+  const stat = fs.lstatSync(file);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) {
+    throw new Error(`${label} must be a non-empty regular file`);
+  }
+  if (stat.size > MAX_VERIFIED_BINARY_DOWNLOAD_BYTES) {
+    throw new Error(`${label} exceeds the ${MAX_VERIFIED_BINARY_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit`);
+  }
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+async function isVerifiedManagedFile(file: string, expectedSha256: string): Promise<boolean> {
+  try {
+    return await sha256RegularFile(file, "Cached managed binary") === expectedSha256;
+  } catch {
+    return false;
+  }
+}
+
+function customOrPinnedDownload(
+  label: string,
+  customUrl: string | undefined,
+  customSha256: string | undefined,
+  pinnedUrl: string,
+  pinnedSha256: string,
+): VerifiedDownloadSource {
+  const url = customUrl?.trim();
+  const sha256 = customSha256?.trim();
+  if (url || sha256) {
+    if (!url || !sha256) {
+      throw new Error(`${label} overrides require both the download URL and its SHA-256 digest`);
+    }
+    return { url, sha256: normalizedSha256(sha256, `${label} SHA-256`) };
+  }
+  return { url: pinnedUrl, sha256: pinnedSha256 };
 }
 
 async function ensureCloudflared(): Promise<string> {
@@ -575,19 +1030,24 @@ async function ensureCloudflared(): Promise<string> {
   if (canRun("cloudflared")) return "cloudflared";
 
   const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());
-  if (canRun(destination)) return destination;
   if (process.platform !== "linux") {
     throw new Error("cloudflared is not installed. Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ and run pilink start again.");
   }
 
   const asset = cloudflaredAsset();
-  console.error(`cloudflared is not installed; downloading the official ${asset} release for this first launch...`);
-  const urls = process.env.PI_CLOUDFLARED_URL
-    ? [process.env.PI_CLOUDFLARED_URL]
-    : [`https://github.com/cloudflare/cloudflared/releases/latest/download/${asset}`];
+  const architecture = supportedLinuxArchitecture("cloudflared");
+  const source = customOrPinnedDownload(
+    "cloudflared",
+    process.env.PI_CLOUDFLARED_URL,
+    process.env.PI_CLOUDFLARED_SHA256,
+    `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset}`,
+    CLOUDFLARED_LINUX_SHA256[architecture],
+  );
+  if (await isVerifiedManagedFile(destination, source.sha256) && canRun(destination)) return destination;
+  console.error(`cloudflared is not installed; downloading verified cloudflared ${CLOUDFLARED_VERSION} (${asset}) for this first launch...`);
 
   try {
-    await downloadBinaryWithFallback(urls, destination, asset);
+    await downloadFileWithFallback([source], destination, asset);
   } catch (error) {
     throw new Error(
       `Could not install cloudflared automatically: ${error instanceof Error ? error.message : "unknown error"}. ` +
@@ -595,7 +1055,7 @@ async function ensureCloudflared(): Promise<string> {
     );
   }
 
-  if (!canRun(destination)) {
+  if (!await isVerifiedManagedFile(destination, source.sha256) || !canRun(destination)) {
     fs.rmSync(destination, { force: true });
     throw new Error("Downloaded cloudflared did not run successfully. Install it manually from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
   }
@@ -689,32 +1149,110 @@ async function ensureCaddy(): Promise<string> {
   if (process.platform !== "linux") {
     throw new Error("Caddy is required for direct nip.io HTTPS hosting. Install Caddy and set PI_CADDY_PATH to its executable.");
   }
-  const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : undefined;
-  if (!architecture) throw new Error(`Automatic Caddy installation is unsupported for architecture '${process.arch}'. Install Caddy and set PI_CADDY_PATH.`);
+  const nodeArchitecture = supportedLinuxArchitecture("Caddy");
+  const architecture = nodeArchitecture === "x64" ? "amd64" : "arm64";
   const destination = path.join(path.dirname(configPath), "bin", caddyFileName());
-  if (canRun(destination)) return destination;
-  console.error(`Caddy is not installed; downloading the official Linux ${architecture} release for direct nip.io HTTPS hosting...`);
-  const urls = process.env.PI_CADDY_URL
-    ? [process.env.PI_CADDY_URL]
-    : [`https://caddyserver.com/api/download?os=linux&arch=${architecture}`];
+  const verificationMetadataPath = `${destination}.verified.json`;
+  const archiveName = `caddy_${CADDY_VERSION}_linux_${architecture}.tar.gz`;
+  const customSource = Boolean(process.env.PI_CADDY_URL?.trim() || process.env.PI_CADDY_SHA256?.trim());
+  const source = customOrPinnedDownload(
+    "Caddy",
+    process.env.PI_CADDY_URL,
+    process.env.PI_CADDY_SHA256,
+    `https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/${archiveName}`,
+    CADDY_LINUX_ARCHIVE_SHA256[nodeArchitecture],
+  );
+  if (await isVerifiedCaddyCache(
+    destination,
+    verificationMetadataPath,
+    source.sha256,
+    customSource ? undefined : CADDY_LINUX_BINARY_SHA256[nodeArchitecture],
+  ) && canRun(destination)) return destination;
+
+  const binaryDirectory = ensurePrivateManagedDirectory(path.dirname(destination));
+  const installationDirectory = fs.mkdtempSync(path.join(binaryDirectory, ".caddy-install-"));
+  fs.chmodSync(installationDirectory, 0o700);
+  const archivePath = path.join(installationDirectory, archiveName);
+  const extractionDirectory = path.join(installationDirectory, "extracted");
+  fs.mkdirSync(extractionDirectory, { mode: 0o700 });
+  console.error(`Caddy is not installed; downloading verified Caddy ${CADDY_VERSION} for Linux ${architecture}...`);
 
   try {
-    await downloadBinaryWithFallback(urls, destination, `Caddy (${architecture})`);
+    await downloadFileWithFallback([source], archivePath, `Caddy ${CADDY_VERSION} archive (${architecture})`);
+    const extraction = spawnSync("tar", ["-xzf", archivePath, "-C", extractionDirectory, "caddy"], {
+      stdio: "ignore",
+      timeout: 120_000,
+    });
+    const extracted = path.join(extractionDirectory, "caddy");
+    if (extraction.error || extraction.signal || extraction.status !== 0 || !fs.existsSync(extracted) || !fs.lstatSync(extracted).isFile()) {
+      throw new Error("the verified archive could not be extracted safely; install Caddy manually and set PI_CADDY_PATH");
+    }
+    const extractedSha256 = await sha256RegularFile(extracted, "Extracted Caddy binary");
+    const pinnedBinarySha256 = customSource ? undefined : CADDY_LINUX_BINARY_SHA256[nodeArchitecture];
+    if (pinnedBinarySha256 && extractedSha256 !== pinnedBinarySha256) {
+      throw new Error("the extracted Caddy binary did not match the pinned release digest");
+    }
+    fs.chmodSync(extracted, 0o700);
+    replaceManagedFile(extracted, destination);
+    if (customSource) {
+      const metadataTemporary = path.join(installationDirectory, "verified.json");
+      fs.writeFileSync(metadataTemporary, `${JSON.stringify({
+        sourceSha256: source.sha256,
+        binarySha256: extractedSha256,
+      })}\n`, { flag: "wx", mode: 0o600 });
+      replaceManagedFile(metadataTemporary, verificationMetadataPath);
+    } else {
+      fs.rmSync(verificationMetadataPath, { force: true });
+    }
   } catch (error) {
     throw new Error(`Could not install Caddy automatically: ${error instanceof Error ? error.message : "unknown error"}`);
+  } finally {
+    fs.rmSync(installationDirectory, { recursive: true, force: true });
   }
 
-  if (!canRun(destination)) {
+  if (!await isVerifiedCaddyCache(
+    destination,
+    verificationMetadataPath,
+    source.sha256,
+    customSource ? undefined : CADDY_LINUX_BINARY_SHA256[nodeArchitecture],
+  ) || !canRun(destination)) {
     fs.rmSync(destination, { force: true });
+    fs.rmSync(verificationMetadataPath, { force: true });
     throw new Error("Downloaded Caddy did not run successfully. Install it manually and set PI_CADDY_PATH.");
   }
   return destination;
 }
 
+async function isVerifiedCaddyCache(
+  executable: string,
+  metadataPath: string,
+  sourceSha256: string,
+  pinnedBinarySha256?: string,
+): Promise<boolean> {
+  try {
+    if (pinnedBinarySha256) return await isVerifiedManagedFile(executable, pinnedBinarySha256);
+    const metadataStat = fs.lstatSync(metadataPath);
+    if (metadataStat.isSymbolicLink() || !metadataStat.isFile() || metadataStat.size > 4096) return false;
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as {
+      sourceSha256?: unknown;
+      binarySha256?: unknown;
+    };
+    if (metadata.sourceSha256 !== sourceSha256 || typeof metadata.binarySha256 !== "string") return false;
+    const expectedBinarySha256 = normalizedSha256(metadata.binarySha256, "Cached Caddy SHA-256");
+    return await isVerifiedManagedFile(executable, expectedBinarySha256);
+  } catch {
+    return false;
+  }
+}
+
 function cloudflaredAsset(): string {
-  const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : undefined;
-  if (!architecture) throw new Error(`Automatic cloudflared installation is unsupported for architecture '${process.arch}'. Install cloudflared manually.`);
+  const architecture = supportedLinuxArchitecture("cloudflared") === "x64" ? "amd64" : "arm64";
   return `cloudflared-linux-${architecture}`;
+}
+
+function supportedLinuxArchitecture(label: string): "x64" | "arm64" {
+  if (process.arch === "x64" || process.arch === "arm64") return process.arch;
+  throw new Error(`Automatic ${label} installation is unsupported for architecture '${process.arch}'. Install it manually and configure its explicit path.`);
 }
 
 function cloudflaredFileName(): string {
@@ -726,14 +1264,20 @@ function caddyFileName(): string {
 }
 
 function canRun(executable: string): boolean {
-  return spawnSync(executable, ["--version"], { stdio: "ignore" }).status === 0;
+  const result = spawnSync(executable, ["--version"], {
+    stdio: "ignore",
+    timeout: BINARY_PROBE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    windowsHide: true,
+  });
+  return !result.error && !result.signal && result.status === 0;
 }
 
-function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): { process: ChildProcess; ready: Promise<boolean> } {
+function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): StartedServer {
   if (!fs.existsSync(configPath)) initialize();
   loadEnvironment();
   const config = loadRuntimeConfig();
-  if (unsafe) console.error("DANGER: full-machine filesystem and shell access is enabled for every authorized MCP client.");
+  if (unsafe) console.error("DANGER: full-machine filesystem and shell access is enabled only for the explicitly selected OAuth client IDs.");
   const indexPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
 
   let resolveReady: (ready: boolean) => void;
@@ -746,6 +1290,16 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
     readySettled = true;
     resolveReady(started);
   };
+  let resolveConnected: (connected: boolean) => void;
+  const connected = new Promise<boolean>((resolve) => {
+    resolveConnected = resolve;
+  });
+  let connectedSettled = false;
+  const settleConnected = (value: boolean) => {
+    if (connectedSettled) return;
+    connectedSettled = true;
+    resolveConnected(value);
+  };
 
   const server = spawn(process.execPath, [indexPath], {
     env: {
@@ -753,10 +1307,28 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
       PILINK_CONFIG: configPath,
       HOST: "127.0.0.1",
       PI_DATA_DIR: config.dataDir,
+      PI_COORDINATION_DATA_DIR: config.coordinationDataDir,
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
-      ...(unsafe ? { PI_UNSAFE_FULL_ACCESS: "true" } : {}),
+      ...(unsafe ? {
+        PI_UNSAFE_FULL_ACCESS: "true",
+        PI_FULL_ACCESS_CLIENT_IDS: process.env.PI_FULL_ACCESS_CLIENT_IDS || "*",
+      } : {}),
+      PI_LAUNCH_EVENT_FD: "3",
     },
-    stdio: ["inherit", "inherit", "pipe"],
+    stdio: ["inherit", "inherit", "pipe", "pipe"],
+  });
+
+  const eventStream = server.stdio[3] as NodeJS.ReadableStream | null;
+  let eventBuffer = "";
+  eventStream?.on("data", (chunk: Buffer) => {
+    eventBuffer += chunk.toString("utf8");
+    while (true) {
+      const newline = eventBuffer.indexOf("\n");
+      if (newline === -1) break;
+      const event = eventBuffer.slice(0, newline).trim();
+      eventBuffer = eventBuffer.slice(newline + 1);
+      if (event === "mcp-connected") settleConnected(true);
+    }
   });
 
   let stderrBuffer = "";
@@ -770,6 +1342,7 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
   });
 
   const shutdown = () => {
+    chatCliProcess?.kill("SIGTERM");
     server.kill("SIGINT");
     edge?.kill("SIGTERM");
   };
@@ -777,10 +1350,11 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
   process.once("SIGTERM", shutdown);
   server.on("exit", (code) => {
     settleReady(false);
+    settleConnected(false);
     edge?.kill("SIGTERM");
     process.exitCode = code ?? 1;
   });
-  return { process: server, ready };
+  return { process: server, ready, connected, config };
 }
 
 function saveConfig(values: Record<string, string>): void {
@@ -798,6 +1372,7 @@ function saveConfig(values: Record<string, string>): void {
 }
 
 function writeServerOutput(output: string): void {
+  if (chatCliActive) return;
   if (waitingForSetupCallback) {
     const remaining = MAX_DEFERRED_SERVER_OUTPUT - deferredServerOutput.length;
     if (remaining > 0) deferredServerOutput += output.slice(0, remaining);

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Connect VSPiLink through ChatGPT Work</title>
+  <desc id="desc">An illustrated split view showing the VSPiLink setup panel and the ChatGPT Work plugin screen.</desc>
+  <rect width="1200" height="675" fill="#0d1117"/>
+  <text x="52" y="62" fill="#ffffff" font-family="system-ui,sans-serif" font-size="32" font-weight="750">Connect through ChatGPT Work</text>
+  <text x="52" y="94" fill="#98a9ba" font-family="system-ui,sans-serif" font-size="18">Normal Chat does not expose plugin or remote MCP tools.</text>
+  <rect x="42" y="126" width="530" height="494" rx="20" fill="#151d25" stroke="#34404d" stroke-width="2"/>
+  <text x="76" y="172" fill="#73e6ae" font-family="system-ui,sans-serif" font-size="19" font-weight="700">VS CODE · VSPiLink</text>
+  <rect x="76" y="198" width="462" height="58" rx="10" fill="#117ea9"/>
+  <text x="307" y="235" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-size="21" font-weight="700">Open ChatGPT Work</text>
+  <text x="76" y="301" fill="#fff" font-family="system-ui,sans-serif" font-size="23" font-weight="700">Public MCP endpoint</text>
+  <rect x="76" y="320" width="462" height="58" rx="10" fill="#0c1219" stroke="#34404d"/>
+  <text x="98" y="356" fill="#d6e0ea" font-family="ui-monospace,monospace" font-size="18">https://your-host.example/sse</text>
+  <text x="76" y="423" fill="#8fa2b5" font-family="system-ui,sans-serif" font-size="17">Use a stable domain for production.</text>
+  <text x="76" y="453" fill="#8fa2b5" font-family="system-ui,sans-serif" font-size="17">Quick Tunnel is for temporary testing.</text>
+  <rect x="76" y="492" width="462" height="80" rx="12" fill="#10251f" stroke="#49d99a"/>
+  <text x="100" y="525" fill="#73e6ae" font-family="system-ui,sans-serif" font-size="17" font-weight="700">READY</text>
+  <text x="100" y="551" fill="#dbe8e1" font-family="system-ui,sans-serif" font-size="17">Service running · endpoint published</text>
+  <path d="M586 370h62" stroke="#49d99a" stroke-width="6" stroke-linecap="round"/><path d="M632 350l22 20-22 20" fill="none" stroke="#49d99a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="668" y="126" width="490" height="494" rx="20" fill="#f5f7fa" stroke="#d0d7de" stroke-width="2"/>
+  <text x="704" y="172" fill="#17202a" font-family="system-ui,sans-serif" font-size="19" font-weight="700">CHATGPT · WORK</text>
+  <rect x="704" y="198" width="418" height="56" rx="28" fill="#111827"/>
+  <text x="913" y="234" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-size="20" font-weight="700">Work</text>
+  <text x="704" y="301" fill="#17202a" font-family="system-ui,sans-serif" font-size="24" font-weight="700">Plugins</text>
+  <rect x="704" y="325" width="418" height="92" rx="13" fill="#ffffff" stroke="#bcc7d1" stroke-width="2"/>
+  <circle cx="752" cy="371" r="26" fill="#173c30"/><path d="M738 371h28" stroke="#73e6ae" stroke-width="6" stroke-linecap="round"/>
+  <text x="794" y="363" fill="#17202a" font-family="system-ui,sans-serif" font-size="21" font-weight="700">VSPiLink</text>
+  <text x="794" y="390" fill="#657586" font-family="system-ui,sans-serif" font-size="16">Private plugin · your deployment</text>
+  <rect x="704" y="449" width="418" height="70" rx="12" fill="#10a37f"/>
+  <text x="913" y="493" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-size="22" font-weight="700">Connect</text>
+  <text x="704" y="563" fill="#8a3b16" font-family="system-ui,sans-serif" font-size="16" font-weight="700">Do not install unrelated public “MCP server” results.</text>
+  <text x="52" y="654" fill="#718396" font-family="system-ui,sans-serif" font-size="16">Illustration · exact product labels may move when ChatGPT updates its interface</text>
+</svg>

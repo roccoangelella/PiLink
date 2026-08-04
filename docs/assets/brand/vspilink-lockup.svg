@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240" viewBox="0 0 960 240" role="img" aria-labelledby="title description">
+  <title id="title">VSPiLink</title>
+  <desc id="description">VSPiLink brand lockup: a mint Pi bridge symbol and the words VSPiLink, Agent Bridge for VS Code.</desc>
+  <rect width="960" height="240" rx="28" fill="#0d1514"/>
+  <rect x="36" y="36" width="168" height="168" rx="44" fill="#123128" stroke="#397662" stroke-width="3"/>
+  <g fill="none" stroke="#a8f2d2" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M74 90h92"/>
+    <path d="M92 90v70"/>
+    <path d="M148 90v42"/>
+    <path d="M148 132h18a24 24 0 0 1 0 48h-18"/>
+    <path d="M174 156h-18a24 24 0 0 0-24 24"/>
+  </g>
+  <g fill="#a8f2d2">
+    <circle cx="74" cy="90" r="12"/>
+    <circle cx="92" cy="160" r="12"/>
+    <circle cx="148" cy="90" r="12"/>
+  </g>
+  <text x="244" y="121" fill="#f2f7f5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="70" font-weight="750" letter-spacing="-2">VSPiLink</text>
+  <text x="248" y="166" fill="#83b5a4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="24" font-weight="520" letter-spacing="1.8">AGENT BRIDGE FOR VS CODE</text>
+</svg>
