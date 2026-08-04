@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Install the VSPiLink VSIX in VS Code</title>
+  <desc id="desc">An illustrated VS Code command palette showing the Install from VSIX command and the reload step.</desc>
+  <rect width="1200" height="675" fill="#0d1117"/>
+  <rect x="28" y="26" width="1144" height="623" rx="22" fill="#151b23" stroke="#34404d" stroke-width="2"/>
+  <rect x="28" y="26" width="1144" height="58" rx="22" fill="#202833"/>
+  <circle cx="61" cy="55" r="8" fill="#ff6b6b"/><circle cx="88" cy="55" r="8" fill="#ffd166"/><circle cx="115" cy="55" r="8" fill="#49d99a"/>
+  <text x="150" y="63" fill="#dbe6ef" font-family="system-ui,sans-serif" font-size="22" font-weight="700">Visual Studio Code</text>
+  <rect x="60" y="116" width="1080" height="96" rx="14" fill="#0b0f14" stroke="#49d99a" stroke-width="3"/>
+  <text x="88" y="154" fill="#8ca0b3" font-family="system-ui,sans-serif" font-size="18">Command Palette · Ctrl+Shift+P / Cmd+Shift+P</text>
+  <text x="88" y="190" fill="#ffffff" font-family="system-ui,sans-serif" font-size="26">Extensions: Install from VSIX...</text>
+  <rect x="60" y="244" width="730" height="340" rx="16" fill="#111821" stroke="#2a3744" stroke-width="2"/>
+  <text x="92" y="290" fill="#49d99a" font-family="system-ui,sans-serif" font-size="18" font-weight="700">1 · SELECT THE RELEASE FILE</text>
+  <rect x="92" y="318" width="666" height="66" rx="10" fill="#202a35"/>
+  <text x="116" y="360" fill="#f0f5f8" font-family="ui-monospace,monospace" font-size="21">vspilink-2.2.0.vsix</text>
+  <text x="92" y="431" fill="#49d99a" font-family="system-ui,sans-serif" font-size="18" font-weight="700">2 · RELOAD THE WINDOW</text>
+  <rect x="92" y="458" width="666" height="74" rx="10" fill="#167eab"/>
+  <text x="120" y="504" fill="#ffffff" font-family="system-ui,sans-serif" font-size="23" font-weight="700">Developer: Reload Window</text>
+  <rect x="824" y="244" width="316" height="340" rx="16" fill="#10251f" stroke="#49d99a" stroke-width="2"/>
+  <circle cx="982" cy="351" r="62" fill="#173c30" stroke="#73e6ae" stroke-width="4"/>
+  <path d="M946 351l25 25 49-58" fill="none" stroke="#73e6ae" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="982" y="451" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="25" font-weight="700">Extension installed</text>
+  <text x="982" y="489" text-anchor="middle" fill="#a9bdaf" font-family="system-ui,sans-serif" font-size="17">Open the Secondary Side Bar</text>
+  <text x="982" y="517" text-anchor="middle" fill="#a9bdaf" font-family="system-ui,sans-serif" font-size="17">and select VSPiLink</text>
+  <text x="60" y="625" fill="#718396" font-family="system-ui,sans-serif" font-size="16">Illustration · VSPiLink 2.2.0 · no private data shown</text>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">VSPiLink</title>
+  <desc id="description">A green bridge joining two endpoints</desc>
+  <rect width="128" height="128" rx="28" fill="#11251f"/>
+  <path d="M26 44h22c9 0 16 7 16 16v8c0 9 7 16 16 16h22" fill="none" stroke="#73e6ae" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="26" cy="44" r="11" fill="#b7f7d4"/>
+  <circle cx="102" cy="84" r="11" fill="#b7f7d4"/>
+  <path d="M51 84h-9c-9 0-16-7-16-16v-5M77 44h9c9 0 16 7 16 16v5" fill="none" stroke="#49a77c" stroke-width="8" stroke-linecap="round"/>
+</svg>

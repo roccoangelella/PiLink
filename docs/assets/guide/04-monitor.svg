@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Monitor VSPiLink activity in VS Code</title>
+  <desc id="desc">An illustrated VSPiLink secondary sidebar showing a connected endpoint, agents, tasks, and audited activity.</desc>
+  <rect width="1200" height="675" fill="#0d1117"/>
+  <rect x="40" y="34" width="1120" height="604" rx="22" fill="#151b23" stroke="#34404d" stroke-width="2"/>
+  <rect x="40" y="34" width="1120" height="74" rx="22" fill="#202833"/>
+  <text x="76" y="80" fill="#ffffff" font-family="system-ui,sans-serif" font-size="27" font-weight="800">VSPiLink · ChatGPT MCP</text>
+  <circle cx="1107" cy="70" r="13" fill="#49d99a"/><text x="1080" y="76" text-anchor="end" fill="#b9c9d6" font-family="system-ui,sans-serif" font-size="17">Connected</text>
+  <rect x="72" y="142" width="1056" height="94" rx="14" fill="#10251f" stroke="#35785e"/>
+  <text x="102" y="179" fill="#73e6ae" font-family="system-ui,sans-serif" font-size="18" font-weight="700">PUBLIC ENDPOINT</text>
+  <text x="102" y="211" fill="#eef6f2" font-family="ui-monospace,monospace" font-size="20">https://your-host.example/sse</text>
+  <rect x="72" y="264" width="326" height="298" rx="15" fill="#111821" stroke="#2a3744"/>
+  <text x="101" y="307" fill="#ffffff" font-family="system-ui,sans-serif" font-size="22" font-weight="750">Remote agents</text>
+  <circle cx="108" cy="349" r="8" fill="#49d99a"/><text x="130" y="356" fill="#dbe6ef" font-family="system-ui,sans-serif" font-size="18">ChatGPT Work session</text>
+  <circle cx="108" cy="394" r="8" fill="#49d99a"/><text x="130" y="401" fill="#dbe6ef" font-family="system-ui,sans-serif" font-size="18">Review agent</text>
+  <circle cx="108" cy="439" r="8" fill="#f4c95d"/><text x="130" y="446" fill="#dbe6ef" font-family="system-ui,sans-serif" font-size="18">Test agent</text>
+  <text x="101" y="518" fill="#8498aa" font-family="system-ui,sans-serif" font-size="16">Identity is derived from the</text><text x="101" y="542" fill="#8498aa" font-family="system-ui,sans-serif" font-size="16">authenticated MCP session.</text>
+  <rect x="437" y="264" width="326" height="298" rx="15" fill="#111821" stroke="#2a3744"/>
+  <text x="466" y="307" fill="#ffffff" font-family="system-ui,sans-serif" font-size="22" font-weight="750">Shared tasks</text>
+  <rect x="466" y="333" width="268" height="60" rx="9" fill="#1d2732"/><text x="486" y="370" fill="#dbe6ef" font-family="system-ui,sans-serif" font-size="17">✓ Inspect repository</text>
+  <rect x="466" y="406" width="268" height="60" rx="9" fill="#1d2732"/><text x="486" y="443" fill="#dbe6ef" font-family="system-ui,sans-serif" font-size="17">● Run verified checks</text>
+  <rect x="466" y="479" width="268" height="60" rx="9" fill="#1d2732"/><text x="486" y="516" fill="#94a6b8" font-family="system-ui,sans-serif" font-size="17">○ Prepare review</text>
+  <rect x="802" y="264" width="326" height="298" rx="15" fill="#111821" stroke="#2a3744"/>
+  <text x="831" y="307" fill="#ffffff" font-family="system-ui,sans-serif" font-size="22" font-weight="750">Audited activity</text>
+  <text x="831" y="354" fill="#73e6ae" font-family="ui-monospace,monospace" font-size="16">read_file</text><text x="831" y="378" fill="#8498aa" font-family="system-ui,sans-serif" font-size="15">completed · metadata only</text>
+  <text x="831" y="426" fill="#73e6ae" font-family="ui-monospace,monospace" font-size="16">run/npm_test</text><text x="831" y="450" fill="#8498aa" font-family="system-ui,sans-serif" font-size="15">approval recorded</text>
+  <text x="831" y="498" fill="#73e6ae" font-family="ui-monospace,monospace" font-size="16">apply_patch</text><text x="831" y="522" fill="#8498aa" font-family="system-ui,sans-serif" font-size="15">workspace boundary</text>
+  <text x="72" y="608" fill="#718396" font-family="system-ui,sans-serif" font-size="16">The monitor shows published collaboration and audit metadata, not the private ChatGPT transcript.</text>
+</svg>

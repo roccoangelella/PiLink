@@ -23,6 +23,19 @@ test("runtime configuration validates session limits and reclaim grace", async (
     assert.equal(defaults.maxMcpSessionsPerClient, 16);
     assert.equal(defaults.mcpSessionIdleTimeoutSeconds, 600);
     assert.equal(defaults.mcpSessionReclaimGraceSeconds, 5);
+    assert.equal(defaults.publicChatGptDcr, false);
+    assert.equal(defaults.dataDir, path.dirname(base.PILINK_CONFIG));
+    assert.equal(defaults.coordinationDataDir, defaults.dataDir);
+
+    const oauthDataDir = path.join(workspace, "oauth-data");
+    const coordinationDataDir = path.join(path.dirname(workspace), "coordination-data");
+    const splitData = loadRuntimeConfig({
+      ...base,
+      PI_DATA_DIR: oauthDataDir,
+      PI_COORDINATION_DATA_DIR: coordinationDataDir,
+    });
+    assert.equal(splitData.dataDir, path.resolve(oauthDataDir));
+    assert.equal(splitData.coordinationDataDir, path.resolve(coordinationDataDir));
 
     const configured = loadRuntimeConfig({
       ...base,
@@ -30,11 +43,13 @@ test("runtime configuration validates session limits and reclaim grace", async (
       PI_MAX_MCP_SESSIONS_PER_CLIENT: "3",
       PI_MCP_SESSION_IDLE_TIMEOUT: "45",
       PI_MCP_SESSION_RECLAIM_GRACE: "7",
+      PI_OAUTH_PUBLIC_CHATGPT_DCR: "true",
     });
     assert.equal(configured.maxMcpSessionsTotal, 12);
     assert.equal(configured.maxMcpSessionsPerClient, 3);
     assert.equal(configured.mcpSessionIdleTimeoutSeconds, 45);
     assert.equal(configured.mcpSessionReclaimGraceSeconds, 7);
+    assert.equal(configured.publicChatGptDcr, true);
     assert.throws(
       () => loadRuntimeConfig({
         ...base,
@@ -187,10 +202,12 @@ async function startServer(t, limits) {
       PORT: String(port),
       HOST: "127.0.0.1",
       SERVER_URL: serverUrl,
+      PILINK_CONFIG: path.join(root, "test.env"),
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
       JWT_SECRET: "a".repeat(32),
       PI_BOOTSTRAP_SECRET: bootstrapSecret,
+      PI_OAUTH_CONSENT_MODE: "browser",
       ...limits,
     },
     stdio: "ignore",
