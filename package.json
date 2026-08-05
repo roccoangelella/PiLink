@@ -11,7 +11,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "chat-cli"
   ],
   "engines": {
     "node": ">=22.19.0"

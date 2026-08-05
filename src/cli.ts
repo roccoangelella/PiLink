@@ -9,8 +9,16 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { loadEnvironment, loadRuntimeConfig, defaultConfigPath } from "./config.js";
-import { loadClients, registerClient } from "./auth.js";
+import { loadEnvironment, loadRuntimeConfig, defaultConfigPath, type RuntimeConfig } from "./config.js";
+import { chatCliAutoLaunchEnabled, launchChatCli } from "./chat-cli.js";
+import {
+  effectiveClientTokenVersion,
+  isClientActive,
+  loadClients,
+  registerClient,
+  rotateClientSecret,
+  setClientDisabled,
+} from "./auth.js";
 import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublicIpv4, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
 
 const [, , command = "start", ...args] = process.argv;
@@ -19,18 +27,102 @@ const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
 let waitingForSetupCallback = false;
 let deferredServerOutput = "";
 let deferredServerOutputTruncated = false;
+let chatCliActive = false;
+let chatCliProcess: ChildProcess | undefined;
 
 if (command === "init") {
   initialize();
 } else if (command === "start") {
   void start(args.includes("--allow-unsafe-full-access"), args.includes("--setup"));
 } else if (command === "serve") {
-  startServer(args.includes("--allow-unsafe-full-access"));
+  serve(args.includes("--allow-unsafe-full-access"));
+} else if (command === "chat") {
+  openChatCli();
 } else if (command === "reset") {
   void reset(args);
+} else if (command === "clients") {
+  void manageClients(args).catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 } else {
-  console.error("Usage: pilink <init|start|serve|reset> [--allow-unsafe-full-access] [--setup] [--yes] [--start]");
+  printUsage();
   process.exitCode = 1;
+}
+
+function printUsage(): void {
+  console.error("Usage: pilink <init|start|serve|chat|reset|clients> [options]");
+  console.error("  pilink chat");
+  console.error("  pilink clients list");
+  console.error("  pilink clients disable <client-id>");
+  console.error("  pilink clients enable <client-id>");
+  console.error("  pilink clients rotate-secret <client-id>");
+}
+
+async function manageClients(args: string[]): Promise<void> {
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`PiLink configuration does not exist: ${configPath}. Run 'pilink init' first.`);
+  }
+  loadEnvironment();
+  loadRuntimeConfig();
+
+  const [action = "list", clientId, ...extra] = args;
+  if (extra.length > 0 || (action !== "list" && !clientId)) {
+    printUsage();
+    process.exitCode = 1;
+    return;
+  }
+
+  if (action === "list") {
+    if (clientId) {
+      printUsage();
+      process.exitCode = 1;
+      return;
+    }
+    const clients = loadClients();
+    if (clients.length === 0) {
+      console.log("No OAuth clients are registered.");
+      return;
+    }
+    console.log("CLIENT_ID\tSTATUS\tTOKEN_VERSION\tNAME\tSCOPE\tCREATED_AT");
+    for (const client of clients) {
+      console.log([
+        terminalField(client.client_id),
+        isClientActive(client) ? "active" : terminalField(`disabled:${client.disabled_at}`),
+        effectiveClientTokenVersion(client),
+        terminalField(client.client_name),
+        terminalField(client.scope),
+        terminalField(client.created_at),
+      ].join("\t"));
+    }
+    return;
+  }
+
+  if (action === "disable" || action === "enable") {
+    const disabled = action === "disable";
+    const client = await setClientDisabled(clientId, disabled);
+    if (!client) throw new Error(`Unknown OAuth client: ${terminalField(clientId)}`);
+    console.error(`${disabled ? "Disabled" : "Enabled"} OAuth client ${terminalField(client.client_id)} (${terminalField(client.client_name)}).`);
+    if (disabled) console.error("Its existing access tokens and MCP sessions are now invalid.");
+    return;
+  }
+
+  if (action === "rotate-secret") {
+    const rotated = await rotateClientSecret(clientId);
+    if (!rotated) throw new Error(`Unknown OAuth client: ${terminalField(clientId)}`);
+    console.error(`Rotated the secret for OAuth client ${terminalField(rotated.client.client_id)} (${terminalField(rotated.client.client_name)}).`);
+    console.error("Existing access tokens and MCP sessions are now invalid.");
+    console.error("Store this new secret now; PiLink will not display it again:");
+    console.log(rotated.client_secret);
+    return;
+  }
+
+  printUsage();
+  process.exitCode = 1;
+}
+
+function terminalField(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
 }
 
 function initialize(portOverride?: number): void {
@@ -52,7 +144,11 @@ function initialize(portOverride?: number): void {
     "PI_MAX_MCP_SESSIONS_PER_CLIENT=16",
     "PI_MCP_SESSION_IDLE_TIMEOUT=600",
     "PI_MCP_SESSION_RECLAIM_GRACE=5",
+    "# PI_ALLOW_WORKSPACE_EXECUTION=false",
+    "# PI_REQUIRE_EXECUTION_APPROVAL=false",
+    "# PI_CHAT_CLI=auto  # auto-launch in this terminal after the first authenticated MCP connection; set off to disable",
     "# PI_UNSAFE_FULL_ACCESS=false",
+    "# Additional exact browser origins for MCP requests; SERVER_URL's own origin is always allowed.",
     "# CORS_ORIGINS=https://chatgpt.com",
     "",
   ].join("\n");
@@ -97,6 +193,9 @@ function resetTargets(): string[] {
   const targets = new Set<string>([
     configPath,
     path.join(dataDirectory, "clients.json"),
+    path.join(dataDirectory, "clients.json.lock"),
+    path.join(dataDirectory, "revoked-tokens.json"),
+    path.join(dataDirectory, "oauth-client-audit.jsonl"),
     path.join(configDirectory, "bin", cloudflaredFileName()),
     path.join(configDirectory, "bin", caddyFileName()),
     path.join(configDirectory, "Caddyfile"),
@@ -170,6 +269,91 @@ async function handleSetupMode(): Promise<void> {
   }
 }
 
+function serve(unsafe: boolean): void {
+  const server = startServer(unsafe);
+  armChatCliAutoLaunch(server, Promise.resolve());
+}
+
+function openChatCli(): void {
+  if (!fs.existsSync(configPath)) {
+    console.error(`PiLink configuration does not exist: ${configPath}. Run 'pilink init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    loadEnvironment();
+    const config = loadRuntimeConfig();
+    const result = launchChatCli(config);
+    if (!result.child) {
+      console.error(result.error || "Unable to launch PiLink chat CLI.");
+      process.exitCode = 1;
+      return;
+    }
+    result.child.once("error", (error) => {
+      console.error(`PiLink chat CLI failed: ${error.message}`);
+      process.exitCode = 1;
+    });
+    result.child.once("exit", (code, signal) => {
+      if (code !== 0 && signal === null) process.exitCode = code ?? 1;
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+interface StartedServer {
+  process: ChildProcess;
+  ready: Promise<boolean>;
+  connected: Promise<boolean>;
+  config: RuntimeConfig;
+}
+
+function armChatCliAutoLaunch(
+  server: StartedServer,
+  prerequisite: Promise<unknown>,
+): void {
+  let enabled: boolean;
+  try {
+    enabled = chatCliAutoLaunchEnabled();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  if (!enabled) return;
+
+  void Promise.all([server.connected, prerequisite]).then(([connected]) => {
+    if (!connected || server.process.exitCode !== null || server.process.killed || chatCliProcess) return;
+    const result = launchChatCli(server.config);
+    if (!result.child) {
+      console.error(result.error || "Unable to launch PiLink chat CLI.");
+      return;
+    }
+
+    const child = result.child;
+    chatCliProcess = child;
+    chatCliActive = true;
+    let finished = false;
+    const finish = (code: number | null, signal: NodeJS.Signals | null, error?: Error) => {
+      if (finished) return;
+      finished = true;
+      chatCliActive = false;
+      chatCliProcess = undefined;
+      if (error) console.error(`PiLink chat CLI failed: ${error.message}`);
+      if (server.process.exitCode === null && !server.process.killed) server.process.kill("SIGINT");
+      if (error || (code !== 0 && signal === null)) process.exitCode = code ?? 1;
+    };
+
+    child.once("error", (error) => finish(null, null, error));
+    child.once("exit", (code, signal) => finish(code, signal));
+    server.process.once("exit", () => {
+      if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
+    });
+  }).catch((error) => {
+    console.error(`PiLink chat CLI could not start: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
 async function start(unsafe: boolean, forceSetup: boolean): Promise<void> {
   if (forceSetup) {
     await handleSetupMode();
@@ -211,11 +395,12 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
       tunnel.stdout?.removeAllListeners("data");
       tunnel.stderr?.removeAllListeners("data");
       printQuickTunnelStartupInstructions(url);
-      const { process: serverProc, ready } = startServer(unsafe, url, tunnel);
-      server = serverProc;
-      void ready.then((serverReady) => {
+      const startedServer = startServer(unsafe, url, tunnel);
+      server = startedServer.process;
+      const setup = startedServer.ready.then((serverReady) => {
         if (serverReady) return runFirstTimeSetup(url, forceSetup);
       });
+      armChatCliAutoLaunch(startedServer, setup);
     }
   };
   tunnel.stdout?.on("data", discoverUrl);
@@ -226,7 +411,7 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
     process.exitCode = 1;
   });
   tunnel.on("exit", (code) => {
-    if (shuttingDown) return;
+    if (shuttingDown || server?.killed || server?.exitCode !== null) return;
     shuttingDown = true;
     console.error(`cloudflared exited (${code ?? "signal"}); stopping PiLink.`);
     server?.kill("SIGINT");
@@ -373,7 +558,8 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   }
   const serverUrl = `https://${hostname}`;
   printNipIoStartupInstructions(serverUrl, Boolean(portMappings));
-  const { process: server, ready } = startServer(unsafe, serverUrl, caddy);
+  const startedServer = startServer(unsafe, serverUrl, caddy);
+  const server = startedServer.process;
   let shuttingDown = false;
   let caddyRunning = true;
   let mappingsReleased = false;
@@ -396,15 +582,16 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   caddy.on("exit", (code) => {
     caddyRunning = false;
     releaseMappings();
-    if (shuttingDown) return;
+    if (shuttingDown || server.killed || server.exitCode !== null) return;
     shuttingDown = true;
     console.error(`Caddy exited (${code ?? "signal"}); stopping PiLink.`);
     server.kill("SIGINT");
     process.exitCode = code === 0 ? 0 : 1;
   });
-  void Promise.all([ready, certificateReady]).then(([serverReady, certificateObtained]) => {
+  const setup = Promise.all([startedServer.ready, certificateReady]).then(([serverReady, certificateObtained]) => {
     if (serverReady && certificateObtained && caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
   });
+  armChatCliAutoLaunch(startedServer, setup);
 }
 
 function printQuickTunnelStartupInstructions(serverUrl: string): void {
@@ -729,7 +916,7 @@ function canRun(executable: string): boolean {
   return spawnSync(executable, ["--version"], { stdio: "ignore" }).status === 0;
 }
 
-function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): { process: ChildProcess; ready: Promise<boolean> } {
+function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): StartedServer {
   if (!fs.existsSync(configPath)) initialize();
   loadEnvironment();
   const config = loadRuntimeConfig();
@@ -746,6 +933,16 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
     readySettled = true;
     resolveReady(started);
   };
+  let resolveConnected: (connected: boolean) => void;
+  const connected = new Promise<boolean>((resolve) => {
+    resolveConnected = resolve;
+  });
+  let connectedSettled = false;
+  const settleConnected = (value: boolean) => {
+    if (connectedSettled) return;
+    connectedSettled = true;
+    resolveConnected(value);
+  };
 
   const server = spawn(process.execPath, [indexPath], {
     env: {
@@ -755,8 +952,22 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
       PI_DATA_DIR: config.dataDir,
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
       ...(unsafe ? { PI_UNSAFE_FULL_ACCESS: "true" } : {}),
+      PI_LAUNCH_EVENT_FD: "3",
     },
-    stdio: ["inherit", "inherit", "pipe"],
+    stdio: ["inherit", "inherit", "pipe", "pipe"],
+  });
+
+  const eventStream = server.stdio[3] as NodeJS.ReadableStream | null;
+  let eventBuffer = "";
+  eventStream?.on("data", (chunk: Buffer) => {
+    eventBuffer += chunk.toString("utf8");
+    while (true) {
+      const newline = eventBuffer.indexOf("\n");
+      if (newline === -1) break;
+      const event = eventBuffer.slice(0, newline).trim();
+      eventBuffer = eventBuffer.slice(newline + 1);
+      if (event === "mcp-connected") settleConnected(true);
+    }
   });
 
   let stderrBuffer = "";
@@ -770,6 +981,7 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
   });
 
   const shutdown = () => {
+    chatCliProcess?.kill("SIGTERM");
     server.kill("SIGINT");
     edge?.kill("SIGTERM");
   };
@@ -777,10 +989,11 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
   process.once("SIGTERM", shutdown);
   server.on("exit", (code) => {
     settleReady(false);
+    settleConnected(false);
     edge?.kill("SIGTERM");
     process.exitCode = code ?? 1;
   });
-  return { process: server, ready };
+  return { process: server, ready, connected, config };
 }
 
 function saveConfig(values: Record<string, string>): void {
@@ -798,6 +1011,7 @@ function saveConfig(values: Record<string, string>): void {
 }
 
 function writeServerOutput(output: string): void {
+  if (chatCliActive) return;
   if (waitingForSetupCallback) {
     const remaining = MAX_DEFERRED_SERVER_OUTPUT - deferredServerOutput.length;
     if (remaining > 0) deferredServerOutput += output.slice(0, remaining);
