@@ -85,12 +85,29 @@ def sanitize_text(text) -> str:
     return _CONTROL_RE.sub("", "" if text is None else str(text))
 
 
-def get_role_info(message: object) -> Dict[str, str]:
-    """Return role presentation only from the server-authored snapshot.
+def _generic_actor_label(message: dict) -> str:
+    """Return a bounded authenticated-client label for an unverified author.
 
-    Free-form message text and OAuth display names are deliberately ignored.
-    Missing, legacy, malformed, or unknown provenance always degrades to the
-    Agent presentation rather than guessing a privileged role.
+    The OAuth client name is useful operator-facing identity, but it is not a
+    collaboration-role assertion. Keep the generic Agent icon/filter identity
+    and append an explicit marker so the label cannot be confused with a
+    server-verified role badge.
+    """
+    raw = message.get("agentName", message.get("agent_name", ""))
+    label = sanitize_text(raw).strip()
+    if not label or len(label.encode("utf-8")) > 64:
+        return "AGENT"
+    return "{} · OAUTH".format(label)
+
+
+def get_role_info(message: object) -> Dict[str, str]:
+    """Return a safe presentation from the server-authored role snapshot.
+
+    Verified snapshots select trusted role badges. Generic actors remain in
+    the neutral ``agent`` role for icons and filtering, but display their
+    authenticated OAuth client name instead of making every participant look
+    identical. Free-form message text is never inspected, and malformed or
+    unknown provenance still degrades to the Agent presentation.
     """
     default = dict(ROLE_CONFIG["agent"])
     default["id"] = "agent"
@@ -118,6 +135,7 @@ def get_role_info(message: object) -> Dict[str, str]:
     if not label or len(label.encode("utf-8")) > 64 or sanitize_text(label) != label:
         return default
 
+    presentation_label = label
     if source in {"generic_actor", "legacy_unverified"}:
         if role_id != "agent":
             return default
@@ -131,6 +149,8 @@ def get_role_info(message: object) -> Dict[str, str]:
         ):
             if field in snapshot:
                 return default
+        if source == "generic_actor":
+            presentation_label = _generic_actor_label(message)
     else:
         canonical = snapshot.get("canonicalRoleId", snapshot.get("canonical_role_id"))
         occupancy = snapshot.get("occupancyLabel", snapshot.get("occupancy_label"))
@@ -174,7 +194,7 @@ def get_role_info(message: object) -> Dict[str, str]:
 
     info = dict(ROLE_CONFIG[role_id])
     info["id"] = role_id
-    info["name"] = label
+    info["name"] = presentation_label
     return info
 
 
