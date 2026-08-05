@@ -15,11 +15,15 @@ export interface RuntimeConfig {
   bootstrapSecret: string;
   tokenExpirySeconds: number;
   unsafeFullAccess: boolean;
+  allowWorkspaceExecution: boolean;
+  requireExecutionApproval: boolean;
   maxBashTimeoutSeconds: number;
   maxMcpSessionsTotal: number;
   maxMcpSessionsPerClient: number;
   mcpSessionIdleTimeoutSeconds: number;
   mcpSessionReclaimGraceSeconds: number;
+  collaborationBindingHeader?: string;
+  collaborationBindingDetachGraceSeconds: number;
   corsOrigins: string[];
   trustProxy: boolean;
 }
@@ -37,12 +41,21 @@ export function loadEnvironment(): void {
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const port = positiveInteger(env.PORT, 3200, "PORT");
-  const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 360000000000, "TOKEN_EXPIRY");
+  const tokenExpirySeconds = positiveInteger(env.TOKEN_EXPIRY, 30 * 24 * 60 * 60, "TOKEN_EXPIRY");
   const maxBashTimeoutSeconds = positiveInteger(env.PI_MAX_BASH_TIMEOUT, 120, "PI_MAX_BASH_TIMEOUT");
   const maxMcpSessionsTotal = positiveInteger(env.PI_MAX_MCP_SESSIONS_TOTAL, 64, "PI_MAX_MCP_SESSIONS_TOTAL");
   const maxMcpSessionsPerClient = positiveInteger(env.PI_MAX_MCP_SESSIONS_PER_CLIENT, 16, "PI_MAX_MCP_SESSIONS_PER_CLIENT");
   const mcpSessionIdleTimeoutSeconds = positiveInteger(env.PI_MCP_SESSION_IDLE_TIMEOUT, 10 * 60, "PI_MCP_SESSION_IDLE_TIMEOUT");
   const mcpSessionReclaimGraceSeconds = positiveInteger(env.PI_MCP_SESSION_RECLAIM_GRACE, 5, "PI_MCP_SESSION_RECLAIM_GRACE");
+  const collaborationBindingDetachGraceSeconds = positiveInteger(
+    env.PI_COLLABORATION_BINDING_DETACH_GRACE,
+    10 * 60,
+    "PI_COLLABORATION_BINDING_DETACH_GRACE",
+  );
+  const collaborationBindingHeader = optionalHeaderName(
+    env.PI_COLLABORATION_BINDING_HEADER,
+    "PI_COLLABORATION_BINDING_HEADER",
+  );
   if (maxMcpSessionsPerClient > maxMcpSessionsTotal) {
     throw new Error("PI_MAX_MCP_SESSIONS_PER_CLIENT cannot exceed PI_MAX_MCP_SESSIONS_TOTAL");
   }
@@ -79,14 +92,44 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     bootstrapSecret,
     tokenExpirySeconds,
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
+    allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
+    requireExecutionApproval: env.PI_REQUIRE_EXECUTION_APPROVAL === "true",
     maxBashTimeoutSeconds,
     maxMcpSessionsTotal,
     maxMcpSessionsPerClient,
     mcpSessionIdleTimeoutSeconds,
     mcpSessionReclaimGraceSeconds,
-    corsOrigins: (env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
+    collaborationBindingHeader,
+    collaborationBindingDetachGraceSeconds,
+    corsOrigins: parseAllowedOrigins(serverUrl, env.CORS_ORIGINS),
     trustProxy: env.TRUST_PROXY === "true",
   };
+}
+
+export function parseAllowedOrigins(serverUrl: string, configuredOrigins?: string): string[] {
+  const origins = new Set<string>([new URL(serverUrl).origin]);
+  for (const configuredOrigin of (configuredOrigins || "").split(",")) {
+    const trimmed = configuredOrigin.trim();
+    if (!trimmed) continue;
+    origins.add(normalizeHttpOrigin(trimmed, "CORS_ORIGINS"));
+  }
+  return [...origins];
+}
+
+export function normalizeHttpOrigin(value: string, field = "Origin"): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${field} entries must be absolute http(s) origins`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${field} entries must use http or https`);
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new Error(`${field} entries must contain only scheme, host, and optional port`);
+  }
+  return url.origin;
 }
 
 function requiredSecret(value: string | undefined, name: string): string {
@@ -100,4 +143,16 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   const parsed = Number.parseInt(value || String(fallback), 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
   return parsed;
+}
+
+function optionalHeaderName(value: string | undefined, name: string): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/u.test(normalized)) {
+    throw new Error(`${name} must be a valid HTTP header name`);
+  }
+  if (["authorization", "mcp-session-id", "mcp-protocol-version", "cookie", "set-cookie"].includes(normalized)) {
+    throw new Error(`${name} cannot reuse an authentication or MCP protocol header`);
+  }
+  return normalized;
 }
