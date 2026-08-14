@@ -182,17 +182,17 @@ export class ProcessSupervisor implements vscode.Disposable {
       const disposable = this.onDidChange(() => {
         if (this.publicUrl) finish(undefined, this.publicUrl);
         else if (this.status === "error" || (this.status === "stopped" && !this.isActive)) {
-          finish(new Error("The VSPiLink process stopped before publishing its endpoint."));
+          finish(new Error("The PiLink process stopped before publishing its endpoint."));
         }
       });
-      const timeout = setTimeout(() => finish(new Error("Timed out while waiting for the VSPiLink endpoint.")), timeoutMs);
+      const timeout = setTimeout(() => finish(new Error("Timed out while waiting for the PiLink endpoint.")), timeoutMs);
       timeout.unref();
     });
   }
 
   async start(options: ProcessStartOptions): Promise<void> {
     if (this.disposed) throw new Error("The VSPiLink supervisor has already been closed.");
-    if (this.isActive || this.status === "starting") throw new Error("VSPiLink is already running.");
+    if (this.isActive || this.status === "starting") throw new Error("PiLink is already running.");
 
     this.lastStart = { ...options, args: [...options.args] };
     this.mode = options.mode;
@@ -213,7 +213,7 @@ export class ProcessSupervisor implements vscode.Disposable {
         // Do not print argv: legacy/custom invocations may contain credential
         // paths or future secret-bearing flags. The graphical status already
         // exposes the safe, user-facing mode.
-        this.output.info(`VSPiLink process started · mode: ${options.mode}.`);
+        this.output.info(`PiLink process started · mode: ${options.mode}.`);
         this.emitChange();
       },
       onOutput: (chunk) => this.captureOutput(chunk),
@@ -278,7 +278,7 @@ export class ProcessSupervisor implements vscode.Disposable {
   }
 
   sendLine(value: string): void {
-    if (!this.processTerminal?.isRunning) throw new Error("No interactive VSPiLink process is running.");
+    if (!this.processTerminal?.isRunning) throw new Error("No interactive PiLink process is running.");
     this.processTerminal.writeInputLine(value);
   }
 

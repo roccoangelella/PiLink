@@ -1,14 +1,15 @@
 # Installation
 
-VSPiLink ships as a VS Code extension plus a Node.js sidecar. The recommended
-release installer verifies the VSIX and provisions the exact sidecar runtime
-when necessary. With Remote SSH, run it on the host that owns the workspace,
-not the laptop displaying the VS Code window.
+PiLink can run from its CLI without VS Code. Its optional **VSPiLink** extension
+ships a graphical control surface plus the PiLink Node.js sidecar. The
+recommended extension installer verifies the VSIX and provisions the exact
+sidecar runtime when necessary. With Remote SSH, run it on the host that owns
+the workspace, not the laptop displaying the VS Code window.
 
 ## Requirements
 
 - VS Code 1.106 or newer.
-- a VSPiLink-managed or existing **Node.js 24.18.0 exactly**. Other Node
+- a PiLink-managed or existing **Node.js 24.18.0 exactly**. Other Node
   releases are intentionally rejected by the sidecar;
 - Git, Node.js 24.18.0, and npm 11.16.0 exactly for a source/developer build;
 - A trusted project folder.
@@ -23,7 +24,7 @@ Use the installer included with the release bundle. It:
 - verifies the release integrity metadata;
 - uses an existing exact Node.js 24.18.0 when safe, or downloads the pinned
   official Node.js archive and verifies its SHA-256 before installing it into a
-  private per-user VSPiLink directory;
+  private per-user PiLink directory;
 - does not require `sudo` and does not replace the system Node;
 - installs the VSIX through the selected VS Code CLI;
 - verifies that `0xfunboy.vspilink@2.2.0` is installed.
@@ -105,8 +106,8 @@ npm --version    # 11.16.0
 ```
 
 ```bash
-git clone https://github.com/0xfunboy/VSPiLink.git
-cd VSPiLink
+git clone https://github.com/roccoangelella/PiLink.git
+cd PiLink
 node --version
 npm --version
 npm ci
@@ -167,7 +168,7 @@ paths, domains, codes, or credentials.
 
 ## Hosting prerequisites
 
-ChatGPT Work must reach an HTTPS endpoint. VSPiLink supports:
+ChatGPT Work must reach an HTTPS endpoint. PiLink supports:
 
 | Mode | Intended use | URL stability |
 | --- | --- | --- |
@@ -194,7 +195,7 @@ helpers without trusting an unversioned download:
   Cloudflare GitHub release asset;
 - Caddy **2.11.4** is downloaded from the matching official Caddy GitHub
   release archive when the legacy direct `nip.io` mode needs it;
-- each supported architecture has a pinned SHA-256 in the VSPiLink release;
+- each supported architecture has a pinned SHA-256 in the PiLink release;
 - the digest is verified before the binary is installed or executed;
 - remote downloads and redirects must remain HTTPS. Plain HTTP is accepted
   only from loopback for local automated tests.
@@ -250,12 +251,12 @@ configuration at the same time.
 Removing the VSIX does not automatically revoke a remote OAuth client or delete
 private data. A complete offboarding sequence is:
 
-1. Remove or disable the VSPiLink plugin in ChatGPT Work.
+1. Remove or disable the PiLink plugin in ChatGPT Work.
 2. Disable or delete its OAuth client locally.
-3. Stop the VSPiLink runtime and public tunnel.
-4. Disable only service units created and owned by VSPiLink.
+3. Stop the PiLink runtime and public tunnel.
+4. Disable only service units created and owned by PiLink.
 5. Uninstall the extension.
-6. Optionally remove VSPiLink private state after making any required backup.
+6. Optionally remove PiLink private state after making any required backup.
 
 Repository and workspace files are not generated state and must never be
 removed by an uninstall/reset operation.

@@ -660,13 +660,13 @@ export function createMcpServer(
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, (args, extra) => auditCall("run", extra, async () => {
     if (!isToolAllowed(scopes, "run")) {
-      return toolError("The run tool requires the mcp:write or mcp:tools scope. Reconnect VSPiLink with write access; this read-only connection cannot execute command profiles.");
+      return toolError("The run tool requires the mcp:write or mcp:tools scope. Reconnect PiLink with write access; this read-only connection cannot execute command profiles.");
     }
     const executesWorkspaceCode = args.profile === "npm_build" || args.profile === "npm_test";
     if (executesWorkspaceCode && !policy.allowWorkspaceExecution && !policy.unsafeFullAccess) {
       return toolError(
         `${args.profile} executes code from the workspace and is disabled by default. ` +
-        "For a trusted workspace, set PI_ALLOW_WORKSPACE_EXECUTION=true and restart VSPiLink, or authorize explicit full-access mode.",
+        "For a trusted workspace, set PI_ALLOW_WORKSPACE_EXECUTION=true and restart PiLink, or authorize explicit full-access mode.",
       );
     }
     if (executesWorkspaceCode && policy.requireExecutionApproval) {

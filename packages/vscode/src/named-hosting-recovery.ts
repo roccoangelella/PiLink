@@ -6,7 +6,7 @@ import { normalizeHostingSelection, type CloudflareAuthKind, type HostingSelecti
 import type { ProcessViewState } from "./protocol.js";
 
 const MANAGED_CONFIG_HEADER = "# Managed by VSPiLink Cloudflare hosting. Do not add secrets here.";
-const MANAGED_SYSTEMD_HEADER = "# Managed by VSPiLink hosting. Generated file; do not edit.";
+const MANAGED_SYSTEMD_HEADER = "# Managed by PiLink hosting. Generated file; do not edit.";
 const SERVER_UNIT = "vspilink-server.service";
 const TUNNEL_UNIT = "vspilink-cloudflared.service";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,8 +52,8 @@ export function inspectManagedNamedHosting(
   const stateDirectory = path.join(configDirectory, "cloudflare");
   const systemdUserDirectory = path.resolve(options.systemdUserDirectory);
 
-  assertPrivateDirectory(configDirectory, expectedUid, "VSPiLink configuration directory");
-  assertPrivateFile(snapshot.configPath, expectedUid, 1024 * 1024, "VSPiLink configuration");
+  assertPrivateDirectory(configDirectory, expectedUid, "PiLink configuration directory");
+  assertPrivateFile(snapshot.configPath, expectedUid, 1024 * 1024, "PiLink configuration");
   assertPrivateDirectory(stateDirectory, expectedUid, "managed Cloudflare directory");
   assertPrivateDirectory(systemdUserDirectory, expectedUid, "user systemd directory");
 
@@ -61,12 +61,12 @@ export function inspectManagedNamedHosting(
   const cloudflaredConfig = readPrivateTextFile(cloudflaredConfigPath, expectedUid, 64 * 1024, "cloudflared configuration");
   const parsed = parseManagedCloudflaredConfig(cloudflaredConfig);
   const expectedOrigin = `http://127.0.0.1:${snapshot.port}`;
-  if (parsed.origin !== expectedOrigin) throw new Error("The managed tunnel origin does not match the configured VSPiLink port.");
+  if (parsed.origin !== expectedOrigin) throw new Error("The managed tunnel origin does not match the configured PiLink port.");
 
   const serverUrl = strictHttpsOrigin(snapshot.serverUrl);
   const landingHostname = strictHostname(snapshot.values.PI_LANDING_HOSTNAME);
   if (parsed.mcpHostname !== new URL(serverUrl).hostname || parsed.landingHostname !== landingHostname) {
-    throw new Error("The managed tunnel hostnames do not match the VSPiLink configuration.");
+    throw new Error("The managed tunnel hostnames do not match the PiLink configuration.");
   }
 
   const preferred = normalizeHostingSelection(options.preferredHosting, true);
@@ -149,10 +149,10 @@ export async function restartManagedServerUnit(
 ): Promise<void> {
   validateManagedServerUnit(snapshot, options);
   const restarted = await runner(options.systemctlPath, ["--user", "restart", SERVER_UNIT]);
-  if (restarted.code !== 0) throw new Error("systemd could not restart the VSPiLink server service.");
+  if (restarted.code !== 0) throw new Error("systemd could not restart the PiLink server service.");
   const active = await runner(options.systemctlPath, ["--user", "is-active", SERVER_UNIT]);
   if (active.code !== 0 || safeUnitState(active.stdout, "inactive") !== "active") {
-    throw new Error("The VSPiLink server service is not active after the restart.");
+    throw new Error("The PiLink server service is not active after the restart.");
   }
 }
 
@@ -165,8 +165,8 @@ export function validateManagedServerUnit(
   const expectedUid = options.expectedUid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
   const configDirectory = path.dirname(path.resolve(snapshot.configPath));
   const systemdUserDirectory = path.resolve(options.systemdUserDirectory);
-  assertPrivateDirectory(configDirectory, expectedUid, "VSPiLink configuration directory");
-  assertPrivateFile(snapshot.configPath, expectedUid, 1024 * 1024, "VSPiLink configuration");
+  assertPrivateDirectory(configDirectory, expectedUid, "PiLink configuration directory");
+  assertPrivateFile(snapshot.configPath, expectedUid, 1024 * 1024, "PiLink configuration");
   assertPrivateDirectory(systemdUserDirectory, expectedUid, "user systemd directory");
 
   const server = readPrivateTextFile(
@@ -190,7 +190,7 @@ export function validateManagedServerUnit(
   }
   const execStart = lines.find((line) => line.startsWith("ExecStart="));
   if (!execStart || !execStart.endsWith(` ${JSON.stringify("serve")}`)) {
-    throw new Error("The managed server unit does not start the expected VSPiLink runtime.");
+    throw new Error("The managed server unit does not start the expected PiLink runtime.");
   }
 }
 

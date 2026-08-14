@@ -519,7 +519,7 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
   console.error("2. Collaborative public-chat orchestration");
   console.error("   Shared agent chat, task coordination, memory, work loops, and supervised agents.");
   console.error("3. VS Code graphical experience");
-  console.error("   Open the VSPiLink sidebar and use the graphical controls for either mode.");
+  console.error("   Open the optional VSPiLink sidebar and use its graphical PiLink controls for either mode.");
   console.error(`Press Enter to keep the current mode (${defaultMode}).`);
 
   const readline = createInterface({ input: process.stdin, output: process.stderr });
@@ -558,8 +558,8 @@ function launchVscodeExperience(): void {
 
   console.error("\n=== VS Code graphical experience ===");
   console.error(`Opening workspace: ${workspace}`);
-  console.error("If the VSPiLink sidebar is not installed, run 'npm run vscode:install' from the PiLink checkout first.");
-  console.error("After VS Code opens, use the VSPiLink sidebar to choose single-agent or collaborative mode and start safely in workspace access.");
+  console.error("If the optional VSPiLink sidebar is not installed, run 'npm run vscode:install' from the PiLink checkout first.");
+  console.error("After VS Code opens, use the VSPiLink sidebar to choose a PiLink single-agent or collaborative workflow and start safely in workspace access.");
   try {
     const child = spawn(command, ["--reuse-window", workspace], {
       detached: true,
@@ -943,7 +943,7 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
     console.error(`Token URL: ${serverUrl}/oauth/token`);
     console.error("Scope: mcp:tools offline_access");
     if (ownerPairing) openOwnerPairing(ownerPairing);
-    console.error("Back in ChatGPT, click Scan Tools, complete the VSPiLink OAuth approval, and wait for the scan to finish.\n");
+    console.error("Back in ChatGPT, click Scan Tools, complete the PiLink OAuth approval, and wait for the scan to finish.\n");
   } catch (error) {
     console.error(`First-time ChatGPT setup could not complete: ${error instanceof Error ? error.message : "unknown error"}`);
     console.error("The MCP server is still running. Restart with 'pilink start --setup' to try again.");
@@ -1006,7 +1006,7 @@ function validateOwnerPairingUrl(pairingUrl: string, expectedServerUrl: string, 
     [...pairing.searchParams.keys()].some((key) => key !== "code") ||
     !/^[A-Za-z0-9_-]{20,512}$/.test(pairing.searchParams.get("code") || "")
   ) {
-    throw new Error("Owner pairing URL does not match the configured VSPiLink server");
+    throw new Error("Owner pairing URL does not match the configured PiLink server");
   }
   const expiration = Date.parse(expiresAt);
   if (!Number.isFinite(expiration) || expiration <= Date.now()) throw new Error("Owner pairing URL is already expired");
@@ -1030,10 +1030,10 @@ function openOwnerPairing(pairing: CliOwnerPairing): void {
     windowsHide: true,
   }).status === 0;
   if (opened) {
-    console.error("VSPiLink opened the one-use owner pairing page in your browser. Confirm that it reports success before clicking Scan Tools.");
+    console.error("PiLink opened the one-use owner pairing page in your browser. Confirm that it reports success before clicking Scan Tools.");
     return;
   }
-  console.error("VSPiLink could not open the owner pairing page automatically.");
+  console.error("PiLink could not open the owner pairing page automatically.");
   console.error("Open the URL printed above manually, confirm success, then return to ChatGPT.");
 }
 

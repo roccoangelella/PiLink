@@ -1,7 +1,7 @@
 {
   "name": "pilink",
   "version": "2.2.0",
-  "description": "ChatGPT-to-workspace MCP bridge for VS Code with the Pi tool harness, OAuth and collaborative agent monitoring",
+  "description": "OAuth-protected MCP bridge with single-agent, public-chat orchestration, and optional VS Code workflows",
   "main": "dist/index.js",
   "bin": {
     "pilink": "dist/cli.js"
@@ -27,12 +27,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/0xfunboy/VSPiLink.git"
+    "url": "https://github.com/roccoangelella/PiLink.git"
   },
   "bugs": {
-    "url": "https://github.com/0xfunboy/VSPiLink/issues"
+    "url": "https://github.com/roccoangelella/PiLink/issues"
   },
-  "homepage": "https://github.com/0xfunboy/VSPiLink#readme",
+  "homepage": "https://github.com/roccoangelella/PiLink#readme",
   "keywords": [
     "pilink",
     "mcp",

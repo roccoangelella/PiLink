@@ -1,6 +1,6 @@
 # Changelog
 
-All notable VSPiLink changes are documented in this file.
+All notable PiLink changes are documented in this file.
 
 ## Unreleased
 
@@ -36,4 +36,4 @@ All notable VSPiLink changes are documented in this file.
 - Manual, read-only release workflow with no publishing credentials.
 
 Release dates and version headings are added only when a tested commit is
-tagged; the repository currently contains no VSPiLink 2.2.0 release tag.
+tagged; the repository currently contains no PiLink 2.2.0 release tag.

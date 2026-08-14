@@ -37,7 +37,7 @@ function fixture(t: test.TestContext): { snapshot: ConfigSnapshot; systemdUserDi
     clients: [],
   };
   const unit = [
-    "# Managed by VSPiLink hosting. Generated file; do not edit.",
+    "# Managed by PiLink hosting. Generated file; do not edit.",
     "[Service]",
     'ExecStart="/usr/bin/node" "/private/pilink-cli.js" "serve"',
     `Environment=${JSON.stringify(`PILINK_CONFIG=${configPath}`)}`,
@@ -121,7 +121,7 @@ function namedHostingFixture(t: test.TestContext): { snapshot: ConfigSnapshot; s
   ].join("\n"), { mode: 0o600 });
 
   const serverUnit = [
-    "# Managed by VSPiLink hosting. Generated file; do not edit.",
+    "# Managed by PiLink hosting. Generated file; do not edit.",
     "[Service]",
     'ExecStart="/usr/bin/node" "/private/pilink-cli.js" "serve"',
     `Environment=${JSON.stringify(`PILINK_CONFIG=${configPath}`)}`,
@@ -131,7 +131,7 @@ function namedHostingFixture(t: test.TestContext): { snapshot: ConfigSnapshot; s
     "",
   ].join("\n");
   const tunnelUnit = [
-    "# Managed by VSPiLink hosting. Generated file; do not edit.",
+    "# Managed by PiLink hosting. Generated file; do not edit.",
     "[Unit]",
     "Requires=vspilink-server.service",
     "[Service]",

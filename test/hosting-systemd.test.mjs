@@ -57,7 +57,7 @@ test("install refuses unmanaged unit files and never overwrites them", async (t)
   const manager = createManager(fixture, runner);
 
   const plan = await manager.planInstall();
-  assert.match(plan.blockers.join("\n"), /not managed by VSPiLink/);
+  assert.match(plan.blockers.join("\n"), /not managed by PiLink/);
   await assert.rejects(
     manager.install({ dryRun: false }),
     (error) => error instanceof SystemdUnitInstallBlockedError,

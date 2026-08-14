@@ -1,6 +1,6 @@
 # Runtime mode selection
 
-VSPiLink has three operator-facing entry experiences. Two are core server
+PiLink has three operator-facing entry experiences. Two are core server
 modes; the third is a graphical handoff that contains both core modes:
 
 | Entry | Core value | Select it when | What it exposes |

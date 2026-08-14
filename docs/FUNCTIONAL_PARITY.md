@@ -1,6 +1,6 @@
 # Functional parity contract
 
-This document records behavior that VSPiLink is expected to preserve while
+This document records behavior that PiLink is expected to preserve while
 adding the VS Code product layer. It is a release checklist, not proof by
 itself. Current code, schemas, and tests remain authoritative.
 
@@ -11,7 +11,7 @@ The recorded feature integration baseline is
 ## Status legend
 
 - **Preserved** — upstream behavior remains part of the supported runtime.
-- **Additive** — VSPiLink-specific behavior that must not replace upstream.
+- **Additive** — PiLink-specific behavior that must not replace upstream.
 - **Optional** — shipped but outside the primary ChatGPT Work flow.
 - **Legacy** — preserved compatibility path; not recommended for new regular
   deployments.
@@ -54,7 +54,7 @@ The recorded feature integration baseline is
 | Direct `nip.io` | Preserve the legacy Caddy/router path and explicit Internet-exposure warnings |
 
 Generated hosting state must be private. Setup/reset may remove only
-VSPiLink-owned generated state after confirmation; it must never delete a
+PiLink-owned generated state after confirmation; it must never delete a
 repository or arbitrary user infrastructure.
 
 ## Runtime-mode preservation
@@ -106,7 +106,7 @@ The feature-branch collaboration namespaces remain:
 - `agent_work_*`;
 - `agent_memory_*`.
 
-VSPiLink supervised-runtime tools remain additive:
+PiLink supervised-runtime tools remain additive:
 
 - `agent_runtime_status`;
 - `agent_spawn`, `agent_list`, `agent_status`;

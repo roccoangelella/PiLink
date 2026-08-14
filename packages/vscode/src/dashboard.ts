@@ -118,6 +118,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider, vscode.Dis
     const nonce = crypto.randomBytes(16).toString("base64");
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "styles.css"));
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "main.js"));
+    const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "logo.png"));
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -125,10 +126,10 @@ export class DashboardProvider implements vscode.WebviewViewProvider, vscode.Dis
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="${styleUri}">
-  <title>VSPiLink</title>
+  <title>PiLink · VSPiLink extension</title>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app" data-logo-uri="${logoUri}"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

@@ -37,7 +37,7 @@ test("run scope denial explains how to reconnect with write access", async (t) =
 
   assert.equal(result.isError, true);
   assert.match(text(result), /requires the mcp:write or mcp:tools scope/);
-  assert.match(text(result), /Reconnect VSPiLink with write access/);
+  assert.match(text(result), /Reconnect PiLink with write access/);
 });
 
 test("disabled workspace execution names the safe opt-in and restart", async (t) => {
@@ -48,7 +48,7 @@ test("disabled workspace execution names the safe opt-in and restart", async (t)
   assert.match(text(result), /executes code from the workspace and is disabled by default/);
   assert.match(text(result), /PI_ALLOW_WORKSPACE_EXECUTION=true/);
   assert.match(text(result), /trusted workspace/);
-  assert.match(text(result), /restart VSPiLink/);
+  assert.match(text(result), /restart PiLink/);
 });
 
 test("invalid npm profile paths explain what to remove", async (t) => {

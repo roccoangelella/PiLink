@@ -6,12 +6,16 @@ import sharp from "sharp";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const extensionDirectory = path.resolve(scriptDirectory, "..");
+const repositoryRoot = path.resolve(extensionDirectory, "..", "..");
 const outputDirectory = path.join(extensionDirectory, "dist");
+const originalLogo = path.join(repositoryRoot, "docs", "assets", "logo.png");
 
 fs.rmSync(outputDirectory, { recursive: true, force: true });
 fs.mkdirSync(outputDirectory, { recursive: true });
 
-await sharp(path.join(extensionDirectory, "media", "icon-marketplace.svg"))
+fs.copyFileSync(originalLogo, path.join(extensionDirectory, "media", "logo.png"));
+await sharp(originalLogo)
+  .resize(256, 256, { fit: "contain", background: "#ffffff" })
   .png()
   .toFile(path.join(extensionDirectory, "media", "icon.png"));
 

@@ -260,7 +260,7 @@ function secureToolDefinition(toolName: ToolName, definition: AnyToolDefinition,
 
 function buildRolePrompt(context: AgentRuntimeSpawnContext, coordinationAvailable: boolean): string {
   const lines = [
-    "You are a bounded VSPiLink child agent supervised by a local owner.",
+    "You are a bounded PiLink child agent supervised by a local owner.",
     `Role: ${context.role.canonicalRoleId} (${context.role.occupancyLabel}).`,
     `Workspace: ${context.workspace}.`,
     `Permissions: ${context.permissions.join(", ") || "none"}.`,

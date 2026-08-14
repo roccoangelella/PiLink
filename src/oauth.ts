@@ -839,10 +839,10 @@ function pruneConsentRequests(now: number): void {
 
 function renderPairingResult(paired: boolean): string {
   return renderNoticePage(
-    paired ? "VSPiLink connected" : "Invalid connection",
+    paired ? "PiLink connected" : "Invalid connection",
     paired
       ? "This browser session can now approve the OAuth connection. Return to the wizard and continue in ChatGPT."
-      : "This code has expired or has already been used. Return to the VSPiLink wizard and select Retry.",
+      : "This code has expired or has already been used. Return to the PiLink wizard and select Retry.",
     paired,
   );
 }
@@ -850,7 +850,7 @@ function renderPairingResult(paired: boolean): string {
 function renderPairingRequired(): string {
   return renderNoticePage(
     "Confirm the request in VS Code",
-    "To protect this computer, open the VSPiLink wizard in VS Code and select “Authorize this browser”, then retry the connection in ChatGPT.",
+    "To protect this computer, open the PiLink wizard in VS Code and select “Authorize this browser”, then retry the connection in ChatGPT.",
     false,
   );
 }

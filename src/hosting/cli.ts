@@ -307,7 +307,7 @@ function assertUnitsInstalled(status: SystemdUserUnitStatus): void {
 function assertManagedIfPresent(status: SystemdUserUnitStatus): void {
   if (status.blockers.length > 0) throw new SystemdUnitInstallBlockedError(status.blockers);
   for (const unit of [status.server, status.tunnel]) {
-    if (unit.state !== "missing" && !unit.managedByVSPiLink) {
+    if (unit.state !== "missing" && !unit.managedByPiLink) {
       throw new SystemdUnitInstallBlockedError(["refusing to operate an unmanaged systemd unit"]);
     }
   }
@@ -377,7 +377,7 @@ function sanitizePathState(
     state: inspection.state,
     mode: inspection.mode === undefined ? undefined : `0${inspection.mode.toString(8)}`,
     contentMatches: inspection.contentMatches,
-    managedByVSPiLink: inspection.managedByVSPiLink,
+    managedByPiLink: inspection.managedByPiLink,
     reason: redactPrivateText(inspection.reason, privatePaths),
   };
 }

@@ -265,7 +265,7 @@ export class WizardController {
 
   private async registerChatGpt(rawCallbackUrl: string): Promise<void> {
     if (this.state.phase !== "callback" && this.state.phase !== "credentials") {
-      throw new Error("Start the public VSPiLink endpoint first.");
+      throw new Error("Start the public PiLink endpoint first.");
     }
     const callbackUrl = validateCallbackUrl(rawCallbackUrl);
     const credential = await this.dependencies.registerChatGpt(callbackUrl);
@@ -322,21 +322,21 @@ function isLoopbackHostname(hostname: string): boolean {
 }
 
 function validateResumableRuntime(runtime: ResumableWizardRuntime): ResumableWizardRuntime {
-  if (!runtime.workspace || !runtime.configPath) throw new Error("The existing VSPiLink configuration is invalid.");
+  if (!runtime.workspace || !runtime.configPath) throw new Error("The existing PiLink configuration is invalid.");
   let publicUrl: URL;
   let mcpUrl: URL;
   try {
     publicUrl = new URL(runtime.publicUrl);
     mcpUrl = new URL(runtime.mcpUrl);
   } catch {
-    throw new Error("The existing VSPiLink endpoint is invalid.");
+    throw new Error("The existing PiLink endpoint is invalid.");
   }
   if (
     publicUrl.protocol !== "https:" || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash ||
     (publicUrl.pathname !== "/" && publicUrl.pathname !== "") ||
     mcpUrl.origin !== publicUrl.origin || mcpUrl.pathname !== "/sse" || mcpUrl.search || mcpUrl.hash
   ) {
-    throw new Error("The public VSPiLink endpoint must use HTTPS and end with /sse.");
+    throw new Error("The public PiLink endpoint must use HTTPS and end with /sse.");
   }
   return {
     ...runtime,

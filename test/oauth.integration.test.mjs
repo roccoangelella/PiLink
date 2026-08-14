@@ -59,7 +59,11 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
 
   const landing = await requestWithHost(serverUrl, "/", "landing.example.test");
   assert.equal(landing.status, 200);
-  assert.match(landing.body, /VSPiLink/);
+  assert.match(landing.body, /PiLink/);
+  assert.doesNotMatch(landing.body, /VSPiLink/);
+  const landingLogo = await requestWithHost(serverUrl, "/assets/logo.png", "landing.example.test");
+  assert.equal(landingLogo.status, 200);
+  assert.ok(landingLogo.body.length > 1_000);
   assert.equal((await requestWithHost(serverUrl, "/health", "landing.example.test")).status, 404);
 
   const rejected = await fetch(`${serverUrl}/oauth/register`, {

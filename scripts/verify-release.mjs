@@ -37,10 +37,10 @@ const requiredVsixEntries = [
   ...requiredRuntimeDocuments.map((name) => `extension/runtime/docs/${name}`),
 ];
 const requiredNpmPluginEntries = [
-  ["package/plugins/vspilink/README.md", "plugins/vspilink/README.md"],
-  ["package/plugins/vspilink/.codex-plugin/plugin.json", "plugins/vspilink/.codex-plugin/plugin.json"],
-  ["package/plugins/vspilink/.mcp.json", "plugins/vspilink/.mcp.json"],
-  ["package/plugins/vspilink/assets/vspilink.svg", "plugins/vspilink/assets/vspilink.svg"],
+  ["package/plugins/pilink/README.md", "plugins/pilink/README.md"],
+  ["package/plugins/pilink/.codex-plugin/plugin.json", "plugins/pilink/.codex-plugin/plugin.json"],
+  ["package/plugins/pilink/.mcp.json", "plugins/pilink/.mcp.json"],
+  ["package/plugins/pilink/assets/logo.png", "plugins/pilink/assets/logo.png"],
   ["package/.agents/plugins/marketplace.json", ".agents/plugins/marketplace.json"],
 ];
 const userFacingSourceFiles = [
@@ -158,7 +158,7 @@ function verifySourceMarkdownLinks() {
   const files = [
     path.join(repositoryRoot, "README.md"),
     path.join(repositoryRoot, "packages", "vscode", "README.md"),
-    path.join(repositoryRoot, "plugins", "vspilink", "README.md"),
+    path.join(repositoryRoot, "plugins", "pilink", "README.md"),
     path.join(repositoryRoot, "install", "INSTALL.md"),
     ...listMarkdownFiles(path.join(repositoryRoot, "docs")),
   ];

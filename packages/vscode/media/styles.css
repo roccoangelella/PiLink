@@ -132,44 +132,13 @@ kbd {
 }
 
 .brand-mark {
-  position: relative;
-  display: grid;
-  width: 34px;
+  display: block;
+  width: 60px;
   height: 34px;
-  flex: 0 0 34px;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--success) 45%, var(--border));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  color: var(--success);
-}
-
-.brand-mark__pi {
-  position: relative;
-  z-index: 1;
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.brand-mark__link {
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  opacity: 0.7;
-}
-
-.brand-mark__link--one {
-  right: 4px;
-  bottom: 6px;
-}
-
-.brand-mark__link--two {
-  right: 8px;
-  bottom: 2px;
+  flex: 0 0 60px;
+  border-radius: 4px;
+  background: #ffffff;
+  object-fit: contain;
 }
 
 .brand__copy {

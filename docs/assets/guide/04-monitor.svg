@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-  <title id="title">Monitor VSPiLink activity in VS Code</title>
-  <desc id="desc">An illustrated VSPiLink secondary sidebar showing a connected endpoint, agents, tasks, and audited activity.</desc>
+  <title id="title">Monitor PiLink activity in VS Code</title>
+  <desc id="desc">An illustrated VSPiLink secondary sidebar showing PiLink's connected endpoint, agents, tasks, and audited activity.</desc>
   <rect width="1200" height="675" fill="#0d1117"/>
   <rect x="40" y="34" width="1120" height="604" rx="22" fill="#151b23" stroke="#34404d" stroke-width="2"/>
   <rect x="40" y="34" width="1120" height="74" rx="22" fill="#202833"/>

@@ -90,7 +90,7 @@ test("GUI runtime discovery validates the exact nvm installation when PATH is st
   assert.ok(observed.includes(expected));
 });
 
-test("GUI runtime discovery prefers the managed per-user VSPiLink runtime", () => {
+test("GUI runtime discovery prefers the managed per-user PiLink runtime", () => {
   const home = "/home/operator";
   const expected = `${home}/.local/share/vspilink/node-v24.18.0/bin/node`;
   const runtime = resolveSidecarNodeRuntime({
@@ -126,7 +126,7 @@ test("managed runtime discovery follows XDG_DATA_HOME", () => {
   });
 });
 
-test("GUI runtime discovery finds the managed Windows VSPiLink runtime", () => {
+test("GUI runtime discovery finds the managed Windows PiLink runtime", () => {
   const expected = "C:\\Users\\operator\\AppData\\Local/VSPiLink/node-v24.18.0/node.exe";
   const runtime = resolveSidecarNodeRuntime({
     home: "/home/operator",

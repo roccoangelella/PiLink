@@ -1,4 +1,4 @@
-# Install the VSPiLink release bundle
+# Install PiLink's optional VSPiLink extension bundle
 
 Keep every downloaded file in this directory. In particular, do not separate
 the installer, `vspilink-*.vsix`, and `SHA256SUMS`: the installer refuses to
@@ -32,7 +32,7 @@ install a VSIX whose release checksum cannot be verified.
 The installer does not require administrator privileges and does not replace
 the system `node` command. When necessary, it downloads the pinned official
 Node.js 24.18.0 archive, verifies its built-in SHA-256, and installs it under a
-private per-user VSPiLink data directory.
+private per-user PiLink data directory.
 
 ## Final VS Code clicks
 
@@ -58,6 +58,6 @@ built and reviewed yourself. Never use it for a downloaded bundle, customer
 installation, CI release, or production deployment.
 
 Complete setup, hosting, OAuth, security, and troubleshooting documentation is
-available at <https://github.com/0xfunboy/VSPiLink/tree/master/docs>. The
+available at <https://github.com/roccoangelella/PiLink/tree/master/docs>. The
 sanitized illustrated walkthrough is at
-<https://github.com/0xfunboy/VSPiLink/blob/master/docs/ILLUSTRATED_GUIDE.md>.
+<https://github.com/roccoangelella/PiLink/blob/master/docs/ILLUSTRATED_GUIDE.md>.

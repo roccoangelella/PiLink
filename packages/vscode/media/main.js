@@ -554,11 +554,12 @@
 
     const header = el("header", "app-header");
     const brand = el("div", "brand");
-    const mark = el("div", "brand-mark");
-    mark.setAttribute("aria-hidden", "true");
-    append(mark, el("span", "brand-mark__pi", "π"), el("span", "brand-mark__link brand-mark__link--one"), el("span", "brand-mark__link brand-mark__link--two"));
+    const mark = document.createElement("img");
+    mark.className = "brand-mark";
+    mark.src = root.dataset.logoUri || "";
+    mark.alt = "PiLink";
     const brandCopy = el("div", "brand__copy");
-    append(brandCopy, el("h1", "brand__title", "VSPiLink"), el("p", "brand__subtitle", "ChatGPT ↔ Pi tools in your workspace"));
+    append(brandCopy, el("h1", "brand__title", "PiLink"), el("p", "brand__subtitle", "VSPiLink · optional VS Code extension"));
     append(brand, mark, brandCopy);
 
     const headerActions = el("div", "app-header__actions");
@@ -585,7 +586,7 @@
       iconOnly: true,
       compact: true,
       title: "Refresh status",
-      ariaLabel: "Refresh VSPiLink status",
+      ariaLabel: "Refresh PiLink status",
     });
     append(headerActions, modeSwitch, refs.openChatGptButton, refs.headerStatus, refreshButton);
     append(header, brand, headerActions);
@@ -609,19 +610,19 @@
   function buildComposer() {
     const shell = el("div", "composer-shell is-hidden");
     refs.composerShell = shell;
-    shell.setAttribute("aria-label", "Write to VSPiLink");
+    shell.setAttribute("aria-label", "Write to PiLink");
 
     refs.composerError = el("div", "composer-alert is-hidden");
     refs.composerError.setAttribute("role", "alert");
     const form = el("form", "composer");
     form.noValidate = true;
-    const label = el("label", "sr-only", "Message for VSPiLink");
+    const label = el("label", "sr-only", "Message for PiLink");
     label.htmlFor = "vspilink-composer-input";
     refs.composerInput = el("textarea", "composer__input");
     refs.composerInput.id = "vspilink-composer-input";
     refs.composerInput.rows = 1;
     refs.composerInput.maxLength = 65536;
-    refs.composerInput.placeholder = "Ask VSPiLink…";
+    refs.composerInput.placeholder = "Ask PiLink…";
     refs.composerInput.autocomplete = "off";
     refs.composerInput.spellcheck = true;
     refs.cancelButton = el("button", "composer__cancel is-hidden", "■");
@@ -637,7 +638,7 @@
     append(form, label, refs.composerInput, refs.cancelButton, refs.sendButton);
 
     const meta = el("div", "composer-meta");
-    refs.composerHelp = el("span", "composer-meta__help", "VSPiLink uses Pi in the open workspace.");
+    refs.composerHelp = el("span", "composer-meta__help", "PiLink uses Pi in the open workspace.");
     const shortcut = el("span", "composer-meta__shortcut");
     append(shortcut, el("kbd", "key", "Enter"), document.createTextNode(" send · "), el("kbd", "key", "Shift+Enter"), document.createTextNode(" new line"));
     append(meta, refs.composerHelp, shortcut);
@@ -745,7 +746,7 @@
       if (command !== "refresh") announce(commandLabel(command) + " requested.");
       return true;
     } catch (_error) {
-      announce("VSPiLink could not reach the extension host.");
+      announce("PiLink could not reach the extension host.");
       return false;
     }
   }
@@ -761,7 +762,7 @@
       announce("Connection step requested.");
       return true;
     } catch (_error) {
-      announce("VSPiLink could not reach the setup controller.");
+      announce("PiLink could not reach the setup controller.");
       return false;
     }
   }
@@ -790,7 +791,7 @@
       refs.confirmDescription.textContent = "Authorized agents will be able to use the shell and access files outside the open folder.";
       refs.confirmButton.textContent = "Enable full access";
     } else {
-      refs.confirmTitle.textContent = "Reset VSPiLink?";
+      refs.confirmTitle.textContent = "Reset PiLink?";
       refs.confirmDescription.textContent = "Generated configuration and state will be removed. Project files will not be deleted.";
       refs.confirmButton.textContent = "Reset";
     }
@@ -816,7 +817,7 @@
     const copy = el("div", "runtime-mode-picker__copy");
     append(copy,
       el("p", "runtime-mode-picker__eyebrow", configured ? "RUNTIME WORKFLOW" : "CHOOSE A WORKFLOW"),
-      el("h2", "runtime-mode-picker__title", configured ? "VSPiLink workflow" : "How should VSPiLink work?"),
+      el("h2", "runtime-mode-picker__title", configured ? "PiLink workflow" : "How should PiLink work?"),
       el("p", "runtime-mode-picker__description", configured
         ? "This server policy is independent from the ChatGPT MCP and Pi Local surface buttons above. Change it only when you want to restart the workflow behind this workspace."
         : "Choose the capability boundary before starting. Single-agent is the safe local default; Public chat & orchestration enables shared coordination for authenticated MCP clients.")
@@ -865,7 +866,7 @@
     const prompt = el("section", "runtime-mode-prompt");
     append(prompt,
       el("strong", "runtime-mode-prompt__title", "Select a workflow to continue"),
-      el("p", "runtime-mode-prompt__description", "VSPiLink will not start a server or create an orchestration session until you choose one of the workflows above."),
+      el("p", "runtime-mode-prompt__description", "PiLink will not start a server or create an orchestration session until you choose one of the workflows above."),
     );
     return prompt;
   }
@@ -990,7 +991,7 @@
     refs.openChatGptButton.disabled = currentState.trusted === false || !currentState.runtimeMode.configured;
     refs.openChatGptButton.title = currentState.runtimeMode.configured
       ? "Open ChatGPT Work, the current surface that supports plugins and remote MCP tools"
-      : "Choose a VSPiLink runtime workflow before opening ChatGPT Work";
+      : "Choose a PiLink runtime workflow before opening ChatGPT Work";
   }
 
   function chatStatusModel() {
@@ -999,7 +1000,7 @@
     if (!currentState.runtimeMode.configured) return { label: "Choose workflow", tone: "warning", description: "Select Single-agent or Public chat & orchestration" };
     if (currentState.configured !== true) return { label: "Setup required", tone: "neutral", description: "Local configuration is required" };
     if (uiMode === "remote") {
-      if (!isRuntimeOnline()) return { label: "Server stopped", tone: "warning", description: "Start the VSPiLink MCP server" };
+      if (!isRuntimeOnline()) return { label: "Server stopped", tone: "warning", description: "Start the PiLink MCP server" };
       if (currentState.externalMcp.active) {
         return {
           label: "MCP active",
@@ -1018,13 +1019,13 @@
         description: "The OAuth client already exists; finish Connect/Authorize in ChatGPT",
       };
       if (currentState.wizard.credential) return { label: "Authorize", tone: "progress", description: "Finish Connect/Authorize in the ChatGPT tab" };
-      if (currentState.wizard.chatGptPageOpened) return { label: "Install plugin", tone: "progress", description: "In ChatGPT Work, open Plugins and install or connect the private VSPiLink plugin" };
-      return { label: "Not connected", tone: "warning", description: "Connect ChatGPT to the VSPiLink MCP server" };
+      if (currentState.wizard.chatGptPageOpened) return { label: "Install plugin", tone: "progress", description: "In ChatGPT Work, open Plugins and install or connect the private PiLink plugin" };
+      return { label: "Not connected", tone: "warning", description: "Connect ChatGPT to the PiLink MCP server" };
     }
     if (currentState.chat.status === "needs-workspace") return { label: "Folder", tone: "warning", description: "Choose the folder where Pi should work" };
     if (currentState.chat.status === "workspace-mismatch") return { label: "Folder", tone: "warning", description: "Confirm the open folder before continuing" };
     if (currentState.chat.error || currentState.agentRuntime.error) return { label: "Error", tone: "danger", description: currentState.chat.error || currentState.agentRuntime.error };
-    if (chatIsBusy()) return { label: "Working", tone: "progress", description: "VSPiLink is working" };
+    if (chatIsBusy()) return { label: "Working", tone: "progress", description: "PiLink is working" };
     if (isChatReady()) return { label: "Ready", tone: "success", description: "Pi is ready in the workspace" };
     if (!agentIsConfigured()) return { label: "Sign-in", tone: "warning", description: "Sign in and choose a model" };
     return { label: "Offline", tone: "warning", description: "Start the local runtime" };
@@ -1091,7 +1092,7 @@
       const registeredCopy = el("div", "remote-connected__copy");
       append(registeredCopy,
         el("strong", "remote-connected__title", "The OAuth client is already registered"),
-        el("span", "remote-connected__description", "Do not search for a callback or create another client. Continue below, then open VSPiLink in ChatGPT and choose Connect/Authorize.")
+        el("span", "remote-connected__description", "Do not search for a callback or create another client. Continue below, then open PiLink in ChatGPT and choose Connect/Authorize.")
       );
       const registeredActions = el("div", "remote-connected__actions");
       registeredActions.appendChild(makeButton("Continue in ChatGPT", "connectChatGpt", { variant: "primary", compact: true, icon: "↗" }));
@@ -1103,7 +1104,7 @@
     const connected = el("div", "remote-connected");
     const copy = el("div", "remote-connected__copy");
     append(copy,
-      el("strong", "remote-connected__title", currentState.externalMcp.active ? "ChatGPT is connected" : "VSPiLink is configured"),
+      el("strong", "remote-connected__title", currentState.externalMcp.active ? "ChatGPT is connected" : "PiLink is configured"),
       el("span", "remote-connected__description", currentState.externalMcp.active
         ? "Active MCP connections: " + currentState.externalMcp.activeSessions + ". Write in the main ChatGPT tab; this panel monitors coordination activity, agents, and tasks."
         : "OAuth is stored persistently, so the callback does not need to be entered again. Open ChatGPT Work and start a task; the MCP session will activate automatically.")
@@ -1201,7 +1202,7 @@
     append(intro,
       el("p", "connection-guide__eyebrow", "PRIMARY PATH · CHATGPT WORK + MCP"),
       el("h3", "connection-guide__title", "Connect ChatGPT Work to this workspace"),
-      el("p", "connection-guide__description", "ChatGPT Work remains the agent surface and coordinator. Its selected model uses the Pi tools that VSPiLink exposes for this folder through an OAuth-protected MCP connection.")
+      el("p", "connection-guide__description", "ChatGPT Work remains the agent surface and coordinator. Its selected model uses the Pi tools that PiLink exposes for this folder through an OAuth-protected MCP connection.")
     );
     guide.appendChild(intro);
 
@@ -1224,7 +1225,7 @@
     const catalogWarning = el("div", "connection-catalog-warning");
     append(catalogWarning,
       el("strong", "connection-catalog-warning__title", "Do not choose a similarly named public result."),
-      el("span", "connection-catalog-warning__text", "Your VSPiLink entry must come from your personal or workspace plugin source and point to the MCP endpoint shown above. Searching for “mcp server” will show other vendors' servers.")
+      el("span", "connection-catalog-warning__text", "Your PiLink entry must come from your personal or workspace plugin source and point to the MCP endpoint shown above. Searching for “mcp server” will show other vendors' servers.")
     );
     guide.appendChild(catalogWarning);
 
@@ -1239,7 +1240,7 @@
     steps.appendChild(renderConnectionStep(
       1,
       "Open ChatGPT Work",
-      "In the ChatGPT tab, use the surface selector at the upper left and choose Work. VSPiLink tools are not available in normal Chat under the current plugin model.",
+      "In the ChatGPT tab, use the surface selector at the upper left and choose Work. PiLink tools are not available in normal Chat under the current plugin model.",
       workOpened,
       workActions
     ));
@@ -1248,8 +1249,8 @@
       : null;
     steps.appendChild(renderConnectionStep(
       2,
-      "Install or connect the private VSPiLink plugin",
-      "In Work, click Plugins in the left sidebar. Open the VSPiLink entry supplied by your personal or workspace plugin source, then click Install or Connect. If you own the plugin and the builder is available, set its MCP URL to the endpoint copied above and choose OAuth. If no VSPiLink entry or creation/import control exists, ask the workspace administrator or publisher; do not install another vendor's result.",
+      "Install or connect the private PiLink plugin",
+      "In Work, click Plugins in the left sidebar. Open the PiLink entry supplied by your personal or workspace plugin source, then click Install or Connect. If you own the plugin and the builder is available, set its MCP URL to the endpoint copied above and choose OAuth. If no PiLink entry or creation/import control exists, ask the workspace administrator or publisher; do not install another vendor's result.",
       currentState.externalMcp.configured,
       pluginAction
     ));
@@ -1260,7 +1261,7 @@
     const legacy = el("details", "manual-oauth");
     legacy.dataset.renderStateKey = "legacy-chatgpt-connection";
     legacy.appendChild(el("summary", "manual-oauth__summary", "Legacy Developer Mode compatibility"));
-    legacy.appendChild(el("p", "manual-oauth__description", "Use this only if your account still exposes the older Developer Mode/private-connection builder. Open Security and login, enable Developer Mode, then open Plugins and create VSPiLink with the endpoint above. This compatibility path is not the supported primary Work flow."));
+    legacy.appendChild(el("p", "manual-oauth__description", "Use this only if your account still exposes the older Developer Mode/private-connection builder. Open Security and login, enable Developer Mode, then open Plugins and create PiLink with the endpoint above. This compatibility path is not the supported primary Work flow."));
     const legacyActions = el("div", "connection-step__actions");
     append(legacyActions,
       makeWizardButton("Open Security and login", "openChatGpt", { destination: "security", variant: "secondary", compact: true, icon: "↗" }),
@@ -1296,8 +1297,8 @@
       complete
         ? "The ChatGPT OAuth client is already registered. You do not need to copy or enter a callback again."
         : available
-          ? "In the ChatGPT form, open Advanced OAuth settings → Registration method → Dynamic Client Registration (DCR), then click Create. VSPiLink registers the callback automatically; you do not need to find or copy it."
-          : "Open ChatGPT Work first. When the VSPiLink plugin builder asks for OAuth registration, use DCR; there is no callback to find or copy.",
+          ? "In the ChatGPT form, open Advanced OAuth settings → Registration method → Dynamic Client Registration (DCR), then click Create. PiLink registers the callback automatically; you do not need to find or copy it."
+          : "Open ChatGPT Work first. When the PiLink plugin builder asks for OAuth registration, use DCR; there is no callback to find or copy.",
       complete,
       null
     );
@@ -1340,8 +1341,8 @@
       4,
       "Complete OAuth and authorize",
       credential
-        ? "Return to ChatGPT and paste the values below. Then click Connect/Authorize and approve the request on the VSPiLink page."
-        : "After the callback is registered, VSPiLink generates a client ID and secret without exposing the secret in logs.",
+        ? "Return to ChatGPT and paste the values below. Then click Connect/Authorize and approve the request on the PiLink page."
+        : "After the callback is registered, PiLink generates a client ID and secret without exposing the secret in logs.",
       currentState.externalMcp.connected,
       null
     );
@@ -1537,7 +1538,7 @@
     const transcript = el("div", "transcript");
     transcript.setAttribute("role", "log");
     transcript.setAttribute("aria-live", "polite");
-    transcript.setAttribute("aria-label", "VSPiLink conversation");
+    transcript.setAttribute("aria-label", "PiLink conversation");
     if (currentState.chat.messages.length) {
       currentState.chat.messages.forEach(function (message) {
         transcript.appendChild(renderChatMessage(message));
@@ -1560,7 +1561,7 @@
     }
     const article = el("article", "chat-message chat-message--" + message.role);
     const meta = el("div", "chat-message__meta");
-    meta.appendChild(el("span", "chat-message__author", message.role === "user" ? "You" : "VSPiLink"));
+    meta.appendChild(el("span", "chat-message__author", message.role === "user" ? "You" : "PiLink"));
     if (message.createdAt) meta.appendChild(el("time", "chat-message__time", formatTime(message.createdAt)));
     const body = el("div", "chat-message__body", message.text);
     append(article, meta, body);
@@ -1571,8 +1572,8 @@
     const article = el("article", "chat-message chat-message--assistant chat-message--thinking");
     const dots = el("span", "thinking-dots");
     append(dots, el("span"), el("span"), el("span"));
-    append(article, el("div", "chat-message__meta", "VSPiLink"), dots);
-    article.setAttribute("aria-label", "VSPiLink is working");
+    append(article, el("div", "chat-message__meta", "PiLink"), dots);
+    article.setAttribute("aria-label", "PiLink is working");
     return article;
   }
 
@@ -1591,7 +1592,7 @@
   }
 
   function emptyChatModel() {
-    if (!hasReceivedState) return { title: "Preparing VSPiLink", description: "Checking the local runtime and configured model.", disabled: true };
+    if (!hasReceivedState) return { title: "Preparing PiLink", description: "Checking the local runtime and configured model.", disabled: true };
     if (currentState.trusted === false) return {
       title: "Trust this folder",
       description: "VS Code requires your confirmation before agents can read or modify the project.",
@@ -1599,24 +1600,24 @@
       command: "manageTrust",
     };
     if (!currentState.runtimeMode.configured) return {
-      title: "Choose a VSPiLink workflow",
+      title: "Choose a PiLink workflow",
       description: "Select Single-agent or Public chat & orchestration above before starting a runtime.",
     };
     if (currentState.configured !== true) return {
       title: "Start working with Pi",
-      description: "VSPiLink configures the open folder and prepares the local runtime. No external service is required.",
+      description: "PiLink configures the open folder and prepares the local runtime. No external service is required.",
       label: "Set up and start",
       command: "setupChat",
     };
     if (currentState.chat.status === "needs-workspace") return {
       title: "Choose a working folder",
-      description: "VSPiLink never chooses a folder implicitly. Select the project where Pi is allowed to work.",
+      description: "PiLink never chooses a folder implicitly. Select the project where Pi is allowed to work.",
       label: "Choose folder",
       command: "setupChat",
     };
     if (currentState.chat.status === "workspace-mismatch") return {
       title: "Use the open folder",
-      description: "VSPiLink is configured for another project. Confirm the change before agents can work here.",
+      description: "PiLink is configured for another project. Confirm the change before agents can work here.",
       label: "Use this folder",
       command: "setupChat",
     };
@@ -1629,7 +1630,7 @@
     if (!isChatReady()) return {
       title: "Start the local runtime",
       description: "Setup is complete. Start Pi to begin the conversation.",
-      label: "Start VSPiLink",
+      label: "Start PiLink",
       command: "setupChat",
     };
     return {
@@ -1784,9 +1785,9 @@
   function renderFooter() {
     const footer = el("footer", "app-footer");
     const versions = [];
-    if (currentState.version) versions.push("VSPiLink " + normalizeVersion(currentState.version));
+    if (currentState.version) versions.push("PiLink " + normalizeVersion(currentState.version));
     if (currentState.nodeVersion) versions.push("Node " + normalizeVersion(currentState.nodeVersion));
-    append(footer, el("span", "app-footer__versions", versions.join(" · ") || "VSPiLink for VS Code"), el("span", "app-footer__privacy", "Local execution"));
+    append(footer, el("span", "app-footer__versions", versions.join(" · ") || "PiLink for VS Code"), el("span", "app-footer__privacy", "Local execution"));
     return footer;
   }
 
@@ -1796,7 +1797,7 @@
     refs.composerShell.classList.toggle("is-hidden", !ready);
     document.body.classList.toggle("has-composer", ready);
     refs.composerInput.disabled = busy;
-    refs.composerInput.placeholder = busy ? "VSPiLink is working…" : "Ask VSPiLink…";
+    refs.composerInput.placeholder = busy ? "PiLink is working…" : "Ask PiLink…";
     refs.sendButton.classList.toggle("is-hidden", busy);
     refs.cancelButton.classList.toggle("is-hidden", !busy);
     refs.sendButton.disabled = busy || Boolean(pendingChatSubmission) || refs.composerInput.value.trim().length === 0;

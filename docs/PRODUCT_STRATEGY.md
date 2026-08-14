@@ -7,19 +7,20 @@
 
 ## Brand
 
-- **Product name:** VSPiLink — ChatGPT Workspace Bridge for VS Code
+- **Product name:** PiLink — local agent bridge and orchestrator
 - **Tagline:** From chat to code, on your machine.
 
 Recommended short description:
 
-> VSPiLink connects ChatGPT Work to the files, repositories, and supervised
-> agents running on your development machine through a self-hosted OAuth/MCP
-> bridge controlled from VS Code.
+> PiLink connects authenticated agents to the files, repositories, public chat,
+> and supervised agents running on your development machine through a
+> self-hosted OAuth/MCP bridge. Its optional VSPiLink extension adds graphical
+> control inside VS Code.
 
 The product should not market itself as a Codex clone or replacement. Its
-distinct value is bringing a user-authorized ChatGPT Work/plugin workflow to an
-operator-controlled machine while preserving the PiLink harness and optional
-Pi Local ecosystem.
+distinct value is bringing user-authorized agent workflows to an
+operator-controlled machine while preserving the PiLink harness, CLI, public
+orchestration, and optional Pi Local ecosystem.
 
 Before broader commercial use, product and alternative names require domain,
 package, marketplace, and trademark clearance. `VS` and `Pi` can be ambiguous
@@ -147,7 +148,7 @@ The prices above are discovery ranges, not published prices or market facts.
 Validate willingness to pay, support cost, active-host usage, and procurement
 requirements before choosing a model.
 
-Avoid per-token VSPiLink pricing. VSPiLink does not own OpenAI or third-party
+Avoid per-token PiLink pricing. PiLink does not own OpenAI or third-party
 inference and cannot guarantee its cost. Per-developer, per-managed-host, or
 support/service pricing is easier to explain and audit.
 
@@ -190,7 +191,7 @@ and diagnostics, then clearly identify the remaining OpenAI-controlled action.
 
 ## Documentation and visual roadmap
 
-The current README uses an original VSPiLink hero asset, and the
+The current README uses an original PiLink hero asset, and the
 [illustrated walkthrough](ILLUSTRATED_GUIDE.md) ships four sanitized,
 version-labelled interface diagrams. They deliberately avoid real usernames,
 paths, domains, OAuth codes, and credentials. Future release validation should

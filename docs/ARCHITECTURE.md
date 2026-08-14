@@ -1,6 +1,6 @@
 # Architecture
 
-VSPiLink is a local execution bridge, not a hosted model and not a replacement
+PiLink is a local execution bridge, not a hosted model and not a replacement
 ChatGPT frontend. It combines four independently authenticated surfaces:
 
 1. ChatGPT Work and its installed plugin;
@@ -17,17 +17,17 @@ client, or the VS Code host from being mistaken for one another.
 flowchart LR
     Developer[Developer]
     Work[ChatGPT Work]
-    Plugin[VSPiLink plugin]
+    Plugin[PiLink plugin]
     Public[Stable HTTPS origin]
     Tunnel[Named tunnel or reverse proxy]
-    Server[VSPiLink OAuth/MCP server]
+    Server[PiLink OAuth/MCP server]
     Harness[Pi coding-tool harness]
     Workspace[Selected workspace]
     Collaboration[Chat, tasks, work loop, memory]
     AgentRuntime[Supervised Pi agent runtime]
     Provider[Optional Pi model provider]
     Extension[VS Code extension]
-    Dashboard[VSPiLink dashboard]
+    Dashboard[PiLink dashboard]
 
     Developer --> Work
     Work --> Plugin
@@ -46,7 +46,7 @@ flowchart LR
 ```
 
 The ChatGPT page is opened in VS Code's Integrated Browser when available. It
-is not loaded into the VSPiLink webview. VSPiLink therefore does not read its
+is not loaded into the PiLink webview. PiLink therefore does not read its
 DOM, cookies, composer, reasoning, or transcript.
 
 ## Product runtime modes
@@ -81,7 +81,7 @@ workspace file cannot select or elevate the mode.
 flowchart TB
     subgraph OpenAI[OpenAI-controlled boundary]
         Work[ChatGPT Work]
-        Plugin[Installed VSPiLink plugin]
+        Plugin[Installed PiLink plugin]
     end
 
     subgraph Internet[Public network boundary]
@@ -96,7 +96,7 @@ flowchart TB
             Admin[Admin API]
             Extension[VS Code extension host]
         end
-        Server[VSPiLink server]
+        Server[PiLink server]
         subgraph Private[Private data directory]
             Clients[OAuth clients and refresh state]
             Coordination[Chat, tasks, memory, audit]
@@ -198,7 +198,7 @@ policy remain additional checks.
 
 ### Supervised Pi agents
 
-VSPiLink adds local agent runtime operations for spawn, list, status, output,
+PiLink adds local agent runtime operations for spawn, list, status, output,
 follow-up, cancellation, and stop. These agents require a configured Pi Local
 provider/model. They do not create new ChatGPT conversations and do not grant a
 remote ChatGPT session extra authority.
@@ -236,8 +236,8 @@ evaluation mode.
 | --- | --- | --- |
 | Open folder | Canonical selected workspace only | Fixed read-only profiles; build/test only after explicit opt-in |
 | Open folder + execution approval | Same workspace boundary | Sensitive enabled profiles require fresh client elicitation |
-| Full access | All paths available to the VSPiLink OS user | General commands available to an explicitly authorized client |
+| Full access | All paths available to the PiLink OS user | General commands available to an explicitly authorized client |
 | Pi Local | Uses the selected workspace/runtime mode | Model calls use the configured provider |
 
 None of these modes is an OS sandbox. Even a repository build executed from
-safe workspace mode can run arbitrary repository code as the VSPiLink user.
+safe workspace mode can run arbitrary repository code as the PiLink user.

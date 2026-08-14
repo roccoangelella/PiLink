@@ -8,8 +8,8 @@ import type {
   SecurePathInspection,
 } from "./types.js";
 
-export const MANAGED_CONFIG_HEADER = "# Managed by VSPiLink Cloudflare hosting. Do not add secrets here.";
-export const MANAGED_SYSTEMD_HEADER = "# Managed by VSPiLink hosting. Generated file; do not edit.";
+export const MANAGED_CONFIG_HEADER = "# Managed by PiLink Cloudflare hosting. Do not add secrets here.";
+export const MANAGED_SYSTEMD_HEADER = "# Managed by PiLink hosting. Generated file; do not edit.";
 
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TUNNEL_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/;
@@ -243,7 +243,7 @@ export function renderSystemdUserUnits(options: NormalizedCloudflareHostingOptio
   const serverContent = [
     MANAGED_SYSTEMD_HEADER,
     "[Unit]",
-    "Description=VSPiLink persistent MCP server",
+    "Description=PiLink persistent MCP server",
     "Wants=network-online.target",
     "After=network-online.target",
     "StartLimitIntervalSec=300",
@@ -298,7 +298,7 @@ export function renderSystemdUserUnits(options: NormalizedCloudflareHostingOptio
   const tunnelContent = [
     MANAGED_SYSTEMD_HEADER,
     "[Unit]",
-    "Description=VSPiLink dedicated Cloudflare named tunnel",
+    "Description=PiLink dedicated Cloudflare named tunnel",
     "Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/",
     `Requires=${options.serverSystemdUnitName}`,
     `After=network-online.target ${options.serverSystemdUnitName}`,
@@ -407,7 +407,7 @@ export async function inspectSecurePath(
       }
       if (options.expectedContent !== undefined) {
         inspection.contentMatches = content === options.expectedContent;
-        inspection.managedByVSPiLink = content.startsWith(options.managedHeader ?? MANAGED_CONFIG_HEADER);
+        inspection.managedByPiLink = content.startsWith(options.managedHeader ?? MANAGED_CONFIG_HEADER);
       }
     } catch (error) {
       return { ...inspection, state: "invalid", reason: errorMessage(error) };

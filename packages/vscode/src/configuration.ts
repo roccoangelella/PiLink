@@ -126,7 +126,7 @@ export function provisionWizardConfiguration(options: {
 }): void {
   const workspace = path.resolve(options.workspace);
   const port = options.port ?? 3200;
-  if (!Number.isSafeInteger(port) || port <= 0 || port > 65_535) throw new Error(`Invalid VSPiLink port: ${port}`);
+  if (!Number.isSafeInteger(port) || port <= 0 || port > 65_535) throw new Error(`Invalid PiLink port: ${port}`);
   let contents: string;
   if (fs.existsSync(options.configPath)) {
     contents = fs.readFileSync(options.configPath, "utf8");
@@ -163,7 +163,7 @@ export function provisionWizardConfiguration(options: {
   }
   contents = updateEnvValue(contents, "PI_WORK_DIR", workspace);
   if (options.runtimeMode) {
-    if (!isRuntimeMode(options.runtimeMode)) throw new Error("Invalid VSPiLink runtime workflow.");
+    if (!isRuntimeMode(options.runtimeMode)) throw new Error("Invalid PiLink runtime workflow.");
     contents = updateEnvValue(contents, "PI_RUNTIME_MODE", options.runtimeMode);
   }
   if (!parseEnv(contents).PI_COORDINATION_DATA_DIR) {

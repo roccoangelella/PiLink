@@ -1,14 +1,18 @@
 # VSPiLink for VS Code
 
-VSPiLink connects ChatGPT Work to the Pi workspace tool harness through an
-OAuth-protected MCP server:
+VSPiLink is the optional VS Code extension for the **PiLink** project. PiLink
+remains the server, CLI, and protocol implementation; VSPiLink adds a graphical
+control surface for both PiLink runtime workflows.
+
+The extension connects ChatGPT Work to PiLink's workspace tool harness through
+an OAuth-protected MCP server:
 
 ```text
-ChatGPT Work -> VSPiLink plugin -> HTTPS OAuth/MCP -> VSPiLink -> selected folder
+ChatGPT Work -> PiLink plugin -> HTTPS OAuth/MCP -> PiLink -> selected folder
 ```
 
 ChatGPT Work remains the agent surface and coordinator. In the **Public chat &
-orchestration** workflow, its selected model uses VSPiLink's file, Git, bounded
+orchestration** workflow, its selected model uses PiLink's file, Git, bounded
 execution, collaboration, and supervised-agent tools, while its VS Code view
 reports connection status and deliberately published activity. The view does
 not read ChatGPT cookies, page content, private transcripts, or reasoning.
@@ -54,7 +58,7 @@ workflow choices. Switching the runtime workflow while a service is active
 asks before restarting it and keeps OAuth credentials unchanged.
 
 For manual VSIX, Remote SSH, source-build, and upgrade instructions, read the
-[complete installation guide](https://github.com/0xfunboy/VSPiLink/blob/master/docs/INSTALLATION.md).
+[complete installation guide](https://github.com/roccoangelella/PiLink/blob/master/docs/INSTALLATION.md).
 
 ## Connect ChatGPT Work
 
@@ -62,7 +66,7 @@ Current ChatGPT web support exposes remote MCP-backed tools through installed
 plugins in **ChatGPT Work**. Normal Chat does not currently support plugins,
 including on a Pro plan.
 
-1. Open and trust the specific project folder VSPiLink should access.
+1. Open and trust the specific project folder PiLink should access.
 2. Keep **ChatGPT MCP** selected in VSPiLink.
 3. Use the Command Palette command **VSPiLink: Connect ChatGPT via MCP**, or
    select **Start setup** in the VSPiLink view.
@@ -70,8 +74,8 @@ including on a Pro plan.
    after reviewing its remote-code-execution warning.
 5. Configure a stable public HTTPS endpoint and wait for the local service and
    public endpoint to become healthy.
-6. Open ChatGPT Work, open **Plugins**, and install the private VSPiLink plugin
-   supplied by your personal or workspace plugin source. VSPiLink is not a
+6. Open ChatGPT Work, open **Plugins**, and install the private PiLink plugin
+   supplied by your personal or workspace plugin source. PiLink is not a
    public catalog result named "MCP server."
 7. Complete OAuth once. Prefer **Dynamic Client Registration (DCR)** when it is
    available; DCR does not require you to copy a callback URL, client ID, or
@@ -82,21 +86,21 @@ including on a Pro plan.
 The VSIX cannot embed or provision a private, per-account ChatGPT Work plugin
 ID. ChatGPT assigns that ID only after the deployment owner registers the MCP
 endpoint inside their account or workspace. The owner must create or import
-the VSPiLink plugin once in Work, map it to that assigned ID, and make the
+the PiLink plugin once in Work, map it to that assigned ID, and make the
 resulting entry available through the permitted personal or workspace plugin
 source. Other authorized users install that owner-provided entry.
 
 The plugin source and the VS Code extension are separate installation layers.
-If your VSPiLink plugin is not visible in ChatGPT Work, ask its publisher or
+If your PiLink plugin is not visible in ChatGPT Work, ask its publisher or
 workspace administrator to make it available. Do not install an unrelated
 public plugin.
 
-The optional repository bundle at `plugins/vspilink` is a separate Codex-only
+The optional repository bundle at `plugins/pilink` is a separate Codex-only
 loopback plugin for local development. It does not install, replace, or
 configure the private ChatGPT Work plugin.
 
 See the canonical
-[ChatGPT Work connection guide](https://github.com/0xfunboy/VSPiLink/blob/master/docs/CONNECT_CHATGPT.md)
+[ChatGPT Work connection guide](https://github.com/roccoangelella/PiLink/blob/master/docs/CONNECT_CHATGPT.md)
 for DCR, the manual OAuth compatibility fallback, and troubleshooting.
 
 ## What appears in the VS Code view
@@ -139,13 +143,14 @@ execute repository-controlled code and require a separate opt-in.
 
 **Full access is remote code execution by design.** It permits an authorized
 OAuth client to access files outside the selected folder and run commands with
-the VSPiLink operating-system user's permissions. It does not grant root
+the PiLink operating-system user's permissions. It does not grant root
 privileges. Enable it only for a reviewed client on a machine you are prepared
 to expose.
 
 Secrets and coordination data must remain outside the workspace. Read the
-[security model](https://github.com/0xfunboy/VSPiLink/blob/master/docs/SECURITY_MODEL.md)
+[security model](https://github.com/roccoangelella/PiLink/blob/master/docs/SECURITY_MODEL.md)
 before exposing a public endpoint.
 
-VSPiLink is an independent project and is not affiliated with, endorsed by,
-or distributed by OpenAI, Microsoft, or Cloudflare.
+PiLink is an independent project and is not affiliated with, endorsed by, or
+distributed by OpenAI, Microsoft, or Cloudflare. VSPiLink is its optional VS
+Code extension.

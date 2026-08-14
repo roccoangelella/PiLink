@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are prepared for the latest released VSPiLink version. Older
+Security fixes are prepared for the latest released PiLink version. Older
 versions may be asked to upgrade before a report can be reproduced or fixed.
 
 ## Report a vulnerability
@@ -15,7 +15,7 @@ secrets, or an exploitable proof of concept.
 
 Include only the minimum information needed to reproduce the problem:
 
-- affected VSPiLink and VS Code versions;
+- affected PiLink and VS Code versions;
 - operating system and whether Remote-SSH is involved;
 - affected component and a redacted reproduction;
 - expected impact and any safe mitigation already tested.

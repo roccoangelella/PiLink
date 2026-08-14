@@ -1,0 +1,31 @@
+{
+  "name": "pilink",
+  "version": "2.2.0",
+  "description": "Connect Codex on the same machine to a running PiLink MCP bridge.",
+  "author": {
+    "name": "0xfunboy",
+    "url": "https://github.com/0xfunboy"
+  },
+  "homepage": "https://github.com/roccoangelella/PiLink",
+  "repository": "https://github.com/roccoangelella/PiLink",
+  "license": "MIT",
+  "keywords": ["mcp", "vscode", "workspace", "coding-agent"],
+  "interface": {
+    "displayName": "PiLink Local Bridge",
+    "shortDescription": "Control a local workspace through PiLink",
+    "longDescription": "Connect Codex to a PiLink server listening on the same machine. PiLink supplies OAuth-protected file, Git, execution, collaboration, and supervised-agent tools.",
+    "developerName": "0xfunboy",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/0xfunboy/VSPiLink",
+    "defaultPrompt": [
+      "Inspect the current workspace and summarize its state.",
+      "Run the safe checks and explain every failure.",
+      "Coordinate agents on this workspace and show progress."
+    ],
+    "brandColor": "#49D99A",
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png"
+  },
+  "mcpServers": "./.mcp.json"
+}

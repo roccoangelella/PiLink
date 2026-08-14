@@ -42,7 +42,7 @@ export function resolveSidecarNodeRuntime(options: ResolveSidecarNodeOptions = {
     return {
       ok: false,
       ...(version ? { version } : {}),
-      error: `The executable configured in vspilink.nodeExecutable uses Node ${version || "not detected"}; VSPiLink requires exactly Node ${REQUIRED_NODE_VERSION}.`,
+      error: `The executable configured in vspilink.nodeExecutable uses Node ${version || "not detected"}; PiLink requires exactly Node ${REQUIRED_NODE_VERSION}.`,
     };
   }
 

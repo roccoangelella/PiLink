@@ -399,7 +399,7 @@ class ExtensionController {
           detail: "Authenticated MCP clients may use shared chat, tasks, and agent supervision; hosting and OAuth remain separate.",
           value: "collaboration" as const,
         },
-      ], { title: "Choose the VSPiLink workflow", placeHolder: "Select the server capability boundary" });
+      ], { title: "Choose the PiLink workflow", placeHolder: "Select the server capability boundary" });
       if (!selected) return;
       mode = selected.value;
     }
@@ -461,7 +461,7 @@ class ExtensionController {
     }
     this.mcpChanged.fire();
     await this.dashboard.refresh();
-    void vscode.window.showInformationMessage(`VSPiLink workflow: ${runtimeModeLabel(mode)}.`);
+    void vscode.window.showInformationMessage(`PiLink workflow: ${runtimeModeLabel(mode)}.`);
   }
 
   private updateRuntimeModeConfig(snapshot: ConfigSnapshot, mode: RuntimeMode): void {
@@ -485,7 +485,7 @@ class ExtensionController {
     const snapshot = this.snapshot(target);
     if (snapshot.configured) {
       const action = await vscode.window.showInformationMessage(
-        `A VSPiLink configuration already exists at ${snapshot.configPath}.`,
+        `A PiLink configuration already exists at ${snapshot.configPath}.`,
         "Open configuration",
         "Separate setup or reset",
       );
@@ -534,7 +534,7 @@ class ExtensionController {
     if (snapshot.hostingMode === "cloudflare-named") {
       await this.restartManagedChatServer(this.snapshot(snapshot.workspace));
       const health = await waitForHealth(snapshot.port, 120_000);
-      if (!health.online) throw new Error(`VSPiLink did not restart with Full access: ${health.error || "timeout"}`);
+      if (!health.online) throw new Error(`PiLink did not restart with Full access: ${health.error || "timeout"}`);
     } else {
       if (this.supervisor.isActive) await this.supervisor.stop();
       await this.runCli(
@@ -623,7 +623,7 @@ class ExtensionController {
 
     const runtime = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: "Configure the VSPiLink MCP server",
+      title: "Configure the PiLink MCP server",
       cancellable: false,
     }, async (progress) => {
       progress.report({ message: "Preparing the private configuration…" });
@@ -708,7 +708,7 @@ class ExtensionController {
     });
     if (!mcpHostname) return undefined;
     const landingHostname = await vscode.window.showInputBox({
-      title: "VSPiLink page hostname",
+      title: "PiLink page hostname",
       value: `vspilink.${zoneName.trim().toLowerCase()}`,
       placeHolder: "vspilink.example.com",
       ignoreFocusOut: true,
@@ -780,7 +780,7 @@ class ExtensionController {
       const action = await vscode.window.showWarningMessage(
         snapshot.hostingMode === "cloudflare-named"
           ? "Stop the persistent VSPiLink and Cloudflare services before resetting?"
-          : "Stop the VSPiLink process before resetting?",
+          : "Stop the PiLink process before resetting?",
         { modal: true },
         "Stop and continue",
       );
@@ -817,7 +817,7 @@ class ExtensionController {
     const snapshot = this.snapshot();
     if (!snapshot.configured) throw new Error("Initialize VSPiLink before registering an OAuth client.");
     const health = await readHealth(snapshot.port);
-    if (!health.online) throw new Error("Start VSPiLink before registering an OAuth client.");
+    if (!health.online) throw new Error("Start PiLink before registering an OAuth client.");
 
     const grant = await vscode.window.showQuickPick([
       { label: "Authorization Code + PKCE", description: "Browser sign-in with consent; a redirect URI is required", value: "authorization_code" },
@@ -909,7 +909,7 @@ class ExtensionController {
       } else {
         const start = await vscode.window.showInformationMessage(
           snapshot.hostingMode === "cloudflare-named"
-            ? "The persistent service is not running. Start VSPiLink and the Named Tunnel?"
+            ? "The persistent service is not running. Start PiLink and the Named Tunnel?"
             : "The server is not running. Start it locally with workspace-only access?",
           { modal: true },
           "Start and connect",
@@ -920,7 +920,7 @@ class ExtensionController {
         health = await waitForHealth(snapshot.port);
       }
     }
-    if (!health.online) throw new Error(`VSPiLink did not become reachable: ${health.error || "timeout"}`);
+    if (!health.online) throw new Error(`PiLink did not become reachable: ${health.error || "timeout"}`);
     await this.oauth.connectNative(snapshot, scope);
     this.mcpChanged.fire();
     await this.dashboard.refresh();
@@ -1090,7 +1090,7 @@ class ExtensionController {
       const actions = Array.isArray(result?.actions) ? result.actions : [];
       const remoteChanges = actions.filter((entry) => jsonObject(entry)?.mutatesRemote === true).length;
       const confirmation = await vscode.window.showInformationMessage(
-        "VSPiLink will configure the Cloudflare Named Tunnel, both HTTPS hostnames, and persistent user services.",
+        "PiLink will configure the Cloudflare Named Tunnel, both HTTPS hostnames, and persistent user services.",
         {
           modal: true,
           detail: remoteChanges
@@ -1125,7 +1125,7 @@ class ExtensionController {
       await this.runNamedHostingCli("start", namedHosting, snapshot, true);
       this.invalidateManagedHosting();
       const health = await waitForHealth(snapshot.port, 120_000);
-      if (!health.online) throw new Error(`The VSPiLink service did not become reachable: ${health.error || "timeout"}`);
+      if (!health.online) throw new Error(`The PiLink service did not become reachable: ${health.error || "timeout"}`);
       const publicUrl = (hosting.publicUrl as string).replace(/\/$/, "");
       const publicHealth = await waitForPublicHealth(publicUrl, 60_000);
       if (!publicHealth.online) throw new Error(`The Cloudflare endpoint is not ready: ${publicHealth.error || "timeout"}`);
@@ -1147,7 +1147,7 @@ class ExtensionController {
       { PI_OAUTH_CONSENT_MODE: "paired" },
     );
     const health = await waitForHealth(snapshot.port, 120_000);
-    if (!health.online) throw new Error(`VSPiLink did not become reachable: ${health.error || "timeout"}`);
+    if (!health.online) throw new Error(`PiLink did not become reachable: ${health.error || "timeout"}`);
 
     const publicUrl = hosting.kind === "custom-domain"
       ? hosting.publicUrl as string
@@ -1177,7 +1177,7 @@ class ExtensionController {
   private async pairWizardOwner(destination: ChatGptDestination): Promise<boolean> {
     await this.requirePersistentBrowserStorage();
     const state = this.wizard.currentState;
-    if (!state.publicUrl) throw new Error("The public VSPiLink host is unavailable for OAuth pairing.");
+    if (!state.publicUrl) throw new Error("The public PiLink host is unavailable for OAuth pairing.");
     const snapshot = this.wizardSnapshot(state);
     if (!snapshot.bootstrapSecret) throw new Error("PI_BOOTSTRAP_SECRET is missing from the private configuration.");
     const pairing = await createOwnerPairing(snapshot.port, snapshot.bootstrapSecret);
@@ -1239,7 +1239,7 @@ class ExtensionController {
     const storage = vscode.workspace.getConfiguration("workbench.browser").get<string>("dataStorage", "global");
     if (storage !== "ephemeral") return;
     const action = await vscode.window.showWarningMessage(
-      "The integrated browser uses ephemeral storage, so the VSPiLink consent page and ChatGPT cannot share the OAuth session.",
+      "The integrated browser uses ephemeral storage, so the PiLink consent page and ChatGPT cannot share the OAuth session.",
       { modal: true, detail: "Open Workbench › Browser: Data Storage, select Global or Workspace, then run “Connect ChatGPT via MCP” again." },
       "Open setting",
     );
@@ -1270,7 +1270,7 @@ class ExtensionController {
     try {
       origin = new URL(state.publicUrl);
     } catch {
-      throw new Error("The public VSPiLink endpoint is invalid.");
+      throw new Error("The public PiLink endpoint is invalid.");
     }
     if (origin.protocol !== "https:" || isLoopbackBrowserHost(origin.hostname)) {
       await this.guidedSetup();
@@ -1328,7 +1328,7 @@ class ExtensionController {
     this.requireTrustedWorkspace();
     const snapshot = this.wizardSnapshot(this.wizard.currentState);
     const health = await readHealth(snapshot.port);
-    if (!health.online) throw new Error("Start VSPiLink before registering ChatGPT.");
+    if (!health.online) throw new Error("Start PiLink before registering ChatGPT.");
     const registered = await this.oauth.registerExternalClient(snapshot, {
       clientName: "ChatGPT VSPiLink",
       grantTypes: ["authorization_code", "refresh_token"],
@@ -1341,7 +1341,7 @@ class ExtensionController {
       if (snapshot.hostingMode === "cloudflare-named") {
         await this.restartManagedChatServer(this.snapshot(snapshot.workspace));
         const restarted = await waitForHealth(snapshot.port, 120_000);
-        if (!restarted.online) throw new Error(`VSPiLink did not restart after the client was authorized: ${restarted.error || "timeout"}`);
+        if (!restarted.online) throw new Error(`PiLink did not restart after the client was authorized: ${restarted.error || "timeout"}`);
       }
     }
     return registered;
@@ -1483,13 +1483,13 @@ class ExtensionController {
     }
     if (health.online && !this.supervisor.isActive && !managedNamedServer) {
       await vscode.window.showWarningMessage(
-        `VSPiLink is already running outside the extension for ${previous.workspace}. Stop that instance before using ${workspace}.`,
+        `PiLink is already running outside the extension for ${previous.workspace}. Stop that instance before using ${workspace}.`,
         { modal: true },
       );
       return false;
     }
     const approval = await vscode.window.showWarningMessage(
-      `VSPiLink is configured for ${previous.workspace}. Use the open folder ${workspace} instead?`,
+      `PiLink is configured for ${previous.workspace}. Use the open folder ${workspace} instead?`,
       {
         modal: true,
         detail: "Chat and connected MCP clients will use the new folder. Provider sign-ins, OAuth clients, and hosting stay unchanged.",
@@ -1909,7 +1909,7 @@ class ExtensionController {
     const packaged = path.join(this.context.extensionPath, "runtime", "docs", "VSCODE_EXTENSION.md");
     const target = fs.existsSync(packaged) ? packaged : development;
     if (!fs.existsSync(target)) {
-      await vscode.env.openExternal(vscode.Uri.parse("https://github.com/0xfunboy/VSPiLink#readme"));
+      await vscode.env.openExternal(vscode.Uri.parse("https://github.com/roccoangelella/PiLink#readme"));
       return;
     }
     const document = await vscode.workspace.openTextDocument(target);
@@ -2378,7 +2378,7 @@ class ExtensionController {
         return;
       }
     }
-    void vscode.window.showInformationMessage("Agent configuration saved. VSPiLink will apply it the next time chat starts.");
+    void vscode.window.showInformationMessage("Agent configuration saved. PiLink will apply it the next time chat starts.");
   }
 
   private async runCli(

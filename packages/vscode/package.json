@@ -1,7 +1,7 @@
 {
   "name": "vspilink",
-  "displayName": "VSPiLink",
-  "description": "Connect ChatGPT to the Pi tool harness in your workspace through MCP/OAuth, and monitor agents, chat, and tasks in VS Code.",
+  "displayName": "VSPiLink — PiLink for VS Code",
+  "description": "Optional VS Code control surface for PiLink single-agent and public-chat orchestration workflows.",
   "version": "2.2.0",
   "publisher": "0xfunboy",
   "license": "MIT",
@@ -22,12 +22,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/0xfunboy/VSPiLink.git"
+    "url": "https://github.com/roccoangelella/PiLink.git"
   },
   "bugs": {
-    "url": "https://github.com/0xfunboy/VSPiLink/issues"
+    "url": "https://github.com/roccoangelella/PiLink/issues"
   },
-  "homepage": "https://github.com/0xfunboy/VSPiLink#readme",
+  "homepage": "https://github.com/roccoangelella/PiLink#readme",
   "extensionKind": [
     "workspace"
   ],
@@ -39,7 +39,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode, VSPiLink shows only status and documentation. Starting services, configuration, OAuth, and file access remain blocked.",
+      "description": "In Restricted Mode, the VSPiLink extension shows only PiLink status and documentation. Starting services, configuration, OAuth, and file access remain blocked.",
       "restrictedConfigurations": [
         "vspilink.configPath",
         "vspilink.nodeExecutable",
@@ -219,14 +219,14 @@
         "vspilink.openOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "Open the VSPiLink sidebar after VS Code finishes starting."
+          "description": "Open the optional VSPiLink sidebar for PiLink after VS Code finishes starting."
         },
         "vspilink.configPath": {
           "type": "string",
           "default": "",
           "scope": "resource",
           "restricted": true,
-          "description": "Optional path to the PiLink .env file. Supports ~ and ${workspaceFolder}. When empty, VSPiLink uses PILINK_CONFIG or ~/.config/pilink/.env."
+          "description": "Optional path to the PiLink .env file. Supports ~ and ${workspaceFolder}. When empty, the extension uses PILINK_CONFIG or ~/.config/pilink/.env."
         },
         "vspilink.nativeMcpScope": {
           "type": "string",
@@ -250,7 +250,7 @@
           "default": "",
           "scope": "application",
           "restricted": true,
-          "description": "Optional path to exactly Node.js 24.18.0 for the PiLink helper process. When empty, VSPiLink first checks node on PATH and uses the extension-host runtime only when it has the exact same version."
+          "description": "Optional path to exactly Node.js 24.18.0 for the PiLink helper process. When empty, the extension first checks node on PATH and uses the extension-host runtime only when it has the exact same version."
         }
       }
     },
@@ -259,7 +259,7 @@
         {
           "id": "vspilinkSecondaryViewContainer",
           "title": "VSPiLink",
-          "icon": "media/icon.svg"
+          "icon": "media/icon.png"
         }
       ]
     },

@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-  <title id="title">Approve the VSPiLink OAuth connection once</title>
-  <desc id="desc">An illustrated VSPiLink authorization page with requested scopes and a single approve button.</desc>
+  <title id="title">Approve the PiLink OAuth connection once</title>
+  <desc id="desc">An illustrated PiLink authorization page with requested scopes and a single approve button.</desc>
   <rect width="1200" height="675" fill="#0b0f14"/>
   <rect x="245" y="48" width="710" height="576" rx="26" fill="#171821" stroke="#343846" stroke-width="2"/>
-  <text x="300" y="112" fill="#ffffff" font-family="system-ui,sans-serif" font-size="35" font-weight="800">VSPiLink authorization</text>
+  <text x="300" y="112" fill="#ffffff" font-family="system-ui,sans-serif" font-size="35" font-weight="800">PiLink authorization</text>
   <text x="300" y="148" fill="#9da7ba" font-family="system-ui,sans-serif" font-size="19">Review the deployment and requested capabilities.</text>
   <rect x="300" y="186" width="600" height="74" rx="12" fill="#12312c" stroke="#2b8b6d"/>
   <text x="330" y="218" fill="#72e6b0" font-family="system-ui,sans-serif" font-size="16" font-weight="700">CLIENT</text>
-  <text x="330" y="244" fill="#ffffff" font-family="system-ui,sans-serif" font-size="22" font-weight="700">ChatGPT · VSPiLink private plugin</text>
+  <text x="330" y="244" fill="#ffffff" font-family="system-ui,sans-serif" font-size="22" font-weight="700">ChatGPT · PiLink private plugin</text>
   <text x="300" y="310" fill="#aab4c7" font-family="system-ui,sans-serif" font-size="17" font-weight="700">REQUESTED PERMISSIONS</text>
   <rect x="300" y="331" width="600" height="62" rx="10" fill="#20222d"/>
   <text x="330" y="370" fill="#72e6b0" font-family="system-ui,sans-serif" font-size="23">✓</text><text x="371" y="369" fill="#eef2f7" font-family="ui-monospace,monospace" font-size="19">mcp:tools</text>

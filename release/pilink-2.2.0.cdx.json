@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:1a7475b2-b13d-4f66-b17f-ec55493d376d",
+  "serialNumber": "urn:uuid:74a74664-6045-4738-a760-8becd2a43fc0",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-14T08:51:06.030Z",
+    "timestamp": "2026-08-14T09:11:38.987Z",
     "lifecycles": [
       {
         "phase": "pre-build"
@@ -24,21 +24,21 @@
       "name": "PiLink",
       "version": "2.2.0",
       "scope": "required",
-      "description": "ChatGPT-to-workspace MCP bridge for VS Code with the Pi tool harness, OAuth and collaborative agent monitoring",
+      "description": "OAuth-protected MCP bridge with single-agent, public-chat orchestration, and optional VS Code workflows",
       "purl": "pkg:npm/pilink@2.2.0",
       "properties": [],
       "externalReferences": [
         {
           "type": "vcs",
-          "url": "https://github.com/0xfunboy/VSPiLink.git"
+          "url": "https://github.com/roccoangelella/PiLink.git"
         },
         {
           "type": "website",
-          "url": "https://github.com/0xfunboy/VSPiLink#readme"
+          "url": "https://github.com/roccoangelella/PiLink#readme"
         },
         {
           "type": "issue-tracker",
-          "url": "https://github.com/0xfunboy/VSPiLink/issues"
+          "url": "https://github.com/roccoangelella/PiLink/issues"
         }
       ],
       "licenses": [

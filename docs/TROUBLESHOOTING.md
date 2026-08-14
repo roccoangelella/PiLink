@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Diagnose VSPiLink one layer at a time. A green tunnel does not prove OAuth is
+Diagnose PiLink one layer at a time. A green tunnel does not prove OAuth is
 valid, and an OAuth client does not prove an MCP transport is active.
 
 ## Connection layers
@@ -11,7 +11,7 @@ valid, and an OAuth client does not prove an MCP transport is active.
 | Sidecar | Local health and authenticated admin status | Node mismatch, port conflict, duplicate owner |
 | Hosting | Stable public HTTPS origin reaches the sidecar | Tunnel stopped, DNS/proxy mismatch |
 | OAuth | Metadata is discoverable and one client is authorized | Wrong callback, expired consent, stale origin |
-| Plugin | VSPiLink is installed and enabled in ChatGPT Work | Looking in normal Chat or wrong catalog result |
+| Plugin | PiLink is installed and enabled in ChatGPT Work | Looking in normal Chat or wrong catalog result |
 | MCP | Authenticated session and tool list | Stale token/session, scope mismatch |
 | Collaboration | Explicit agent messages/tasks appear | No `agent_chat_post` or `agent_task_*` calls yet |
 
@@ -21,15 +21,15 @@ This is expected under the current official product model. On ChatGPT web:
 
 1. Use the top surface selector to switch from **Chat** to **Work**.
 2. Open **Plugins** in the left sidebar.
-3. Install or enable VSPiLink.
+3. Install or enable PiLink.
 4. Start a new Work task.
 
 ChatGPT Pro may increase included Work/Codex usage, but it does not add remote
 MCP tools to normal Chat. See [Usage, models, and costs](USAGE_AND_COSTS.md).
 
-## VSPiLink is not in the plugin catalog
+## PiLink is not in the plugin catalog
 
-VSPiLink may be a private/personal or workspace plugin rather than a public
+PiLink may be a private/personal or workspace plugin rather than a public
 catalog entry. Do not search for "MCP server" and install an unrelated vendor.
 
 Check:
@@ -40,13 +40,13 @@ Check:
 4. Workspace plugin policy with the administrator.
 
 If you cannot create, import, share, or install the private plugin, the missing
-capability is account/workspace-side. Changing a VSPiLink provider or API key
+capability is account/workspace-side. Changing a PiLink provider or API key
 will not make that control appear.
 
 ## Developer Mode or the old plus button is missing
 
 Developer Mode/custom-connector setup is a compatibility path from older
-ChatGPT interfaces, not the current primary VSPiLink workflow. Its location and
+ChatGPT interfaces, not the current primary PiLink workflow. Its location and
 availability can vary. Use ChatGPT Work and the current Plugins workflow.
 
 Do not weaken OAuth registration, accept arbitrary callbacks, or expose the
@@ -55,13 +55,13 @@ bootstrap secret because a legacy UI control is absent.
 ## I cannot find the callback or fallback URL
 
 With Dynamic Client Registration, there is no callback for the user to copy.
-The client registers its redirect URI directly with VSPiLink.
+The client registers its redirect URI directly with PiLink.
 
 Only use the manual flow when the active plugin builder explicitly displays a
 Callback/Redirect URL and supports a user-defined client. In that case:
 
 1. copy the complete HTTPS callback exactly;
-2. paste it into VSPiLink's manual OAuth fallback;
+2. paste it into PiLink's manual OAuth fallback;
 3. copy the resulting Client ID, one-time secret, Authorization URL, and Token
    URL into the matching fields;
 4. use `client_secret_post` when requested.
@@ -88,8 +88,8 @@ domain.
 
 ## VS Code warns before opening several external links
 
-Read the entire target before approving it. Normal VSPiLink setup should open
-only the documented ChatGPT pages, the configured VSPiLink origin, and official
+Read the entire target before approving it. Normal PiLink setup should open
+only the documented ChatGPT pages, the configured PiLink origin, and official
 documentation. Do not approve an unfamiliar `nip.io`, Quick Tunnel, callback,
 or test-fixture hostname merely because it appeared during development.
 
@@ -107,8 +107,8 @@ The second click correctly fails after the first request was consumed.
 2. Return to the ChatGPT Work/plugin tab that initiated OAuth.
 3. Wait for its redirect or completion state.
 4. If ChatGPT reports setup failure, start a fresh **Connect/Authenticate**
-   action so VSPiLink creates a new consent request.
-5. Capture the first redirect/error and VSPiLink server log before retrying.
+   action so PiLink creates a new consent request.
+5. Capture the first redirect/error and PiLink server log before retrying.
 
 Repeatedly refreshing `/oauth/authorize` without its original query parameters
 cannot recreate the request.
@@ -167,11 +167,11 @@ Use a specific project as the safe workspace or place private state outside the
 authorized tree. Restart after correcting the configuration. Do not move
 private state into the repository.
 
-## VSPiLink uses the wrong folder
+## PiLink uses the wrong folder
 
 1. In VS Code select **File → Open Folder…** and open the intended project.
 2. In a multi-root window, open the Command Palette and run **VSPiLink: Use the
-   Current Folder as the VSPiLink Workspace**, then select the exact folder.
+   Current Folder as the PiLink Workspace**, then select the exact folder.
 3. Review the canonical path shown before authorizing OAuth.
 4. Restart the managed runtime if the configuration changed.
 
@@ -182,7 +182,7 @@ the actual intent and a specific OAuth client has been reviewed.
 
 ## Node version mismatch
 
-VSPiLink requires Node.js **24.18.0 exactly**.
+PiLink requires Node.js **24.18.0 exactly**.
 
 1. Open **File → Preferences → Settings**.
 2. Search for **VSPiLink: Node Executable**.
@@ -208,10 +208,10 @@ version unless it happens to match exactly.
 Common failures have deliberate fixes:
 
 - **requires the `mcp:write` or `mcp:tools` scope** — the current OAuth client
-  is read-only. Reconnect VSPiLink with write access; changing the arguments
+  is read-only. Reconnect PiLink with write access; changing the arguments
   cannot expand an existing token.
 - **executes code from the workspace and is disabled by default** — for a
-  repository you trust, set `PI_ALLOW_WORKSPACE_EXECUTION=true` in VSPiLink's
+  repository you trust, set `PI_ALLOW_WORKSPACE_EXECUTION=true` in PiLink's
   private configuration and restart. Alternatively, explicitly authorize Full
   access after reviewing its risk.
 - **paths cannot be used with `npm_build`/`npm_test`** — remove `paths`; npm
@@ -246,7 +246,7 @@ Only one owner may run a given configuration.
 
 - Stop any `pilink start`, `pilink serve`, old extension window, or systemd
   service using the same port/configuration.
-- Use the VSPiLink restart action after the previous owner has exited.
+- Use the PiLink restart action after the previous owner has exited.
 - Do not delete lock/owner state until process liveness has been checked.
 - If another application owns the port, select a different configured port.
 
@@ -266,7 +266,7 @@ only the tunnel will not repair an invalid local server.
 
 ## Automatic `cloudflared` or Caddy installation fails
 
-VSPiLink intentionally refuses an unverifiable hosting binary. Read the exact
+PiLink intentionally refuses an unverifiable hosting binary. Read the exact
 error before changing configuration:
 
 - **overrides require both the download URL and its SHA-256 digest** — define
@@ -285,7 +285,7 @@ error before changing configuration:
 - **unsupported platform/architecture** — install the vendor binary manually
   and configure `PI_CLOUDFLARED_PATH` or `PI_CADDY_PATH`.
 - **configured path is not executable** — correct the path and file permission,
-  then verify the binary with `--version` before restarting VSPiLink.
+  then verify the binary with `--version` before restarting PiLink.
 
 The URL and SHA-256 variables are not credentials and should remain visible in
 configuration diagnostics. Redact actual Cloudflare tokens, certificates, API
@@ -309,7 +309,7 @@ client, and ChatGPT OAuth does not pay for a Pi Local provider.
 
 Include:
 
-- VSPiLink version and platform;
+- PiLink version and platform;
 - local vs Remote SSH;
 - Node version and selected executable source;
 - hosting mode and redacted hostname;

@@ -1,12 +1,11 @@
 # Notices and attribution
 
-VSPiLink incorporates and adapts work from **PiLink**, created by
-**Rocco Angelella**, together with contributions from the PiLink upstream
-contributors.
+PiLink was created by **Rocco Angelella** and includes contributions recorded
+in this repository's Git history. The 2.2.0 integration combines work from the
+project's `master` and `feature/agent-public-chat` development lines.
 
 Upstream project: <https://github.com/roccoangelella/PiLink>
 
-The upstream work and this adaptation are distributed under the MIT License.
-The repository history remains the authoritative record of individual
-contributions. This notice preserves attribution and does not assert ownership
-over work authored by upstream contributors.
+PiLink is distributed under the MIT License. The repository history remains
+the authoritative record of individual contributions. This notice preserves
+attribution and does not assert ownership over work authored by contributors.

@@ -209,7 +209,7 @@ export class SystemdUserUnitManager {
     if (dryRun) return { dryRun: true, changed: true, state, command };
     await runChecked(this.#runner, { command: this.#systemctlPath, args, timeoutMs: 30_000 });
     const finalState = await this.#enableState();
-    if (finalState !== "enabled") throw new Error("systemd did not enable the VSPiLink tunnel unit");
+    if (finalState !== "enabled") throw new Error("systemd did not enable the PiLink tunnel unit");
     return { dryRun: false, changed: true, state: finalState, command };
   }
 
@@ -225,7 +225,7 @@ export class SystemdUserUnitManager {
     if (dryRun) return { dryRun: true, changed: true, state: status.tunnelEnableState, command };
     await runChecked(this.#runner, { command: this.#systemctlPath, args, timeoutMs: 30_000 });
     const finalState = await this.#enableState();
-    if (finalState !== "disabled") throw new Error("systemd did not disable the VSPiLink tunnel unit");
+    if (finalState !== "disabled") throw new Error("systemd did not disable the PiLink tunnel unit");
     return { dryRun: false, changed: true, state: finalState, command };
   }
 
@@ -351,7 +351,7 @@ function addUnitActions(
   const title = role === "server" ? "persistent PiLink server" : "Cloudflare tunnel";
   if (inspection.state === "missing") {
     actions.push({ kind: `create-${role}-unit`, description: `Install managed ${title} user unit` });
-  } else if (inspection.contentMatches === false && inspection.managedByVSPiLink) {
+  } else if (inspection.contentMatches === false && inspection.managedByPiLink) {
     actions.push({ kind: `update-${role}-unit`, description: `Update managed ${title} user unit` });
   } else if (canRepairMode(inspection, expectedUid)) {
     actions.push({ kind: `secure-${role}-unit`, description: `Set managed ${title} unit mode to 0600` });
@@ -368,8 +368,8 @@ function addUnitBlocker(
   if (inspection.state === "invalid" || (inspection.state === "insecure" && inspection.uid !== expectedUid)) {
     blockers.push(pathIssue(label, inspection));
   }
-  if (inspection.contentMatches === false && !inspection.managedByVSPiLink) {
-    blockers.push(`${label} exists but is not managed by VSPiLink`);
+  if (inspection.contentMatches === false && !inspection.managedByPiLink) {
+    blockers.push(`${label} exists but is not managed by PiLink`);
   }
 }
 
@@ -404,7 +404,7 @@ async function assertReplaceableManagedUnit(targetPath: string, expectedUid: num
     managedHeader: MANAGED_SYSTEMD_HEADER,
   });
   if (inspection.state === "missing") return;
-  if (inspection.state === "invalid" || inspection.uid !== expectedUid || !inspection.managedByVSPiLink) {
+  if (inspection.state === "invalid" || inspection.uid !== expectedUid || !inspection.managedByPiLink) {
     throw new SystemdUnitInstallBlockedError(["refusing to replace an unmanaged or unsafe systemd unit"]);
   }
 }
@@ -414,7 +414,7 @@ function assertGeneratedUnit(name: string, content: string): void {
     throw new Error("generated systemd unit has an unsafe name");
   }
   if (!content.startsWith(`${MANAGED_SYSTEMD_HEADER}\n`) || /[\0\r]/.test(content)) {
-    throw new Error("generated systemd unit is missing the VSPiLink management marker");
+    throw new Error("generated systemd unit is missing the PiLink management marker");
   }
 }
 

@@ -146,8 +146,8 @@ export class CloudflareNamedTunnelHosting {
     }
     addManagedPathBlockers(blockers, "hosting state directory", stateDirectory, true);
     addManagedPathBlockers(blockers, "cloudflared config", config, true);
-    if (config.state !== "missing" && config.contentMatches === false && !config.managedByVSPiLink) {
-      blockers.push("cloudflared config exists but is not managed by VSPiLink");
+    if (config.state !== "missing" && config.contentMatches === false && !config.managedByPiLink) {
+      blockers.push("cloudflared config exists but is not managed by PiLink");
     }
     addManagedPathBlockers(blockers, "tunnel credentials", credentials, true);
     if (serverConfig.state !== "secure") blockers.push(securityIssue("PiLink server config", serverConfig));
@@ -406,7 +406,7 @@ export class CloudflareNamedTunnelHosting {
     }
     if (plan.inspection.service.serverState !== "active" && await this.#originIsOccupied(this.options.origin)) {
       throw new HostingProvisionBlockedError([
-        "the loopback origin port is already in use; stop the previous VSPiLink sidecar before starting systemd hosting",
+        "the loopback origin port is already in use; stop the previous PiLink sidecar before starting systemd hosting",
       ]);
     }
     const request: CommandRequest = {
@@ -422,7 +422,7 @@ export class CloudflareNamedTunnelHosting {
       this.#serviceState(this.options.serverSystemdUnitName),
     ]);
     if (tunnelState !== "active" || serverState !== "active") {
-      throw new Error("systemd did not report both VSPiLink server and tunnel as active");
+      throw new Error("systemd did not report both PiLink server and tunnel as active");
     }
     return { changed: true, dryRun: false, state: "active", command };
   }
@@ -449,7 +449,7 @@ export class CloudflareNamedTunnelHosting {
       this.#serviceState(this.options.serverSystemdUnitName),
     ]);
     if (finalTunnelState === "active" || finalServerState === "active") {
-      throw new Error("systemd still reports a VSPiLink hosting unit as active");
+      throw new Error("systemd still reports a PiLink hosting unit as active");
     }
     return { changed: true, dryRun: false, state: "inactive", command };
   }
@@ -612,7 +612,7 @@ async function atomicPrivateWrite(
   });
   if (
     existing.state !== "missing"
-    && (existing.state === "invalid" || existing.uid !== expectedUid || !existing.managedByVSPiLink)
+    && (existing.state === "invalid" || existing.uid !== expectedUid || !existing.managedByPiLink)
   ) {
     throw new HostingProvisionBlockedError(["refusing to replace an unmanaged or unsafe cloudflared config"]);
   }

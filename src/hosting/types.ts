@@ -71,7 +71,7 @@ export interface SecurePathInspection {
   uid?: number;
   reason?: string;
   contentMatches?: boolean;
-  managedByVSPiLink?: boolean;
+  managedByPiLink?: boolean;
 }
 
 export interface TunnelInspection {

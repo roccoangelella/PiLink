@@ -1,14 +1,14 @@
 {
   "name": "personal",
   "interface": {
-    "displayName": "VSPiLink Repository"
+    "displayName": "PiLink Repository"
   },
   "plugins": [
     {
-      "name": "vspilink",
+      "name": "pilink",
       "source": {
         "source": "local",
-        "path": "./plugins/vspilink"
+        "path": "./plugins/pilink"
       },
       "policy": {
         "installation": "AVAILABLE",

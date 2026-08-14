@@ -103,7 +103,7 @@ export class RuntimeModeStore {
   }
 
   async set(mode: RuntimeMode): Promise<void> {
-    if (!isRuntimeMode(mode)) throw new Error("Unknown VSPiLink runtime workflow.");
+    if (!isRuntimeMode(mode)) throw new Error("Unknown PiLink runtime workflow.");
     await this.memento.update(RUNTIME_MODE_STATE_KEY, {
       schemaVersion: RUNTIME_MODE_SCHEMA_VERSION,
       mode,

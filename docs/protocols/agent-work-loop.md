@@ -2,7 +2,7 @@
 
 Status: implemented server contract, with an explicit connector limitation.
 
-VSPiLink never treats an OAuth actor, public collaboration-session ID, role
+PiLink never treats an OAuth actor, public collaboration-session ID, role
 label, prompt, or repository content as proof that two physical MCP connections
 belong to the same logical worker. Verified role and manager authority remain
 attached only through private, non-model-visible transport state.
@@ -11,7 +11,7 @@ attached only through private, non-model-visible transport state.
 
 1. **Protocol-native MCP session reuse — preferred.** A client retains the
    server-issued `Mcp-Session-Id` and sends it on later requests from the same
-   logical conversation. VSPiLink routes those requests to the original MCP
+   logical conversation. PiLink routes those requests to the original MCP
    handle and its private collaboration bootstrap.
 2. **Trusted logical-binding adapter — optional.** A trusted reverse proxy or
    client may inject one private value per logical conversation through the
@@ -23,7 +23,7 @@ attached only through private, non-model-visible transport state.
    operations return `COLLABORATION_CONTEXT_CONTINUITY_UNAVAILABLE`.
 
 The configured binding value is validated as a single non-empty scalar of at
-most 512 UTF-8 bytes without control characters. VSPiLink derives its internal
+most 512 UTF-8 bytes without control characters. PiLink derives its internal
 registry key with an HMAC over the OAuth actor, client credential version, and
 private logical binding; the raw binding is never logged, persisted, returned,
 or copied into collaboration data.
@@ -50,7 +50,7 @@ handle.
 This adapter helps only when a real trusted component supplies the private
 per-conversation binding. A connector that creates a fresh MCP session for each
 tool call, does not reuse `Mcp-Session-Id`, and supplies no trusted binding
-cannot securely continue a verified multi-agent role across calls. VSPiLink
+cannot securely continue a verified multi-agent role across calls. PiLink
 does not weaken identity checks to disguise that limitation.
 
 ## Verification

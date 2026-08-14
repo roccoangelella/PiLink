@@ -6,6 +6,8 @@
 
 import { createHmac, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -39,6 +41,7 @@ loadEnvironment();
 const config = loadRuntimeConfig();
 const policy = createHarnessPolicy(config);
 const { port: PORT, host: HOST, serverUrl: SERVER_URL } = config;
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 type AgentRuntimeState = "disabled" | "ready" | "degraded" | "unavailable";
 type CoordinationUnavailableReason = "unsafe_data_location" | "initialization_failed";
@@ -184,7 +187,7 @@ app.use((req, res, next) => {
     config.landingHostname !== configuredHostname &&
     hostname === config.landingHostname,
   );
-  if (landingOnlyHost && !(["GET", "HEAD"].includes(req.method) && req.path === "/")) {
+  if (landingOnlyHost && !(["GET", "HEAD"].includes(req.method) && ["/", "/assets/logo.png"].includes(req.path))) {
     res.status(404).json({ error: "not_found" });
     return;
   }
@@ -528,6 +531,9 @@ app.post("/admin/agents/:agentId/stop", requireLocalAdmin, asyncRoute(async (req
 // ── Landing page ─────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.type("html").send(renderLandingPage());
+});
+app.get("/assets/logo.png", (_req, res) => {
+  res.type("png").sendFile(path.join(packageRoot, "docs", "assets", "logo.png"));
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -1550,15 +1556,15 @@ function renderLandingPage(): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>VSPiLink · Local-first MCP bridge</title>
+  <title>PiLink · Local-first MCP bridge</title>
   <style>
     :root { color-scheme: dark; --bg:#090a0d; --panel:#121419; --line:#272b33; --text:#f4f6f8; --muted:#9aa3ad; --accent:#77e0c1; --accent2:#8ea8ff; }
     * { box-sizing:border-box; }
     body { margin:0; min-height:100vh; color:var(--text); background:radial-gradient(circle at 14% 0%,#17332e 0,transparent 34rem),radial-gradient(circle at 90% 18%,#182343 0,transparent 30rem),var(--bg); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     main { width:min(1040px,calc(100% - 40px)); margin:0 auto; padding:68px 0 36px; }
     .top { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:76px; }
-    .brand { display:flex; align-items:center; gap:12px; color:var(--text); font-weight:760; letter-spacing:-.02em; }
-    .mark { display:grid; place-items:center; width:34px; height:34px; border:1px solid #ffffff24; border-radius:10px; background:linear-gradient(145deg,#ffffff17,#ffffff08); color:var(--accent); font:800 17px/1 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .brand { display:flex; align-items:center; color:var(--text); font-weight:760; letter-spacing:-.02em; }
+    .brand img { display:block; width:180px; max-width:42vw; height:auto; border-radius:6px; background:#fff; }
     .status { display:flex; align-items:center; gap:8px; padding:7px 11px; border:1px solid #5fe0ba38; border-radius:999px; background:#50d5ae12; color:#a1f2da; font-size:12px; font-weight:650; }
     .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 16px #77e0c1; }
     .hero { max-width:780px; margin-bottom:56px; }
@@ -1583,7 +1589,7 @@ function renderLandingPage(): string {
 <body>
   <main>
     <header class="top">
-      <div class="brand"><span class="mark">VS</span><span>VSPiLink</span></div>
+      <div class="brand"><img src="/assets/logo.png" width="180" height="101" alt="PiLink"></div>
       <div class="status"><span class="dot"></span>Service online</div>
     </header>
     <section class="hero">
@@ -1591,16 +1597,16 @@ function renderLandingPage(): string {
       <h1>Your workspace, connected <span>on your terms.</span></h1>
       <p class="lead">A secure bridge from ChatGPT to the Pi coding-tool harness in your local workspace, with explicit OAuth consent and collaborative agent monitoring.</p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/0xfunboy/VSPiLink" rel="noreferrer">View source on GitHub</a>
-        <a class="button" href="https://github.com/0xfunboy/VSPiLink#readme" rel="noreferrer">Read documentation</a>
+        <a class="button primary" href="https://github.com/roccoangelella/PiLink" rel="noreferrer">View source on GitHub</a>
+        <a class="button" href="https://github.com/roccoangelella/PiLink#readme" rel="noreferrer">Read documentation</a>
       </div>
     </section>
-    <section class="grid" aria-label="VSPiLink capabilities">
-      <article class="card"><span class="num">01</span><h2>ChatGPT via MCP</h2><p>Use the real ChatGPT frontend while VSPiLink exposes the Pi tools and guides endpoint, OAuth and connection health.</p></article>
+    <section class="grid" aria-label="PiLink capabilities">
+      <article class="card"><span class="num">01</span><h2>ChatGPT via MCP</h2><p>Use the real ChatGPT frontend while PiLink exposes the Pi tools and guides endpoint, OAuth and connection health.</p></article>
       <article class="card"><span class="num">02</span><h2>Secure by default</h2><p>Loopback origin, PKCE, rotating refresh tokens, paired owner consent and workspace-scoped tools.</p></article>
       <article class="card"><span class="num">03</span><h2>Collaborative monitor</h2><p>Watch remote ChatGPT conversations, durable agent chat and the shared task board beside the files they change.</p></article>
     </section>
-    <footer><span>VSPiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project · Not affiliated with OpenAI</span></footer>
+    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project · Not affiliated with OpenAI</span></footer>
   </main>
 </body>
 </html>`;

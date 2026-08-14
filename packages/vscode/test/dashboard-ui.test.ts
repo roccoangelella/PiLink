@@ -13,6 +13,8 @@ function functionSource(name: string): string {
 }
 
 test("the dashboard exposes an explicit runtime workflow and keeps surfaces separate", () => {
+  assert.match(script, /brand__title", "PiLink"/);
+  assert.match(script, /VSPiLink · optional VS Code extension/);
   assert.match(script, /restoredSurfaceMode\(restoredUiState\)/);
   assert.match(script, /value\.version === UI_STATE_VERSION/);
   assert.match(script, /setState\(\{ version: UI_STATE_VERSION, mode: uiMode \}\)/);
@@ -94,7 +96,7 @@ test("the primary onboarding follows ChatGPT Work and keeps legacy setup seconda
   const guide = functionSource("renderChatGptConnectionGuide");
   assert.match(guide, /Connect ChatGPT Work to this workspace/);
   assert.match(guide, /Open ChatGPT Work/);
-  assert.match(guide, /Install or connect the private VSPiLink plugin/);
+  assert.match(guide, /Install or connect the private PiLink plugin/);
   assert.match(guide, /personal or workspace plugin source/);
   assert.match(guide, /Searching for “mcp server” will show other vendors/);
   assert.match(guide, /Legacy Developer Mode compatibility/);

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-  <title id="title">Connect VSPiLink through ChatGPT Work</title>
-  <desc id="desc">An illustrated split view showing the VSPiLink setup panel and the ChatGPT Work plugin screen.</desc>
+  <title id="title">Connect PiLink through ChatGPT Work</title>
+  <desc id="desc">An illustrated split view showing the optional VSPiLink setup panel and the ChatGPT Work PiLink plugin screen.</desc>
   <rect width="1200" height="675" fill="#0d1117"/>
   <text x="52" y="62" fill="#ffffff" font-family="system-ui,sans-serif" font-size="32" font-weight="750">Connect through ChatGPT Work</text>
   <text x="52" y="94" fill="#98a9ba" font-family="system-ui,sans-serif" font-size="18">Normal Chat does not expose plugin or remote MCP tools.</text>
@@ -24,7 +24,7 @@
   <text x="704" y="301" fill="#17202a" font-family="system-ui,sans-serif" font-size="24" font-weight="700">Plugins</text>
   <rect x="704" y="325" width="418" height="92" rx="13" fill="#ffffff" stroke="#bcc7d1" stroke-width="2"/>
   <circle cx="752" cy="371" r="26" fill="#173c30"/><path d="M738 371h28" stroke="#73e6ae" stroke-width="6" stroke-linecap="round"/>
-  <text x="794" y="363" fill="#17202a" font-family="system-ui,sans-serif" font-size="21" font-weight="700">VSPiLink</text>
+  <text x="794" y="363" fill="#17202a" font-family="system-ui,sans-serif" font-size="21" font-weight="700">PiLink</text>
   <text x="794" y="390" fill="#657586" font-family="system-ui,sans-serif" font-size="16">Private plugin · your deployment</text>
   <rect x="704" y="449" width="418" height="70" rx="12" fill="#10a37f"/>
   <text x="913" y="493" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-size="22" font-weight="700">Connect</text>

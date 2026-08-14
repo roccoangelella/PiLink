@@ -1,8 +1,8 @@
-# Contributing to VSPiLink
+# Contributing to PiLink
 
 ## Development environment
 
-VSPiLink deliberately uses exactly Node.js **24.18.0** and npm **11.16.0**.
+PiLink deliberately uses exactly Node.js **24.18.0** and npm **11.16.0**.
 Use `.nvmrc` or `.node-version`, then verify both versions before installing:
 
 ```text

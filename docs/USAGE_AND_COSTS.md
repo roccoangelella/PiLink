@@ -1,6 +1,6 @@
 # Usage, models, and costs
 
-This page separates VSPiLink behavior from OpenAI and third-party provider
+This page separates PiLink behavior from OpenAI and third-party provider
 pricing. It was reviewed against current official OpenAI documentation on
 2026-08-04; always check the live pages before making a purchasing decision.
 
@@ -12,8 +12,8 @@ pricing. It was reviewed against current official OpenAI documentation on
   Codex to Work is a workflow change, not a documented way to move consumption
   to a cheaper normal-Chat allowance.
 - ChatGPT Pro offers higher included Codex/Work usage than Plus in the current
-  pricing model. It does **not** enable VSPiLink MCP tools in normal Chat.
-- VSPiLink itself does not provide OpenAI inference and cannot inspect, reset,
+  pricing model. It does **not** enable PiLink MCP tools in normal Chat.
+- PiLink itself does not provide OpenAI inference and cannot inspect, reset,
   or guarantee a user's OpenAI allowance.
 - Pi Local uses the chosen provider. OAuth, subscription, API-key billing,
   rate limits, and model availability remain that provider's responsibility.
@@ -30,7 +30,7 @@ Official sources:
 
 ## Surface and consumption model
 
-| Surface | Can use the VSPiLink plugin/MCP? | Consumption owner |
+| Surface | Can use the PiLink plugin/MCP? | Consumption owner |
 | --- | --- | --- |
 | Normal Chat | No, under the current official plugin model | The user's normal Chat plan rules |
 | ChatGPT Work | Yes, when the plugin is installed and allowed | Shared Work/Codex usage and credits |
@@ -67,13 +67,13 @@ loads a large repository or invokes many tools.
 4. Use separate, bounded tasks instead of asking one long session to retain an
    entire organization or home directory indefinitely.
 
-VSPiLink does not automatically override the model selected in ChatGPT Work.
+PiLink does not automatically override the model selected in ChatGPT Work.
 The user or active OpenAI surface remains authoritative.
 
 ## Make included usage last longer
 
 The current OpenAI pricing guide recommends several practices that also fit
-VSPiLink:
+PiLink:
 
 - give precise instructions and remove irrelevant context;
 - expose only the source files or directories required for the task;
@@ -123,16 +123,16 @@ Keep API keys out of:
 Use the extension's protected credential input/SecretStorage path or the
 provider's supported credential store.
 
-## Claims VSPiLink documentation must not make
+## Claims PiLink documentation must not make
 
-- "Chat is cheaper than Work for the same VSPiLink task."
+- "Chat is cheaper than Work for the same PiLink task."
 - "Work does not consume Codex credits."
 - "Pro unlocks MCP in normal Chat."
 - "Pi Local is free."
 - "Luna provides unlimited messages."
 - "One prompt has a predictable fixed cost."
-- "VSPiLink can see or manage your OpenAI balance."
+- "PiLink can see or manage your OpenAI balance."
 
-The supportable claim is narrower: VSPiLink helps users keep tasks, workspace
+The supportable claim is narrower: PiLink helps users keep tasks, workspace
 scope, model choice, and enabled tools intentional so they can make better use
 of whatever inference their chosen plan or provider includes.

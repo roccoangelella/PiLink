@@ -199,7 +199,7 @@ test("insecure certificates and unmanaged configs block every real mutation", as
 
   const plan = await hosting.plan();
   assert.match(plan.blockers.join("\n"), /origin certificate.*mode must be 0600/i);
-  assert.match(plan.blockers.join("\n"), /not managed by VSPiLink/i);
+  assert.match(plan.blockers.join("\n"), /not managed by PiLink/i);
   await assert.rejects(
     hosting.provision({ dryRun: false }),
     (error) => error instanceof HostingProvisionBlockedError,

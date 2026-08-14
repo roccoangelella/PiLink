@@ -7,7 +7,7 @@ import { AgentCoordinationStore } from "../dist/agents/coordination.js";
 
 const CONTROLLER = Object.freeze({
   actorId: "local-controller",
-  actorName: "VSPiLink",
+  actorName: "PiLink",
   authority: "controller",
 });
 const AGENT_ONE = Object.freeze({

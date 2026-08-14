@@ -4,7 +4,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const pluginRoot = path.join(repositoryRoot, "plugins", "vspilink");
+const pluginRoot = path.join(repositoryRoot, "plugins", "pilink");
 
 function fail(message) {
   throw new Error(message);
@@ -59,11 +59,11 @@ function assertPluginReadmeLinks() {
 
 function main() {
   const rootPackage = readJson("package.json");
-  const manifest = readJson("plugins/vspilink/.codex-plugin/plugin.json");
-  const mcp = readJson("plugins/vspilink/.mcp.json");
+  const manifest = readJson("plugins/pilink/.codex-plugin/plugin.json");
+  const mcp = readJson("plugins/pilink/.mcp.json");
   const marketplace = readJson(".agents/plugins/marketplace.json");
 
-  if (manifest.name !== "vspilink" || manifest.version !== rootPackage.version || manifest.license !== "MIT") {
+  if (manifest.name !== "pilink" || manifest.version !== rootPackage.version || manifest.license !== "MIT") {
     fail("plugin identity, version, or license does not match the release");
   }
   if (manifest.mcpServers !== "./.mcp.json" || !Array.isArray(manifest.interface?.defaultPrompt) ||
@@ -76,30 +76,30 @@ function main() {
   assertRelativeAsset(manifest.interface.composerIcon);
   assertRelativeAsset(manifest.interface.logo);
 
-  const server = mcp.mcpServers?.["vspilink-local"];
+  const server = mcp.mcpServers?.["pilink-local"];
   if (server?.type !== "http" || server.url !== "http://127.0.0.1:3200/sse") {
-    fail("the repository plugin must target only the documented loopback VSPiLink endpoint");
+    fail("the repository plugin must target only the documented loopback PiLink endpoint");
   }
   const serializedMcp = JSON.stringify(mcp);
   if (/secret|token|authorization|bearer/iu.test(serializedMcp)) fail("plugin MCP configuration must not contain credentials");
 
-  const entry = marketplace.plugins?.find((candidate) => candidate?.name === "vspilink");
+  const entry = marketplace.plugins?.find((candidate) => candidate?.name === "pilink");
   if (marketplace.name !== "personal" || entry?.source?.source !== "local" ||
-      entry.source.path !== "./plugins/vspilink" || entry.policy?.installation !== "AVAILABLE" ||
+      entry.source.path !== "./plugins/pilink" || entry.policy?.installation !== "AVAILABLE" ||
       entry.policy?.authentication !== "ON_INSTALL") {
-    fail("repository marketplace entry does not match the VSPiLink plugin");
+    fail("repository marketplace entry does not match the PiLink plugin");
   }
   for (const required of [
-    "plugins/vspilink/README.md",
-    "plugins/vspilink/.mcp.json",
-    "plugins/vspilink/.codex-plugin/plugin.json",
+    "plugins/pilink/README.md",
+    "plugins/pilink/.mcp.json",
+    "plugins/pilink/.codex-plugin/plugin.json",
     ".agents/plugins/marketplace.json",
   ]) {
     if (!fs.statSync(path.join(repositoryRoot, required)).isFile()) fail(`missing plugin file: ${required}`);
   }
   assertPluginReadmeLinks();
 
-  console.log(`Plugin verification passed for vspilink@${manifest.version}.`);
+  console.log(`Plugin verification passed for pilink@${manifest.version}.`);
 }
 
 try {

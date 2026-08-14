@@ -12,12 +12,12 @@ memory, metadata-only audit/progress, immutable chat-author provenance, and
 trusted logical binding continuity while preserving the original PiLink tool
 names.
 
-VSPiLink's supervised Pi runtime, VS Code dashboard, hosting workflows, and
+PiLink's supervised Pi runtime, VS Code dashboard, hosting workflows, and
 local administration remain additive. OAuth transports remain pinned to the
 client, credential generation, and original scopes; collaboration credentials
 remain server-side; repository execution remains explicitly gated.
 
-The `f6d22d82` and `b629c0ee` changes were adapted into VSPiLink's additive
+The `f6d22d82` and `b629c0ee` changes were adapted into PiLink's additive
 runtime rather than replacing its overlapping files. On 2026-08-04 the focused
 Node integration set passed 46 of 46 tests and the optional Textual layout set
 passed 6 of 6 tests with Textual 0.51.x. See the exact file ledger and commands

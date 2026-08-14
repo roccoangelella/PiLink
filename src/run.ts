@@ -6,7 +6,7 @@ import type { HarnessPolicy } from "./harness.js";
 import { resolveWorkspacePath } from "./harness.js";
 
 /**
- * The upstream constrained runner predates the current VSPiLink harness type.
+ * The upstream constrained runner predates the current PiLink harness type.
  * Keep its opt-in execution flag local until the core integration can add the
  * matching runtime configuration without coupling this standalone module to
  * the in-progress MCP backend work.
@@ -230,7 +230,7 @@ function requireWorkspaceExecution(policy: RunHarnessPolicy, input: RunProfileIn
   if (!policy.allowWorkspaceExecution && !policy.unsafeFullAccess) {
     throw new Error(
       `${input.profile} executes code from the workspace and is disabled by default. ` +
-      "For a trusted workspace, set PI_ALLOW_WORKSPACE_EXECUTION=true and restart VSPiLink, or authorize explicit full-access mode.",
+      "For a trusted workspace, set PI_ALLOW_WORKSPACE_EXECUTION=true and restart PiLink, or authorize explicit full-access mode.",
     );
   }
 }

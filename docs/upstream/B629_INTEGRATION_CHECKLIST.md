@@ -1,6 +1,6 @@
 # PiLink `b629c0ee` integration checklist
 
-This is the exact review ledger for the two upstream commits after VSPiLink's
+This is the exact review ledger for the two upstream commits after PiLink's
 recorded `0d0f8e…` feature baseline:
 
 - [`f6d22d82b946c449ace10f4063e7e729cb7cf7f8`](https://github.com/roccoangelella/PiLink/commit/f6d22d82b946c449ace10f4063e7e729cb7cf7f8)
@@ -10,7 +10,7 @@ recorded `0d0f8e…` feature baseline:
 
 Counts below are Git's exact additions/deletions for the sequential upstream
 patches. A checked item records either a verbatim final import or a completed
-VSPiLink adaptation, as stated in its section. The completion evidence at the
+PiLink adaptation, as stated in its section. The completion evidence at the
 end verifies the integrated callers and real HTTP behavior.
 
 ## Imported verbatim from final `b629c0ee`
@@ -81,7 +81,7 @@ end verifies the integrated callers and real HTTP behavior.
 - [x] `src/run.ts`: neither upstream commit changes this file.
 
 The overlapping `src/*.ts` files were adapted rather than replaced because
-VSPiLink already has additive product/runtime work in them. The checks above
+PiLink already has additive product/runtime work in them. The checks above
 record the completed behavioral merge.
 
 ## Overlapping Textual monitor changes adapted
@@ -128,9 +128,9 @@ All are from `f6d22d82`; `b629c0ee` does not change `chat-cli`.
 ## Overlapping documentation adapted
 
 - [x] Adapt the two-row protocol index addition from upstream `docs/README.md`
-  (`f6d22d82` `+2/-0`) to VSPiLink's documentation topology.
+  (`f6d22d82` `+2/-0`) to PiLink's documentation topology.
 - [x] Adapt `docs/protocols/agent-work-loop.md` (`f6d22d82` `+15/-5`, then
-  `b629c0ee` `+2/-2`) if VSPiLink adopts the trusted-binding adapter. It must
+  `b629c0ee` `+2/-2`) if PiLink adopts the trusted-binding adapter. It must
   distinguish native `Mcp-Session-Id` reuse from the optional hidden binding,
   explain final logical disposal, and include pre-attached-handle race coverage.
 

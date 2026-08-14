@@ -1,4 +1,4 @@
-# VSPiLink documentation
+# PiLink documentation
 
 This directory separates supported user instructions, implementation facts,
 security boundaries, compatibility notes, and non-binding product strategy.
@@ -24,7 +24,7 @@ security model wins over convenience guidance.
 - [Security model](SECURITY_MODEL.md) — capabilities, threats, secrets, and
   operator responsibilities.
 - [Functional parity](FUNCTIONAL_PARITY.md) — preserved PiLink behavior and
-  additive VSPiLink behavior.
+  additive PiLink behavior.
 - [Collaboration protocols](protocols/README.md) — verified work-loop
   continuity and immutable chat-author provenance.
 - [Upstream lineage](UPSTREAM_LINEAGE.md) — repositories, branches, commits,
@@ -62,7 +62,7 @@ operator decisions do.
 
 ## Document inventory
 
-Every tracked document is listed once here. Public VSPiLink guides retain
+Every tracked document is listed once here. Public PiLink guides retain
 stable root-level names because the packaged extension and release verifier
 depend on them; internal engineering records remain grouped by purpose.
 
@@ -117,7 +117,7 @@ depend on them; internal engineering records remain grouped by purpose.
 
 ## Supersession and relationship summary
 
-The public product guides describe VSPiLink 2.2.0. Purpose-grouped documents
+The public product guides describe PiLink 2.2.0. Purpose-grouped documents
 preserve the PiLink collaboration lineage and remain authoritative for the
 subsystems they specify unless a public guide explicitly narrows a product
 boundary. Files under `docs/upstream/` are provenance records, not independent
@@ -125,7 +125,7 @@ runtime policy.
 
 ## OpenAI documentation used by this guide
 
-OpenAI product surfaces change independently of VSPiLink. The connection and
+OpenAI product surfaces change independently of PiLink. The connection and
 cost guidance was reviewed against these official pages on 2026-08-04:
 
 - [Use ChatGPT](https://learn.chatgpt.com/docs/use-chatgpt)

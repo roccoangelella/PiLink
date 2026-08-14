@@ -64,7 +64,7 @@ test("tracked documentation uses the purpose-based hierarchy", () => {
   const documentation = trackedMarkdownFiles().filter((file) => file.startsWith("docs/"));
   const rootMarkdown = documentation.filter((file) => path.posix.dirname(file) === "docs");
   assert.deepEqual(rootMarkdown, [...allowedRootDocumentation].sort(),
-    "docs/ root must contain only the public VSPiLink guides and its authority index");
+    "docs/ root must contain only the public PiLink guides and its authority index");
 
   for (const file of documentation.filter((candidate) => !allowedRootDocumentation.has(candidate))) {
     const parts = file.split("/");

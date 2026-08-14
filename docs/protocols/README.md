@@ -1,6 +1,6 @@
 # Collaboration protocols
 
-These documents describe VSPiLink's implemented collaboration contracts. The
+These documents describe PiLink's implemented collaboration contracts. The
 runtime and automated tests are authoritative when prose and behavior differ.
 
 | Protocol | Purpose |
@@ -10,4 +10,4 @@ runtime and automated tests are authoritative when prose and behavior differ.
 
 The exact upstream review snapshots used for the `b629c0ee` integration remain
 under [`docs/upstream`](../upstream/) so future synchronization can distinguish
-upstream authorship from VSPiLink product documentation.
+upstream authorship from PiLink product documentation.

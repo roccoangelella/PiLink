@@ -2,7 +2,9 @@
 
 This compatibility page replaces the previous duplicated extension guide.
 
-VSPiLink's VS Code extension provides:
+**VSPiLink** is PiLink's optional VS Code extension. PiLink remains the core
+project, server, CLI, and protocol implementation; none of those require the
+extension. VSPiLink provides:
 
 - a primary **ChatGPT MCP** status/setup/dashboard mode;
 - an optional **Pi Local** provider/model/chat mode;

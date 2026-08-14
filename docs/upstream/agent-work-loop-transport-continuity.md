@@ -3,8 +3,8 @@
 > Snapshot of [`docs/protocols/agent-work-loop-transport-continuity.md`](https://github.com/roccoangelella/PiLink/blob/b629c0ee004b7e792125158879c55ee00bd89310/docs/protocols/agent-work-loop-transport-continuity.md)
 > from `roccoangelella/PiLink@b629c0ee004b7e792125158879c55ee00bd89310`.
 > The upstream text below is preserved for integration review. It does not
-> by itself claim that every overlapping VSPiLink runtime change is integrated;
-> current VSPiLink code, tests, security policy, and explicit parity records remain
+> by itself claim that every overlapping PiLink runtime change is integrated;
+> current PiLink code, tests, security policy, and explicit parity records remain
 > authoritative.
 
 ---
