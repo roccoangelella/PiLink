@@ -35,5 +35,4 @@ Canonical references:
 - [Connect ChatGPT Work](CONNECT_CHATGPT.md)
 - [Architecture](ARCHITECTURE.md)
 - [Security model](SECURITY_MODEL.md)
-- [Functional parity](FUNCTIONAL_PARITY.md)
 - [Troubleshooting](TROUBLESHOOTING.md)

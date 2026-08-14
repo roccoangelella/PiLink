@@ -6,32 +6,18 @@ import test from "node:test";
 
 const repositoryRoot = process.cwd();
 const allowedDocumentationSections = new Set([
-  "architecture",
-  "archive",
-  "decisions",
-  "evaluation",
   "operations",
-  "protocols",
-  "reference",
-  "research",
-  "reviews",
-  "security",
-  "upstream",
 ]);
 
 const allowedRootDocumentation = new Set([
   "docs/ARCHITECTURE.md",
   "docs/CONNECT_CHATGPT.md",
-  "docs/FUNCTIONAL_PARITY.md",
   "docs/GETTING_STARTED.md",
   "docs/ILLUSTRATED_GUIDE.md",
   "docs/INSTALLATION.md",
-  "docs/PRODUCT_STRATEGY.md",
   "docs/README.md",
   "docs/SECURITY_MODEL.md",
   "docs/TROUBLESHOOTING.md",
-  "docs/UPSTREAM_LINEAGE.md",
-  "docs/UPSTREAM_PARITY_INTEGRATION.md",
   "docs/USAGE_AND_COSTS.md",
   "docs/VSCODE_EXTENSION.md",
 ]);
@@ -77,21 +63,16 @@ test("tracked documentation uses the purpose-based hierarchy", () => {
   }
 });
 
-test("the documentation authority index lists every tracked document exactly once", () => {
+test("the public documentation index links every tracked guide", () => {
   const documentation = trackedMarkdownFiles()
     .filter((file) => file.startsWith("docs/") && file !== "docs/README.md");
   const indexPath = path.join(repositoryRoot, "docs/README.md");
   const index = fs.readFileSync(indexPath, "utf8");
-  const inventoryStart = index.indexOf("## Document inventory");
-  const inventoryEnd = index.indexOf("## Supersession and relationship summary");
-  assert.ok(inventoryStart >= 0 && inventoryEnd > inventoryStart, "docs/README.md must contain a bounded inventory section");
-  const inventory = index.slice(inventoryStart, inventoryEnd);
-  const linked = localMarkdownTargets("docs/README.md", inventory)
+  const linked = localMarkdownTargets("docs/README.md", index)
     .map((target) => path.relative(repositoryRoot, target).split(path.sep).join("/"));
 
   for (const file of documentation) {
-    assert.equal(linked.filter((target) => target === file).length, 1,
-      `${file} must appear exactly once in docs/README.md`);
+    assert.ok(linked.includes(file), `${file} must appear in docs/README.md`);
   }
 });
 

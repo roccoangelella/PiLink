@@ -22,6 +22,16 @@ test("PiLink remains the project brand and VSPiLink is scoped to the optional ex
   assert.match(readme, /^# PiLink$/mu);
   assert.match(readme, /docs\/assets\/logo\.png/u);
   assert.match(readme, /VSPiLink.*optional|optional.*VSPiLink/su);
+  assert.doesNotMatch(readme, /From chat to code/u);
+  assert.doesNotMatch(readme, /```mermaid/u);
+  assert.ok(readme.split("\n").length < 180, "the root README must remain concise");
+  for (const command of [
+    "pilink start --mode single",
+    "pilink start --mode collaboration",
+    "pilink start --mode vscode",
+  ]) {
+    assert.match(readme, new RegExp(command.replaceAll(" ", "\\s+"), "u"));
+  }
   assert.equal(rootPackage.name, "pilink");
   assert.equal(rootPackage.repository.url, repositoryUrl);
   assert.match(extensionPackage.displayName, /^VSPiLink/u);
