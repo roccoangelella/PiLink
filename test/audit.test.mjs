@@ -73,6 +73,69 @@ test("rotates the active log before it exceeds the configured size", async () =>
     assert.equal(active.at(-1).callId, "rotation-5");
     assert.ok((await fs.stat(audit.logPath)).size <= 420);
     assert.ok((await fs.stat(audit.rotatedLogPath)).size <= 420);
+    const expectedRecent = [...rotated, ...active].slice(-3).map((event) => event.callId);
+    assert.deepEqual((await audit.readRecent(3)).map((event) => event.callId), expectedRecent);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reads only validated metadata and silently skips malformed or enriched rows", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const audit = new ToolAuditLog({ workspace, dataDir });
+    await audit.record({
+      callId: "safe-1",
+      tool: "read",
+      startedAt: "2026-08-01T10:00:00.000Z",
+      durationMs: 12,
+      outcome: "success",
+      accessMode: "workspace",
+    });
+    const base = {
+      version: 1,
+      event: "tool_call",
+      tool: "run",
+      startedAt: "2026-08-01T10:00:01.000Z",
+      durationMs: 7,
+      outcome: "success",
+      accessMode: "full-access",
+    };
+    await fs.appendFile(audit.logPath, [
+      JSON.stringify({
+        ...base,
+        callId: "enriched",
+        args: "--password super-secret",
+        output: "super-secret output",
+        path: "/private/super-secret",
+        prompt: "super-secret prompt",
+      }),
+      '{"prompt":"super-secret malformed",not-json}',
+      JSON.stringify({ ...base, callId: "safe-2", exitCode: 0, truncated: false }),
+      '{"version":1,"event":"tool_call","callId":"unfinished","prompt":"super-secret"',
+    ].join("\n"), "utf8");
+
+    const events = await audit.readRecent(20);
+    assert.deepEqual(events.map((event) => event.callId), ["safe-1", "safe-2"]);
+    const serialized = JSON.stringify(events);
+    assert.doesNotMatch(serialized, /super-secret|args|output|path|prompt/u);
+    assert.ok(events.every((event) => Object.keys(event).every((key) => [
+      "version", "event", "callId", "agentId", "sessionId", "tool", "startedAt", "durationMs",
+      "outcome", "accessMode", "exitCode", "timedOut", "cancelled", "truncated",
+    ].includes(key))));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds recent audit reads and returns an empty list before the first event", async () => {
+  const { root, workspace, dataDir } = await fixture();
+  try {
+    const audit = new ToolAuditLog({ workspace, dataDir });
+    assert.deepEqual(await audit.readRecent(1), []);
+    assert.throws(() => audit.readRecent(0), /between 1 and 200/u);
+    assert.throws(() => audit.readRecent(201), /between 1 and 200/u);
+    assert.throws(() => audit.readRecent(1.5), /between 1 and 200/u);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -1,25 +1,42 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 data/
 bin/cloudflared
 *.log
-
-# Ephemeral local multi-agent coordination/runtime state.
-# Product source, tests, and accepted design/review documents remain tracked.
-/.agents/
-/.agent-work/
-/.agent-swarm/
-/.pilink/
-/.swarm/
-
-# Generated LLM-memory projections and legacy derived exports.
-# Canonical runtime state belongs in PI_DATA_DIR outside the repository.
-/docs/generated/
-/LONG_MEMORY.md
-/PROJECT_MEMORY.md
-/PROJECT_STATUS.md
-
-# Bundled Python chat monitor bytecode/cache.
-__pycache__/
-*.py[cod]
+*.pem
+*.key
+*.p12
+*.pfx
+clients.json
+refresh-tokens.json
+auth.json
+credentials.json
+credentials-*.json
+*tunnel-credentials*.json
+tunnel-token
+tunnel-token.*
+.cloudflared/
+**/.cloudflared/
+.pi/
+**/.pi/
+.npmrc
+**/.npmrc
+packages/vscode/runtime/
+packages/vscode/*.vsix
+*.tgz
+release/*
+!release/*.vsix
+!release/*.tgz
+!release/*.cdx.json
+!release/install.sh
+!release/install.ps1
+!release/INSTALL.md
+!release/SHA256SUMS
+**/__pycache__/
+**/*.pyc

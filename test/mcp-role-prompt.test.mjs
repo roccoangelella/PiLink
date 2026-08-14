@@ -237,7 +237,6 @@ test("initializes generically, then exposes one verified role prompt on dynamic 
     await fs.rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("same normalized role request is idempotent and conflicting rebootstrap fails closed", async () => {
   const value = await fixture();
   const bootstrap = new FakeCollaborationBootstrap();

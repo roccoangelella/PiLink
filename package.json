@@ -1,47 +1,75 @@
 {
   "name": "pilink",
-  "version": "1.1.0",
-  "description": "Hardened OAuth-protected MCP server for the Pi Agent tool harness",
+  "version": "2.2.0",
+  "description": "ChatGPT-to-workspace MCP bridge for VS Code with the Pi tool harness, OAuth and collaborative agent monitoring",
   "main": "dist/index.js",
   "bin": {
     "pilink": "dist/cli.js"
   },
   "type": "module",
   "files": [
+    ".env.example",
     "dist",
+    "chat-cli",
     "README.md",
     "LICENSE",
+    "NOTICE.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
     "docs",
-    "chat-cli"
+    "plugins",
+    ".agents/plugins/marketplace.json"
   ],
   "engines": {
-    "node": ">=22.19.0"
+    "node": "24.18.0"
   },
+  "packageManager": "npm@11.16.0",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/roccoangelella/PiLink.git"
+    "url": "https://github.com/0xfunboy/VSPiLink.git"
   },
   "bugs": {
-    "url": "https://github.com/roccoangelella/PiLink/issues"
+    "url": "https://github.com/0xfunboy/VSPiLink/issues"
   },
-  "homepage": "https://github.com/roccoangelella/PiLink#readme",
+  "homepage": "https://github.com/0xfunboy/VSPiLink#readme",
   "keywords": [
     "pilink",
     "mcp",
     "model-context-protocol",
     "pi-agent",
     "coding-agent",
-    "oauth"
+    "oauth",
+    "vscode",
+    "multi-agent",
+    "cloudflare"
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "overrides": {
+    "hono": "4.12.34",
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.9.0"
+    }
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "npm run build && node --test test/**/*.test.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "vscode:typecheck": "tsc -p packages/vscode/tsconfig.json --noEmit",
+    "vscode:build": "npm run build && node packages/vscode/scripts/build.mjs",
+    "vscode:test": "tsx --test packages/vscode/test/*.test.ts",
+    "vscode:package": "node packages/vscode/scripts/package.mjs",
+    "vscode:install": "npm run vscode:package && node packages/vscode/scripts/install.mjs",
+    "test:all": "npm test && npm run vscode:typecheck && npm run vscode:test",
+    "security:scan": "node scripts/secret-scan.mjs",
+    "security:scan:history": "node scripts/secret-scan.mjs --history",
+    "plugin:verify": "node scripts/verify-plugin.mjs",
+    "release:stage": "node scripts/stage-release.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
+    "release:check": "npm run release:stage && npm run release:verify",
     "prepack": "npm run build"
   },
   "dependencies": {
@@ -59,11 +87,16 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/default-gateway": "^7.2.2",
-    "@types/express": "^5.0.0",
+    "@types/express": "4.17.25",
     "@types/jsonwebtoken": "^9.0.7",
-    "@types/node": "^22.10.2",
+    "@types/node": "^24.0.0",
     "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "sharp": "^0.35.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "yauzl": "3.4.0"
   }
 }

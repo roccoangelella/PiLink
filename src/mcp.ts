@@ -10,6 +10,16 @@ import {
   createWriteTool,
 } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
+import type { AgentCoordinationStore, CoordinationIdentity, CoordinationTask } from "./agents/coordination.js";
+import { COORDINATION_TASK_STATUSES } from "./agents/coordination.js";
+import type { AgentManager } from "./agents/manager.js";
+import { resolveAgentRole } from "./agents/roles.js";
+import {
+  AGENT_PERMISSIONS,
+  AGENT_STATUSES,
+  type AgentPermission,
+  type AgentSnapshot,
+} from "./agents/types.js";
 import { isToolAllowed, sanitizeToolArguments, type HarnessPolicy, type ToolName } from "./harness.js";
 import { VERSION } from "./config.js";
 import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -58,6 +68,20 @@ import {
   memoryQuery,
   memoryQueryToolInputSchema,
 } from "./memory-mcp.js";
+import { sanitizeExecutionSpawnContext } from "./execution-environment.js";
+
+export interface McpAgentServices {
+  manager: AgentManager;
+  coordination?: AgentCoordinationStore;
+  coordinationStatus?: Readonly<{
+    state: "ready" | "unavailable";
+    reason?: "unsafe_data_location" | "initialization_failed";
+  }>;
+  identity: CoordinationIdentity;
+  /** Connection-scoped ceiling; the shared manager may be broader. */
+  allowedPermissions?: readonly AgentPermission[];
+  defaultRuntimeId?: string;
+}
 
 export interface AuthenticatedAgentIdentity {
   agentId: string;
@@ -91,6 +115,7 @@ export interface McpServerHandle {
   agentInstanceId: string;
   dispose: () => Promise<void>;
   connect: McpServer["connect"];
+  close: () => Promise<void>;
 }
 
 type CollaborationPromptMode =
@@ -118,7 +143,7 @@ interface ToolCallResult {
 export function createMcpServer(
   policy: HarnessPolicy,
   scopes: string,
-  identity?: Readonly<AuthenticatedAgentIdentity>,
+  identityOrAgentServices?: Readonly<AuthenticatedAgentIdentity> | McpAgentServices,
   broker?: AgentChatBroker,
   audit?: ToolAuditSink,
   agentInstanceId: string = randomUUID(),
@@ -126,7 +151,14 @@ export function createMcpServer(
   collaborationBootstrap?: ConnectionCollaborationBootstrap,
   memoryStore?: AgentMemoryStore,
   workLoopStore?: AgentWorkLoopStore,
+  managedAgentServices?: McpAgentServices,
 ): McpServerHandle {
+  const agentServices = isMcpAgentServices(identityOrAgentServices)
+    ? identityOrAgentServices
+    : managedAgentServices;
+  const identity = isMcpAgentServices(identityOrAgentServices)
+    ? undefined
+    : identityOrAgentServices;
   const connectionAgentInstanceId = normalizeAgentInstanceId(agentInstanceId);
   const authenticatedIdentity = identity ? normalizeAuthenticatedIdentity(identity) : undefined;
   let verifiedCollaborationContext: Readonly<ConnectionCollaborationContext> | undefined;
@@ -137,6 +169,7 @@ export function createMcpServer(
   let collaborationVerificationFault: Error | undefined;
   let collaborationVerificationAttachmentDisposed = false;
   let connectionDisposed = false;
+
   const latchCollaborationVerificationFault = async (): Promise<Error> => {
     if (!collaborationVerificationFault) {
       collaborationVerificationFault = new Error("Verified collaboration context failed immutable tuple validation");
@@ -151,6 +184,7 @@ export function createMcpServer(
     }
     return collaborationVerificationFault;
   };
+
   const prepareProjectCollaboration = async (): Promise<string | undefined> => {
     if (connectionDisposed) return "MCP connection is disposed";
     if (collaborationVerificationFault) return collaborationVerificationFault.message;
@@ -181,7 +215,7 @@ export function createMcpServer(
     { instructions: initialSystemPromptText },
   );
   const readTool = createReadTool(policy.workspace);
-  const bashTool = createBashTool(policy.workspace);
+  const bashTool = createBashTool(policy.workspace, { spawnHook: sanitizeExecutionSpawnContext });
   const editTool = createEditTool(policy.workspace);
   const writeTool = createWriteTool(policy.workspace);
   const grepTool = createGrepTool(policy.workspace);
@@ -614,28 +648,31 @@ export function createMcpServer(
     truncated: z.boolean(),
   }).strict();
   server.registerTool("run", {
-    title: "Run Constrained Command",
-    description: "Run a fixed argv-based profile from the workspace without shell parsing. Git inspection profiles are available in workspace mode. npm_build and npm_test execute workspace code and require PI_ALLOW_WORKSPACE_EXECUTION=true or explicit full-access mode; when PI_REQUIRE_EXECUTION_APPROVAL is enabled, those two profiles also require fresh form-elicitation approval. Output is bounded, the process is terminated at the timeout, and rate-limited progress heartbeats are sent when the client requests them.",
+    title: "Run a Safe Command Profile",
+    description: "Run one of six fixed, shell-free profiles: git_status, git_diff, git_diff_staged, git_log, npm_build, or npm_test. Git profiles inspect the configured workspace. npm_build and npm_test execute repository code, so they require PI_ALLOW_WORKSPACE_EXECUTION=true for a trusted workspace or explicit full-access mode; PI_REQUIRE_EXECUTION_APPROVAL can also require fresh approval for every npm run. Output is bounded and timed out safely.",
     inputSchema: z.object({
-      profile: z.enum(RUN_PROFILES).describe("Fixed command profile to execute."),
-      paths: z.array(z.string().min(1).max(4096)).max(50).optional().describe("Optional workspace-confined literal pathspecs for git status or diff profiles."),
-      maxCount: z.number().int().min(1).max(100).optional().describe("Maximum commits for git_log; invalid for other profiles."),
+      profile: z.enum(RUN_PROFILES).describe("Required fixed profile: git_status, git_diff, git_diff_staged, git_log, npm_build, or npm_test."),
+      paths: z.array(z.string().min(1).max(4096)).max(50).optional().describe("Optional literal paths confined to the workspace. Supported by git_status, git_diff, git_diff_staged, and git_log; omit for npm profiles."),
+      maxCount: z.number().int().min(1).max(100).optional().describe("Maximum commits for git_log (default 20). Ignored by every other profile."),
       timeout: z.number().positive().max(policy.maxBashTimeoutSeconds).optional().describe(`Maximum runtime in seconds, capped at ${policy.maxBashTimeoutSeconds}.`),
     }).strict(),
     outputSchema: runResultSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, (args, extra) => auditCall("run", extra, async () => {
-    if (!isToolAllowed(scopes, "run")) return toolError("Token scope does not permit 'run'");
+    if (!isToolAllowed(scopes, "run")) {
+      return toolError("The run tool requires the mcp:write or mcp:tools scope. Reconnect VSPiLink with write access; this read-only connection cannot execute command profiles.");
+    }
     const executesWorkspaceCode = args.profile === "npm_build" || args.profile === "npm_test";
     if (executesWorkspaceCode && !policy.allowWorkspaceExecution && !policy.unsafeFullAccess) {
       return toolError(
         `${args.profile} executes code from the workspace and is disabled by default. ` +
-        "Set PI_ALLOW_WORKSPACE_EXECUTION=true only for a trusted workspace, or use explicit full-access mode.",
+        "For a trusted workspace, set PI_ALLOW_WORKSPACE_EXECUTION=true and restart VSPiLink, or authorize explicit full-access mode.",
       );
     }
     if (executesWorkspaceCode && policy.requireExecutionApproval) {
-      if (args.paths && args.paths.length > 0) return toolError(`paths are not supported by the ${args.profile} profile`);
-      if (args.maxCount !== undefined) return toolError("maxCount is only supported by the git_log profile");
+      if (args.paths && args.paths.length > 0) {
+        return toolError(`paths cannot be used with ${args.profile}. Remove paths; this profile runs the package script for the configured workspace.`);
+      }
       const approvalError = await requestExecutionApproval(
         `Repository-code profile ${args.profile}`,
         `Workspace: ${renderApprovalText(policy.workspace)}\nCommand profile: ${args.profile}\nThis runs the repository-defined npm script and is not an OS sandbox.`,
@@ -1294,7 +1331,17 @@ export function createMcpServer(
     throw new Error("Authenticated identity and AgentChatBroker must be provided together; AgentTaskStore, collaboration bootstrap, agent memory, and the work-loop store require both");
   }
 
-  return { server, agentInstanceId: connectionAgentInstanceId, dispose, connect: (transport) => server.connect(transport) };
+  if (agentServices) registerManagedAgentTools(server, policy, scopes, agentServices);
+  return {
+    server,
+    agentInstanceId: connectionAgentInstanceId,
+    dispose,
+    connect: (transport) => server.connect(transport),
+    close: async () => {
+      await dispose();
+      await server.close();
+    },
+  };
 }
 
 function canChatRead(scopes: string): boolean {
@@ -1679,6 +1726,380 @@ function safeBootstrapError(error: unknown): string {
     return message;
   }
   return "Collaboration bootstrap failed";
+}
+
+
+const DEFAULT_AGENT_PERMISSIONS: readonly AgentPermission[] = Object.freeze([
+  "coordination:read",
+  "coordination:write",
+  "workspace:read",
+  "network:outbound",
+]);
+const MUTABLE_TASK_STATUSES = ["working", "blocked", "completed", "failed", "cancelled"] as const;
+const ACTIVE_AGENT_STATUSES = new Set(["starting", "running", "waiting", "cancelling", "stopping", "stop_failed"]);
+const AGENT_RESULT_MAX_BYTES = 256 * 1024;
+
+function registerManagedAgentTools(
+  server: McpServer,
+  policy: HarnessPolicy,
+  scopes: string,
+  services: McpAgentServices,
+): void {
+  const read = <T>(failureCode: string, operation: () => T | Promise<T>) =>
+    executeAgentOperation(scopes, "read", failureCode, operation);
+  const write = <T>(failureCode: string, operation: () => T | Promise<T>) =>
+    executeAgentOperation(scopes, "write", failureCode, operation);
+  const coordination = () => {
+    if (!services.coordination) {
+      throw new SafeAgentToolError(services.coordinationStatus?.reason === "unsafe_data_location"
+        ? "agent_coordination_unsafe_data_location"
+        : "agent_coordination_unavailable");
+    }
+    return services.coordination;
+  };
+  const controllerId = services.identity.actorId;
+
+  server.tool(
+    "agent_runtime_status",
+    "Report the shared agent supervisor state without exposing prompts, provider handles, errors, or credentials.",
+    {},
+    () => read("agent_runtime_status_failed", () => {
+      const agents = services.manager.listForController(controllerId);
+      const byStatus = Object.fromEntries(AGENT_STATUSES.map((status) => [
+        status,
+        agents.filter((agent) => agent.status === status).length,
+      ]));
+      return {
+        enabled: true,
+        active_agents: agents.filter((agent) => ACTIVE_AGENT_STATUSES.has(agent.status)).length,
+        retained_agents: agents.length,
+        by_status: byStatus,
+        default_runtime_id: services.defaultRuntimeId,
+        coordination: services.coordination
+          ? { state: "ready" }
+          : { state: "unavailable", reason: services.coordinationStatus?.reason ?? "initialization_failed" },
+      };
+    }),
+  );
+
+  server.tool(
+    "agent_spawn",
+    "Spawn one supervised agent in the server-configured workspace. Permissions are explicit and constrained by the local AgentManager policy.",
+    {
+      runtime_id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/u).optional(),
+      role: z.string().min(1).max(128),
+      initial_message: z.string().min(1).max(64 * 1024),
+      permissions: z.array(z.enum(AGENT_PERMISSIONS)).min(1).max(AGENT_PERMISSIONS.length).optional(),
+      task_id: z.string().min(1).max(256).optional(),
+      label: z.string().min(1).max(100).optional(),
+    },
+    (args) => write("agent_spawn_failed", async () => {
+      const runtimeId = args.runtime_id ?? services.defaultRuntimeId;
+      if (!runtimeId) throw new SafeAgentToolError("agent_runtime_required");
+      const permissions = args.permissions ?? DEFAULT_AGENT_PERMISSIONS;
+      const connectionPermissions = new Set(services.allowedPermissions ?? AGENT_PERMISSIONS);
+      if (permissions.some((permission) => !connectionPermissions.has(permission))) {
+        throw new SafeAgentToolError("agent_permission_not_authorized_for_client");
+      }
+      const resolvedRole = resolveAgentRole(args.role);
+      const snapshot = await services.manager.spawn({
+        controllerId,
+        runtimeId,
+        role: {
+          canonicalRoleId: resolvedRole.canonicalRoleId,
+          occupancyLabel: resolvedRole.occupancyLabel,
+        },
+        workspace: policy.workspace,
+        permissions,
+        initialMessage: args.initial_message,
+        taskId: args.task_id,
+        label: args.label,
+      });
+      return { agent: publicAgentSnapshot(snapshot) };
+    }),
+  );
+
+  server.tool(
+    "agent_list",
+    "List supervised agents using bounded, credential-free summaries.",
+    {
+      statuses: z.array(z.enum(AGENT_STATUSES)).min(1).max(AGENT_STATUSES.length).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    (args) => read("agent_list_failed", () => ({
+      agents: services.manager.listForController(controllerId, args.statuses).slice(0, args.limit ?? 50).map(publicAgentSnapshot),
+    })),
+  );
+
+  server.tool(
+    "agent_status",
+    "Read one supervised agent status without exposing provider errors, prompts, or runtime handles.",
+    { agent_id: z.string().min(1).max(256) },
+    (args) => read("agent_status_failed", () => ({
+      agent: publicAgentSnapshot(services.manager.statusForController(controllerId, args.agent_id)),
+    })),
+  );
+
+  server.tool(
+    "agent_output_read",
+    "Read bounded, redacted output from one supervised agent using a monotonic cursor.",
+    {
+      agent_id: z.string().min(1).max(256),
+      after: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    (args) => read("agent_output_read_failed", () => {
+      const result = services.manager.outputReadForController(controllerId, args.agent_id, { after: args.after, limit: args.limit });
+      return {
+        oldest_cursor: result.oldestCursor,
+        latest_cursor: result.latestCursor,
+        next_cursor: result.nextCursor,
+        gap: result.gap,
+        entries: result.entries.map((entry) => ({
+          cursor: entry.cursor,
+          channel: entry.channel,
+          text: entry.text,
+          created_at: entry.createdAt,
+        })),
+      };
+    }),
+  );
+
+  server.tool(
+    "agent_send",
+    "Send a bounded follow-up message to a running supervised agent.",
+    {
+      agent_id: z.string().min(1).max(256),
+      message: z.string().min(1).max(64 * 1024),
+    },
+    (args) => write("agent_send_failed", async () => ({
+      agent: publicAgentSnapshot(await services.manager.sendForController(controllerId, args.agent_id, args.message)),
+    })),
+  );
+
+  server.tool(
+    "agent_cancel",
+    "Cancel only an agent's current turn while keeping its runtime available.",
+    {
+      agent_id: z.string().min(1).max(256),
+      reason: z.string().min(1).max(4096).optional(),
+    },
+    (args) => write("agent_cancel_failed", async () => ({
+      agent: publicAgentSnapshot(await services.manager.cancelForController(controllerId, args.agent_id, args.reason)),
+    })),
+  );
+
+  server.tool(
+    "agent_stop",
+    "Stop and release a supervised agent runtime.",
+    {
+      agent_id: z.string().min(1).max(256),
+      reason: z.string().min(1).max(4096).optional(),
+    },
+    (args) => write("agent_stop_failed", async () => ({
+      agent: publicAgentSnapshot(await services.manager.stopForController(controllerId, args.agent_id, args.reason)),
+    })),
+  );
+
+  server.tool(
+    "coordination_agent_chat_post",
+    "Post a bounded message to the namespaced project agent chat as the authenticated MCP identity.",
+    { message: z.string().min(1).max(16 * 1024) },
+    (args) => write("coordination_agent_chat_post_failed", async () => ({
+      message: publicChatMessage(await coordination().agentChatPost({
+        ...services.identity,
+        message: args.message,
+      })),
+    })),
+  );
+
+  server.tool(
+    "coordination_agent_chat_read",
+    "Read bounded messages from the namespaced project agent chat using a monotonic cursor.",
+    {
+      after: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    (args) => read("coordination_agent_chat_read_failed", async () => {
+      const result = await coordination().agentChatRead(args);
+      return { ...result, messages: result.messages.map(publicChatMessage) };
+    }),
+  );
+
+  server.tool(
+    "coordination_agent_task_create",
+    "Create a durable task in the namespaced project coordination store.",
+    {
+      title: z.string().min(1).max(256),
+      details: z.string().min(1).max(16 * 1024).optional(),
+    },
+    (args) => write("coordination_agent_task_create_failed", async () => ({
+      task: publicCoordinationTask(await coordination().agentTaskCreate({
+        ...services.identity,
+        title: args.title,
+        details: args.details,
+      })),
+    })),
+  );
+
+  server.tool(
+    "coordination_agent_task_read",
+    "Read a bounded filtered task list from the namespaced project coordination store.",
+    {
+      statuses: z.array(z.enum(COORDINATION_TASK_STATUSES)).min(1).max(COORDINATION_TASK_STATUSES.length).optional(),
+      assigned_agent_id: z.string().min(1).max(256).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    (args) => read("coordination_agent_task_read_failed", async () => ({
+      tasks: (await coordination().agentTaskList({
+        statuses: args.statuses,
+        assignedAgentId: args.assigned_agent_id,
+        limit: args.limit,
+      })).map(publicCoordinationTask),
+    })),
+  );
+
+  server.tool(
+    "coordination_agent_task_assign",
+    "Assign a durable task to an existing supervised agent. The authenticated identity must have controller authority.",
+    {
+      task_id: z.string().min(1).max(256),
+      expected_revision: z.number().int().min(1),
+      assigned_agent_id: z.string().min(1).max(256),
+      status_message: z.string().min(1).max(16 * 1024).optional(),
+    },
+    (args) => write("coordination_agent_task_assign_failed", async () => {
+      const agent = services.manager.statusForController(controllerId, args.assigned_agent_id);
+      const task = await coordination().agentTaskAssign({
+        ...services.identity,
+        taskId: args.task_id,
+        expectedRevision: args.expected_revision,
+        assignedAgentId: agent.agentId,
+        assignedAgentName: agent.label ?? agent.role.occupancyLabel,
+        assignedRole: agent.role,
+        statusMessage: args.status_message,
+      });
+      return { task: publicCoordinationTask(task) };
+    }),
+  );
+
+  server.tool(
+    "coordination_agent_task_update",
+    "Update a durable assigned task with optimistic revision checks and authenticated actor binding.",
+    {
+      task_id: z.string().min(1).max(256),
+      expected_revision: z.number().int().min(1),
+      status: z.enum(MUTABLE_TASK_STATUSES),
+      status_message: z.string().min(1).max(16 * 1024).optional(),
+      artifact: z.string().min(1).max(32 * 1024).optional(),
+    },
+    (args) => write("coordination_agent_task_update_failed", async () => ({
+      task: publicCoordinationTask(await coordination().agentTaskUpdate({
+        ...services.identity,
+        taskId: args.task_id,
+        expectedRevision: args.expected_revision,
+        status: args.status,
+        statusMessage: args.status_message,
+        artifact: args.artifact,
+      })),
+    })),
+  );
+}
+
+type AgentToolAccess = "read" | "write";
+
+async function executeAgentOperation<T>(
+  scopes: string,
+  access: AgentToolAccess,
+  failureCode: string,
+  operation: () => T | Promise<T>,
+) {
+  if (!hasAgentScope(scopes, access)) {
+    return toolError(`Token scope does not permit agent ${access} operations`);
+  }
+  try {
+    return jsonTool(await operation());
+  } catch (error) {
+    if (error instanceof SafeAgentToolError) return toolError(error.code);
+    return toolError(failureCode);
+  }
+}
+
+function hasAgentScope(scopes: string, access: AgentToolAccess): boolean {
+  const granted = new Set(scopes.split(/\s+/u).filter(Boolean));
+  return granted.has("mcp:tools") || granted.has(access === "read" ? "mcp:read" : "mcp:write");
+}
+
+function jsonTool(value: unknown) {
+  const json = JSON.stringify(value);
+  if (Buffer.byteLength(json, "utf8") > AGENT_RESULT_MAX_BYTES) {
+    return toolError("agent_result_too_large");
+  }
+  return { content: [{ type: "text" as const, text: json }] };
+}
+
+function publicAgentSnapshot(agent: AgentSnapshot) {
+  return {
+    agent_id: agent.agentId,
+    runtime_id: agent.runtimeId,
+    role: {
+      canonical_role_id: agent.role.canonicalRoleId,
+      occupancy_label: agent.role.occupancyLabel,
+    },
+    permissions: [...agent.permissions],
+    task_id: agent.taskId,
+    label: agent.label,
+    status: agent.status,
+    created_at: agent.createdAt,
+    updated_at: agent.updatedAt,
+    started_at: agent.startedAt,
+    finished_at: agent.finishedAt,
+    has_error: agent.lastError !== undefined,
+    revision: agent.revision,
+  };
+}
+
+function publicChatMessage(message: Awaited<ReturnType<AgentCoordinationStore["agentChatPost"]>>) {
+  return {
+    cursor: message.cursor,
+    actor_name: message.actorName,
+    agent_id: message.agentId,
+    message: message.message,
+    created_at: message.createdAt,
+  };
+}
+
+function publicCoordinationTask(task: CoordinationTask) {
+  return {
+    task_id: task.taskId,
+    title: task.title,
+    details: task.details,
+    status: task.status,
+    status_message: task.statusMessage,
+    artifact: task.artifact,
+    created_by: task.createdByActorName,
+    assigned_agent_id: task.assignedAgentId,
+    assigned_agent_name: task.assignedAgentName,
+    assigned_role: task.assignedRole && {
+      canonical_role_id: task.assignedRole.canonicalRoleId,
+      occupancy_label: task.assignedRole.occupancyLabel,
+    },
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
+    revision: task.revision,
+  };
+}
+
+class SafeAgentToolError extends Error {
+  public constructor(public readonly code: string) {
+    super(code);
+  }
+}
+
+function isMcpAgentServices(
+  value: Readonly<AuthenticatedAgentIdentity> | McpAgentServices | undefined,
+): value is McpAgentServices {
+  return Boolean(value && typeof value === "object" && "manager" in value && "identity" in value);
 }
 
 function toolError(message: string) {

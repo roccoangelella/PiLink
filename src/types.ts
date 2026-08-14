@@ -4,6 +4,7 @@ export interface OAuthClient {
   client_name: string;
   redirect_uris: string[];
   grant_types: string[];
+  token_endpoint_auth_method?: "client_secret_post" | "client_secret_basic" | "none";
   scope: string;
   created_at: string;
   disabled_at?: string;
@@ -35,4 +36,17 @@ export interface TokenPayload {
 
 export interface ClientStore {
   clients: OAuthClient[];
+}
+
+export interface RefreshTokenRecord {
+  token_hash: string;
+  client_id: string;
+  scope: string;
+  created_at: string;
+  expires_at: number;
+  client_version?: number;
+}
+
+export interface RefreshTokenStore {
+  tokens: RefreshTokenRecord[];
 }

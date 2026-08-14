@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +45,7 @@ test("chat CLI launcher passes canonical files through an inherited terminal", a
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-chat-cli-launch-"));
   const packageDir = path.join(root, "pilink_chat_cli");
   const workspace = path.join(root, "workspace");
-  const dataDir = path.join(root, "private-data");
+  const coordinationDataDir = path.join(root, "coordination-data");
   await fs.mkdir(packageDir);
   await fs.mkdir(workspace);
   await fs.writeFile(path.join(packageDir, "__main__.py"), "# fixture\n");
@@ -53,7 +54,7 @@ test("chat CLI launcher passes canonical files through an inherited terminal", a
   let invocation;
   const fakeChild = { once() {}, exitCode: null, killed: false };
   const result = launchChatCli(
-    { workspace, dataDir },
+    { workspace, coordinationDataDir },
     {
       chatCliRoot: root,
       python: "/usr/bin/python3",
@@ -67,16 +68,46 @@ test("chat CLI launcher passes canonical files through an inherited terminal", a
 
   assert.equal(result.child, fakeChild);
   assert.equal(invocation.executable, "/usr/bin/python3");
-  assert.deepEqual(invocation.args.slice(0, 2), ["-m", "pilink_chat_cli"]);
+  assert.ok(result.paths.projectDir.startsWith(`${path.resolve(coordinationDataDir)}${path.sep}`));
+  assert.equal(invocation.args[0], path.join(packageDir, "__main__.py"));
   assert.equal(invocation.args[invocation.args.indexOf("--chat-file") + 1], result.paths.chatFile);
   assert.equal(invocation.args[invocation.args.indexOf("--tasks-file") + 1], result.paths.tasksFile);
   assert.ok(invocation.args.includes("--missing-as-empty"));
   assert.equal(invocation.options.stdio, "inherit");
   assert.equal(invocation.options.env.PYTHONPATH, `${root}${path.delimiter}/existing`);
+  assert.equal(invocation.options.env.PYTHONNOUSERSITE, "1");
 });
 
 test("bundled chat CLI source is shipped beside compiled PiLink", async () => {
   const root = bundledChatCliRoot();
   await fs.access(path.join(root, "pilink_chat_cli", "__main__.py"));
   await fs.access(path.join(root, "pilink_chat_cli", "app.tcss"));
+});
+
+test("pilink chat is a real CLI command and reports a missing Textual runtime cleanly", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-chat-command-"));
+  const workspace = path.join(root, "workspace");
+  const dataDir = path.join(root, "private-data");
+  const configPath = path.join(root, ".env");
+  await fs.mkdir(workspace);
+  await fs.mkdir(dataDir);
+  await fs.writeFile(configPath, [
+    `PI_WORK_DIR=${workspace}`,
+    `PI_DATA_DIR=${dataDir}`,
+    "PORT=3200",
+    `JWT_SECRET=${"j".repeat(32)}`,
+    `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+    "SERVER_URL=http://127.0.0.1:3200",
+    "",
+  ].join("\n"), { mode: 0o600 });
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const result = spawnSync(process.execPath, [path.resolve("dist/cli.js"), "chat"], {
+    cwd: workspace,
+    env: { ...process.env, PILINK_CONFIG: configPath, PATH: root, PI_CHAT_CLI_PYTHON: path.join(root, "missing-python") },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Textual 0\.51/);
+  assert.doesNotMatch(result.stderr, /Usage: pilink/);
 });

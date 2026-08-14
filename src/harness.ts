@@ -7,15 +7,19 @@ export type ToolName = "read" | "bash" | "run" | "edit" | "write" | "grep" | "fi
 export interface HarnessPolicy {
   workspace: string;
   unsafeFullAccess: boolean;
+  /** Explicit opt-in for fixed profiles that execute trusted workspace code. */
   allowWorkspaceExecution?: boolean;
+  /** Optional client-side elicitation gate for process execution. */
   requireExecutionApproval?: boolean;
   maxBashTimeoutSeconds: number;
 }
 
-export function createHarnessPolicy(config: RuntimeConfig): HarnessPolicy {
+export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): HarnessPolicy {
+  const configuredClientIds = config.fullAccessClientIds ?? [];
+  const clientMayUseFullAccess = clientId === undefined || configuredClientIds.includes("*") || configuredClientIds.includes(clientId);
   return {
     workspace: path.resolve(config.workspace),
-    unsafeFullAccess: config.unsafeFullAccess,
+    unsafeFullAccess: config.unsafeFullAccess && clientMayUseFullAccess,
     allowWorkspaceExecution: config.allowWorkspaceExecution,
     requireExecutionApproval: config.requireExecutionApproval,
     maxBashTimeoutSeconds: config.maxBashTimeoutSeconds,

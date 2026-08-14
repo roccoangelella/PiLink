@@ -44,6 +44,27 @@ export interface ToolAuditLogOptions {
 }
 
 export const TOOL_AUDIT_DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+export const TOOL_AUDIT_MAX_READ_EVENTS = 200;
+const TOOL_AUDIT_READ_MAX_BYTES_PER_FILE = 1024 * 1024;
+const TOOL_AUDIT_READ_MIN_BYTES_PER_FILE = 64 * 1024;
+const TOOL_AUDIT_MAX_LINE_BYTES = 4 * 1024;
+const TOOL_AUDIT_MAX_SCANNED_LINES = 4 * 1024;
+const TOOL_AUDIT_EVENT_KEYS = new Set([
+  "version",
+  "event",
+  "callId",
+  "agentId",
+  "sessionId",
+  "tool",
+  "startedAt",
+  "durationMs",
+  "outcome",
+  "accessMode",
+  "exitCode",
+  "timedOut",
+  "cancelled",
+  "truncated",
+]);
 const appendQueues = new Map<string, Promise<void>>();
 
 /** Project-scoped, metadata-only audit log. Callers decide whether failures are fatal. */
@@ -81,6 +102,15 @@ export class ToolAuditLog {
 
   public flush(): Promise<void> {
     return appendQueues.get(this.logPath) || Promise.resolve();
+  }
+
+  /** Read the newest validated metadata events without loading either complete log. */
+  public readRecent(limit: number): Promise<ToolAuditEvent[]> {
+    const selectedLimit = validateReadLimit(limit);
+    const previous = appendQueues.get(this.logPath) || Promise.resolve();
+    const operation = previous.then(() => this.readRecentAfterWrites(selectedLimit));
+    appendQueues.set(this.logPath, operation.then(() => undefined, () => undefined));
+    return operation;
   }
 
   private async append(event: ToolAuditEvent): Promise<void> {
@@ -125,6 +155,44 @@ export class ToolAuditLog {
       throw new Error("Tool audit project directory escapes the configured data directory");
     }
     await fs.promises.chmod(canonicalProjectDir, 0o700);
+  }
+
+  private async readRecentAfterWrites(limit: number): Promise<ToolAuditEvent[]> {
+    const projectDirectory = await this.resolveReadableProjectDirectory();
+    if (!projectDirectory) return [];
+
+    const active = await readRecentFile(projectDirectory, path.basename(this.logPath), limit);
+    if (active.length >= limit) return active.slice(-limit);
+
+    const rotated = await readRecentFile(
+      projectDirectory,
+      path.basename(this.rotatedLogPath),
+      limit - active.length,
+    );
+    return [...rotated, ...active].slice(-limit);
+  }
+
+  private async resolveReadableProjectDirectory(): Promise<string | undefined> {
+    try {
+      const canonicalDataDir = await fs.promises.realpath(this.dataDir);
+      if (isWithin(this.workspace, canonicalDataDir)) {
+        throw new Error("Tool audit data must not be stored under the workspace");
+      }
+
+      const canonicalProjectsDir = await fs.promises.realpath(path.join(this.dataDir, "projects"));
+      if (canonicalProjectsDir !== path.join(canonicalDataDir, "projects")) {
+        throw new Error("Tool audit projects directory is not canonical");
+      }
+
+      const canonicalProjectDir = await fs.promises.realpath(this.projectDir);
+      if (canonicalProjectDir !== path.join(canonicalProjectsDir, this.projectKey)) {
+        throw new Error("Tool audit project directory is not canonical");
+      }
+      return canonicalProjectDir;
+    } catch (error) {
+      if (isFileSystemError(error, "ENOENT")) return undefined;
+      throw error;
+    }
   }
 }
 
@@ -180,6 +248,13 @@ function validatePositiveInteger(value: unknown, field: string): number {
   return value as number;
 }
 
+function validateReadLimit(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > TOOL_AUDIT_MAX_READ_EVENTS) {
+    throw new Error(`limit must be a safe integer between 1 and ${TOOL_AUDIT_MAX_READ_EVENTS}`);
+  }
+  return value as number;
+}
+
 function validateOutcome(value: unknown): ToolAuditOutcome {
   if (value !== "success" && value !== "error") throw new Error("outcome must be success or error");
   return value;
@@ -210,6 +285,123 @@ async function fileSize(filePath: string): Promise<number> {
     if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw error;
   }
+}
+
+async function readRecentFile(
+  projectDirectory: string,
+  fileName: string,
+  limit: number,
+): Promise<ToolAuditEvent[]> {
+  const requestedPath = path.join(projectDirectory, fileName);
+  let canonicalPath: string;
+  try {
+    canonicalPath = await fs.promises.realpath(requestedPath);
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return [];
+    throw new Error("Tool audit log cannot be opened safely");
+  }
+  if (path.dirname(canonicalPath) !== projectDirectory || path.basename(canonicalPath) !== fileName) {
+    throw new Error("Tool audit log escapes its project directory");
+  }
+
+  let file: fs.promises.FileHandle;
+  try {
+    file = await fs.promises.open(canonicalPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    throw new Error("Tool audit log cannot be opened safely");
+  }
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size < 0) {
+      throw new Error("Tool audit log must be a regular file");
+    }
+    if (stat.size === 0) return [];
+
+    const desiredBytes = Math.min(
+      TOOL_AUDIT_READ_MAX_BYTES_PER_FILE,
+      Math.max(TOOL_AUDIT_READ_MIN_BYTES_PER_FILE, limit * TOOL_AUDIT_MAX_LINE_BYTES),
+    );
+    const offset = Math.max(0, stat.size - desiredBytes);
+    const length = Math.min(stat.size, desiredBytes);
+    const buffer = Buffer.alloc(length);
+    let total = 0;
+    while (total < length) {
+      const result = await file.read(buffer, total, length - total, offset + total);
+      if (result.bytesRead === 0) break;
+      total += result.bytesRead;
+    }
+    return parseRecentEvents(buffer.subarray(0, total), offset === 0, limit);
+  } finally {
+    await file.close();
+  }
+}
+
+function parseRecentEvents(buffer: Buffer, startsAtFileBoundary: boolean, limit: number): ToolAuditEvent[] {
+  let text = buffer.toString("utf8");
+  if (!startsAtFileBoundary) {
+    const firstNewline = text.indexOf("\n");
+    if (firstNewline === -1) return [];
+    text = text.slice(firstNewline + 1);
+  }
+
+  const finalNewline = text.lastIndexOf("\n");
+  if (finalNewline === -1) return [];
+  const lines = text.slice(0, finalNewline).split("\n");
+  const maximumScannedLines = Math.min(
+    TOOL_AUDIT_MAX_SCANNED_LINES,
+    Math.max(256, limit * 16),
+  );
+  const events: ToolAuditEvent[] = [];
+  let scanned = 0;
+  for (let index = lines.length - 1; index >= 0 && events.length < limit && scanned < maximumScannedLines; index -= 1) {
+    scanned += 1;
+    const line = lines[index].endsWith("\r") ? lines[index].slice(0, -1) : lines[index];
+    const event = parseStoredEvent(line);
+    if (event) events.push(event);
+  }
+  return events.reverse();
+}
+
+function parseStoredEvent(line: string): ToolAuditEvent | undefined {
+  if (line.length === 0 || Buffer.byteLength(line, "utf8") > TOOL_AUDIT_MAX_LINE_BYTES) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(value) || Object.keys(value).some((key) => !TOOL_AUDIT_EVENT_KEYS.has(key))) return undefined;
+  if (value.version !== 1 || value.event !== "tool_call") return undefined;
+
+  try {
+    const event: ToolAuditEvent = {
+      version: 1,
+      event: "tool_call",
+      callId: validateText(value.callId, "callId", 200),
+      tool: validateText(value.tool, "tool", 100),
+      startedAt: validateTimestamp(value.startedAt),
+      durationMs: validateNonNegativeInteger(value.durationMs, "durationMs"),
+      outcome: validateOutcome(value.outcome),
+      accessMode: validateAccessMode(value.accessMode),
+    };
+    if (Object.hasOwn(value, "agentId")) event.agentId = validateText(value.agentId, "agentId", 200);
+    if (Object.hasOwn(value, "sessionId")) event.sessionId = validateText(value.sessionId, "sessionId", 200);
+    if (Object.hasOwn(value, "exitCode")) event.exitCode = validateExitCode(value.exitCode);
+    if (Object.hasOwn(value, "timedOut")) event.timedOut = validateBoolean(value.timedOut, "timedOut");
+    if (Object.hasOwn(value, "cancelled")) event.cancelled = validateBoolean(value.cancelled, "cancelled");
+    if (Object.hasOwn(value, "truncated")) event.truncated = validateBoolean(value.truncated, "truncated");
+    return event;
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFileSystemError(error: unknown, code: string): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
 }
 
 function isWithin(parent: string, candidate: string): boolean {

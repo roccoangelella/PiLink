@@ -1,6 +1,12 @@
-name: Publish npm Package
+name: Build Release Candidate
 
 on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Exact package version to stage (for example 2.2.0)
+        required: true
+        type: string
   release:
     types:
       - published
@@ -10,18 +16,78 @@ permissions:
   id-token: write
 
 concurrency:
-  group: npm-publish
+  group: release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build-release-candidate:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Verify requested version and exact toolchain
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import fs from "node:fs";
+
+          if (process.version !== "v24.18.0") {
+            throw new Error(`Expected Node.js v24.18.0, got ${process.version}`);
+          }
+          const npmVersion = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
+          if (npmVersion !== "11.16.0") {
+            throw new Error(`Expected npm 11.16.0, got ${npmVersion}`);
+          }
+          if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(process.env.EXPECTED_VERSION ?? "")) {
+            throw new Error("expected_version must be an exact semantic version");
+          }
+          const rootPackage = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const extensionPackage = JSON.parse(fs.readFileSync("packages/vscode/package.json", "utf8"));
+          if (rootPackage.version !== process.env.EXPECTED_VERSION || extensionPackage.version !== process.env.EXPECTED_VERSION) {
+            throw new Error("requested, root, and VS Code package versions must match");
+          }
+          NODE
+
+      - run: npm ci --ignore-scripts --audit=false
+      - run: npm audit signatures
+      - run: npm audit --audit-level=moderate
+      - run: npm run security:scan:history
+      - run: npm run plugin:verify
+      - run: npm run test:all
+      - run: npm run release:stage
+      - run: npm run release:verify
+
+      - name: Upload verified release candidate (does not publish)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vspilink-${{ inputs.expected_version }}-release-candidate
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish-npm:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     environment: npm
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -30,38 +96,36 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
-      - name: Verify npm supports trusted publishing
-        run: |
-          node --input-type=module <<'NODE'
-          import { execFileSync } from "node:child_process";
-
-          const version = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
-          const [major, minor] = version.split(".").map(Number);
-          if (major < 11 || (major === 11 && minor < 5)) {
-            console.error(`npm ${version} does not support trusted publishing; 11.5.1 or later is required`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Verify release tag matches package version
+      - name: Verify release tag and exact toolchain
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
           import fs from "node:fs";
 
-          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
-          const expectedTag = `v${packageJson.version}`;
-          if (process.env.RELEASE_TAG !== expectedTag) {
-            console.error(`Release tag ${process.env.RELEASE_TAG} does not match ${expectedTag}`);
-            process.exit(1);
+          if (process.version !== "v24.18.0") {
+            throw new Error(`Expected Node.js v24.18.0, got ${process.version}`);
+          }
+          const npmVersion = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
+          if (npmVersion !== "11.16.0") {
+            throw new Error(`Expected npm 11.16.0, got ${npmVersion}`);
+          }
+          const rootPackage = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const extensionPackage = JSON.parse(fs.readFileSync("packages/vscode/package.json", "utf8"));
+          const expectedTag = `v${rootPackage.version}`;
+          if (process.env.RELEASE_TAG !== expectedTag || extensionPackage.version !== rootPackage.version) {
+            throw new Error("release tag, root package, and extension versions must match");
           }
           NODE
 
       - run: npm ci --ignore-scripts --audit=false
       - run: npm audit signatures
       - run: npm audit --audit-level=moderate
-      - run: npm test
-      - run: npm pack --dry-run
+      - run: npm run security:scan:history
+      - run: npm run plugin:verify
+      - run: npm run test:all
+      - run: npm run release:stage
+      - run: npm run release:verify
       - name: Publish with npm trusted publishing
         run: npm publish

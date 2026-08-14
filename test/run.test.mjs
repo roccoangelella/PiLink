@@ -58,6 +58,20 @@ test("read-only git profiles inspect only the configured workspace", async (t) =
   assert.equal(log.exitCode, 0);
   assert.match(log.stdout, /initial/);
 
+  const pathLog = await executeRunProfile(policy(workspace), {
+    profile: "git_log",
+    paths: ["tracked.txt"],
+    maxCount: 1,
+  });
+  assert.equal(pathLog.exitCode, 0);
+  assert.match(pathLog.stdout, /initial/);
+
+  const ignoredMaxCount = await executeRunProfile(policy(workspace), {
+    profile: "git_status",
+    maxCount: 99,
+  });
+  assert.equal(ignoredMaxCount.exitCode, 0);
+
   await assert.rejects(
     executeRunProfile(policy(workspace), { profile: "git_diff", paths: ["../outside.txt"] }),
     /escapes/,

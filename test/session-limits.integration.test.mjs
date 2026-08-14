@@ -376,6 +376,8 @@ async function startServer(t, limits) {
       SERVER_URL: serverUrl,
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
+      PI_COORDINATION_DATA_DIR: dataDir,
+      PI_OAUTH_CONSENT_MODE: "browser",
       JWT_SECRET: "a".repeat(32),
       PI_BOOTSTRAP_SECRET: bootstrapSecret,
       ...limits,

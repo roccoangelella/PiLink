@@ -181,3 +181,33 @@ test("approval mode rejects shell commands too large for meaningful review", asy
   assert.match(resultText(result), /4,000-character execution-approval review limit/);
   assert.equal(connection.requests.length, 0);
 });
+
+test("direct MCP bash receives operational variables without inheriting server secrets", async (t) => {
+  const value = await fixture(t);
+  value.policy.requireExecutionApproval = false;
+  const connection = await connected(value, undefined, false);
+  t.after(() => connection.close());
+
+  const names = ["LC_VSPILINK_TEST", "JWT_SECRET", "PI_BOOTSTRAP_SECRET", "OPENAI_API_KEY"];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  process.env.LC_VSPILINK_TEST = "preserved";
+  process.env.JWT_SECRET = "mcp-jwt-secret";
+  process.env.PI_BOOTSTRAP_SECRET = "mcp-bootstrap-secret";
+  process.env.OPENAI_API_KEY = "mcp-provider-key";
+
+  const result = await connection.client.callTool({
+    name: "bash",
+    arguments: {
+      command: `node -e "process.stdout.write(JSON.stringify({safe:process.env.LC_VSPILINK_TEST,jwt:process.env.JWT_SECRET,bootstrap:process.env.PI_BOOTSTRAP_SECRET,provider:process.env.OPENAI_API_KEY}))"`,
+    },
+  });
+
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(JSON.parse(resultText(result)), { safe: "preserved" });
+});

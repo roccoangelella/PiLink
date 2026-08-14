@@ -6,11 +6,10 @@ import test from "node:test";
 import { loadRuntimeConfig } from "../dist/config.js";
 import { createHarnessPolicy, isToolAllowed, sanitizeToolArguments } from "../dist/harness.js";
 
-function config(workspace, unsafeFullAccess = false, allowWorkspaceExecution = false) {
+function config(workspace, unsafeFullAccess = false) {
   return {
     workspace,
     unsafeFullAccess,
-    allowWorkspaceExecution,
     maxBashTimeoutSeconds: 30,
   };
 }
@@ -42,31 +41,71 @@ test("workspace policy forbids bash while explicit unsafe mode clamps its timeou
   }
 });
 
+test("full access is granted only to explicitly selected OAuth clients", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-client-policy-"));
+  try {
+    const runtime = {
+      ...config(workspace, true),
+      fullAccessClientIds: ["pi_1111111111111111"],
+    };
+    assert.equal(createHarnessPolicy(runtime, "pi_1111111111111111").unsafeFullAccess, true);
+    assert.equal(createHarnessPolicy(runtime, "pi_2222222222222222").unsafeFullAccess, false);
+    assert.equal(createHarnessPolicy({ ...runtime, fullAccessClientIds: ["*"] }, "pi_2222222222222222").unsafeFullAccess, true);
+    assert.equal(createHarnessPolicy(runtime).unsafeFullAccess, true, "local owner policy keeps the configured capability");
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("tool scopes separate read-only and write capabilities", () => {
   assert.equal(isToolAllowed("mcp:read", "read"), true);
-  assert.equal(isToolAllowed("mcp:read", "write"), false);
   assert.equal(isToolAllowed("mcp:read", "run"), false);
+  assert.equal(isToolAllowed("mcp:read", "write"), false);
   assert.equal(isToolAllowed("mcp:write", "run"), true);
   assert.equal(isToolAllowed("mcp:write", "bash"), true);
   assert.equal(isToolAllowed("mcp:tools", "edit"), true);
 });
 
-test("runtime configuration propagates the workspace execution opt-in", async () => {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-"));
+test("workspace execution and approval require exact explicit opt-ins", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-config-"));
   try {
-    const runtime = loadRuntimeConfig({
+    const base = {
       PI_WORK_DIR: workspace,
       PILINK_CONFIG: path.join(workspace, "pilink.env"),
       JWT_SECRET: "j".repeat(32),
       PI_BOOTSTRAP_SECRET: "b".repeat(32),
+    };
+    const defaults = loadRuntimeConfig(base);
+    assert.equal(defaults.allowWorkspaceExecution, false);
+    assert.equal(defaults.requireExecutionApproval, false);
+    assert.deepEqual(defaults.fullAccessClientIds, []);
+
+    const enabled = loadRuntimeConfig({
+      ...base,
       PI_ALLOW_WORKSPACE_EXECUTION: "true",
       PI_REQUIRE_EXECUTION_APPROVAL: "true",
     });
-    assert.equal(runtime.allowWorkspaceExecution, true);
-    assert.equal(runtime.requireExecutionApproval, true);
-    const policy = createHarnessPolicy(runtime);
+    assert.equal(enabled.allowWorkspaceExecution, true);
+    assert.equal(enabled.requireExecutionApproval, true);
+    const policy = createHarnessPolicy(enabled);
     assert.equal(policy.allowWorkspaceExecution, true);
     assert.equal(policy.requireExecutionApproval, true);
+
+    const nearMiss = loadRuntimeConfig({
+      ...base,
+      PI_ALLOW_WORKSPACE_EXECUTION: "TRUE",
+      PI_REQUIRE_EXECUTION_APPROVAL: "1",
+    });
+    assert.equal(nearMiss.allowWorkspaceExecution, false);
+    assert.equal(nearMiss.requireExecutionApproval, false);
+
+    const selectedClient = loadRuntimeConfig({
+      ...base,
+      PI_UNSAFE_FULL_ACCESS: "true",
+      PI_FULL_ACCESS_CLIENT_IDS: "pi_1111111111111111, pi_2222222222222222",
+    });
+    assert.deepEqual(selectedClient.fullAccessClientIds, ["pi_1111111111111111", "pi_2222222222222222"]);
+    assert.throws(() => loadRuntimeConfig({ ...base, PI_FULL_ACCESS_CLIENT_IDS: "not-a-client" }), /OAuth client IDs/);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }

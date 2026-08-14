@@ -12,6 +12,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
+        if: github.event.repository.fork == false
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
+      - name: Explain fork limitation
+        if: github.event.repository.fork == true
+        run: echo "GitHub blocks the Dependency Review API on forks; npm audit and registry-signature checks remain enforced by CI."

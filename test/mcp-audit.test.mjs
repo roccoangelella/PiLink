@@ -98,7 +98,6 @@ test("audits every MCP tool category without recording arguments or results", as
     await fs.rm(root, { recursive: true, force: true });
   }
 });
-
 test("audit sink failures never change tool results", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-mcp-audit-failure-"));
   const workspace = path.join(root, "workspace");

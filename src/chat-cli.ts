@@ -82,7 +82,7 @@ export function findChatCliPython(
 }
 
 export function launchChatCli(
-  config: Pick<RuntimeConfig, "workspace" | "dataDir">,
+  config: Pick<RuntimeConfig, "workspace" | "coordinationDataDir">,
   options: Readonly<{
     env?: NodeJS.ProcessEnv;
     python?: string;
@@ -91,7 +91,7 @@ export function launchChatCli(
   }> = {},
 ): ChatCliLaunchResult {
   const env = options.env || process.env;
-  const paths = resolveChatCliStatePaths(config.workspace, config.dataDir);
+  const paths = resolveChatCliStatePaths(config.workspace, config.coordinationDataDir);
   const chatCliRoot = options.chatCliRoot || bundledChatCliRoot();
   const packageDir = path.join(chatCliRoot, "pilink_chat_cli");
   if (!fs.existsSync(path.join(packageDir, "__main__.py"))) {
@@ -111,8 +111,7 @@ export function launchChatCli(
     : chatCliRoot;
   try {
     const child = (options.spawnProcess || spawn)(python, [
-      "-m",
-      "pilink_chat_cli",
+      path.join(packageDir, "__main__.py"),
       "--chat-file",
       paths.chatFile,
       "--tasks-file",
@@ -122,6 +121,7 @@ export function launchChatCli(
       env: {
         ...env,
         PYTHONPATH: pythonPath,
+        PYTHONNOUSERSITE: "1",
       },
       stdio: "inherit",
     });

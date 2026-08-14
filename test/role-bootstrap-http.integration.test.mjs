@@ -27,6 +27,8 @@ test("real HTTP server exposes role bootstrap and isolates same-OAuth conversati
       SERVER_URL: serverUrl,
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
+      PI_COORDINATION_DATA_DIR: dataDir,
+      PI_OAUTH_CONSENT_MODE: "browser",
       JWT_SECRET: "r".repeat(32),
       PI_BOOTSTRAP_SECRET: "s".repeat(32),
       PI_MAX_MCP_SESSIONS_TOTAL: "2",
@@ -104,7 +106,7 @@ test("real HTTP server exposes role bootstrap and isolates same-OAuth conversati
   try {
     await waitForDiagnostic(
       diagnostics,
-      `Streamable HTTP session closed: ${second.transport.sessionId}`,
+      "Streamable HTTP session deleted.",
     );
     assert.equal(deleteSettled, false, "DELETE acknowledged before collaboration disposal completed");
   } finally {
@@ -351,7 +353,7 @@ test("read-only OAuth sessions stay generic and create no collaboration state", 
   assert.equal(await projectStateFileExists(fixture.dataDir, "agent-memory.json"), false);
 });
 
-test("failed post-reservation setup always returns pending capacity to zero", async (t) => {
+test("degraded collaboration setup returns pending capacity and keeps the basic harness available", async (t) => {
   const fixture = await launchTestServer(t, {
     prefix: "pilink-role-bootstrap-setup-failure-",
     dataDirInsideWorkspace: true,
@@ -359,40 +361,56 @@ test("failed post-reservation setup always returns pending capacity to zero", as
   const registered = await register(fixture.serverUrl, "Failing Setup Client", "mcp:tools");
   const accessToken = await token(fixture.serverUrl, registered, "mcp:tools");
 
+  const sessions = [];
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    await assert.rejects(
-      rawMcpRequest({
-        serverUrl: fixture.serverUrl,
-        accessToken,
-        diagnostics: fixture.diagnostics,
-        id: attempt + 1,
-        method: "initialize",
-        params: {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: `forced-streamable-failure-${attempt}`, version: "1.0.0" },
-        },
-      }),
-      /Raw MCP initialize failed with 500/,
-    );
-  }
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(`${fixture.serverUrl}/sse`, {
-      headers: {
-        Accept: "text/event-stream",
-        Authorization: `Bearer ${accessToken}`,
+    const initialized = await rawMcpRequest({
+      serverUrl: fixture.serverUrl,
+      accessToken,
+      diagnostics: fixture.diagnostics,
+      id: attempt + 1,
+      method: "initialize",
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: `degraded-streamable-${attempt}`, version: "1.0.0" },
       },
     });
-    assert.equal(response.status, 500);
+    const sessionId = initialized.response.headers.get("mcp-session-id");
+    assert.ok(sessionId);
+    sessions.push(sessionId);
+    const listed = await rawMcpRequest({
+      serverUrl: fixture.serverUrl,
+      accessToken,
+      diagnostics: fixture.diagnostics,
+      sessionId,
+      protocolVersion: initialized.envelope.result.protocolVersion,
+      id: 100 + attempt,
+      method: "tools/list",
+      params: {},
+    });
+    const toolNames = listed.envelope.result.tools.map((tool) => tool.name);
+    assert.equal(toolNames.includes("ls"), true);
+    assert.equal(toolNames.includes("collaboration_bootstrap"), false);
   }
 
   const healthResponse = await fetch(`${fixture.serverUrl}/health`);
   assert.equal(healthResponse.status, 200);
   const health = await healthResponse.json();
   assert.equal(health.sessions.pending, 0);
-  assert.equal(health.sessions.active, 0);
+  assert.equal(health.sessions.active, 3);
   assert.equal(await collaborationStateExists(fixture.dataDir), false);
+
+  await Promise.all(sessions.map(async (sessionId) => {
+    const response = await fetch(`${fixture.serverUrl}/sse`, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${accessToken}`,
+        "Mcp-Session-Id": sessionId,
+      },
+    });
+    assert.equal(response.status, 200);
+  }));
 });
 
 async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false, extraEnv = {} }) {
@@ -414,6 +432,8 @@ async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false, ext
       SERVER_URL: serverUrl,
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
+      PI_COORDINATION_DATA_DIR: dataDir,
+      PI_OAUTH_CONSENT_MODE: "browser",
       JWT_SECRET: "r".repeat(32),
       PI_BOOTSTRAP_SECRET: "s".repeat(32),
       ...extraEnv,

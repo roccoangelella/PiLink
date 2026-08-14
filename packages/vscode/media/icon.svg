@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <title>VSPiLink</title>
+  <g stroke="#C5C5C5" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5.5 10.25h15.25"/>
+    <path d="M8.25 10.25v12.5"/>
+    <path d="M18 10.25v7.25"/>
+    <path d="M21.25 16.5h2.25a3.75 3.75 0 0 1 0 7.5h-2.25"/>
+    <path d="M23.75 20.25H21.5a3.75 3.75 0 1 0 0 7.5h2.25" transform="translate(0 -3.75)"/>
+  </g>
+  <g fill="#C5C5C5">
+    <circle cx="5.5" cy="10.25" r="1.7"/>
+    <circle cx="8.25" cy="22.75" r="1.7"/>
+    <circle cx="18" cy="10.25" r="1.7"/>
+  </g>
+</svg>

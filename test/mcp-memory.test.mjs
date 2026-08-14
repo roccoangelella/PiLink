@@ -224,7 +224,6 @@ test("read-capable generic MCP sessions expose strict governed-memory tools with
     await close(connection);
   }
 });
-
 test("verified MCP sessions derive role, session, and task memory authority without leaking siblings", async (t) => {
   const value = await fixture();
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));

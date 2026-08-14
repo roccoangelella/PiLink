@@ -5,6 +5,16 @@ import path from "node:path";
 import type { HarnessPolicy } from "./harness.js";
 import { resolveWorkspacePath } from "./harness.js";
 
+/**
+ * The upstream constrained runner predates the current VSPiLink harness type.
+ * Keep its opt-in execution flag local until the core integration can add the
+ * matching runtime configuration without coupling this standalone module to
+ * the in-progress MCP backend work.
+ */
+type RunHarnessPolicy = HarnessPolicy & Readonly<{
+  allowWorkspaceExecution?: boolean;
+}>;
+
 export const RUN_PROFILES = [
   "git_status",
   "git_diff",
@@ -47,7 +57,7 @@ const MAX_STREAM_BYTES = 64 * 1024;
 const FORCE_KILL_DELAY_MS = 1_000;
 
 export async function executeRunProfile(
-  policy: HarnessPolicy,
+  policy: RunHarnessPolicy,
   input: RunProfileInput,
   abortSignal?: AbortSignal,
 ): Promise<RunProfileResult> {
@@ -122,7 +132,7 @@ export async function executeRunProfile(
 }
 
 async function resolveRunCommand(
-  policy: HarnessPolicy,
+  policy: RunHarnessPolicy,
   input: RunProfileInput,
 ): Promise<ResolvedRunCommand> {
   const timeoutSeconds = clampTimeout(input.timeout, policy.maxBashTimeoutSeconds);
@@ -137,7 +147,6 @@ async function resolveRunCommand(
 
   switch (input.profile) {
     case "git_status":
-      assertNoMaxCount(input);
       return {
         executable: "git",
         args: [...gitBase, "status", "--porcelain=v1", "--branch", "--untracked-files=all", ...pathspec(relativePaths)],
@@ -145,7 +154,6 @@ async function resolveRunCommand(
         timeoutSeconds,
       };
     case "git_diff":
-      assertNoMaxCount(input);
       return {
         executable: "git",
         args: [...gitBase, "diff", "--no-ext-diff", "--no-textconv", ...pathspec(relativePaths)],
@@ -153,7 +161,6 @@ async function resolveRunCommand(
         timeoutSeconds,
       };
     case "git_diff_staged":
-      assertNoMaxCount(input);
       return {
         executable: "git",
         args: [...gitBase, "diff", "--cached", "--no-ext-diff", "--no-textconv", ...pathspec(relativePaths)],
@@ -161,14 +168,13 @@ async function resolveRunCommand(
         timeoutSeconds,
       };
     case "git_log": {
-      if (relativePaths.length > 0) throw new Error("paths are not supported by the git_log profile");
       const maxCount = input.maxCount ?? 20;
       if (!Number.isSafeInteger(maxCount) || maxCount < 1 || maxCount > 100) {
         throw new Error("maxCount must be an integer between 1 and 100");
       }
       return {
         executable: "git",
-        args: [...gitBase, "log", "--oneline", "--decorate=short", `--max-count=${maxCount}`],
+        args: [...gitBase, "log", "--oneline", "--decorate=short", `--max-count=${maxCount}`, ...pathspec(relativePaths)],
         environment: gitEnvironment(),
         timeoutSeconds,
       };
@@ -194,11 +200,11 @@ async function resolveRunCommand(
   }
 }
 
-async function normalizePaths(policy: HarnessPolicy, suppliedPaths: string[] | undefined): Promise<string[]> {
+async function normalizePaths(policy: RunHarnessPolicy, suppliedPaths: string[] | undefined): Promise<string[]> {
   if (!suppliedPaths) return [];
   if (suppliedPaths.length > 50) throw new Error("paths may contain at most 50 entries");
 
-  const confinedPolicy: HarnessPolicy = { ...policy, unsafeFullAccess: false };
+  const confinedPolicy: RunHarnessPolicy = { ...policy, unsafeFullAccess: false };
   const normalized: string[] = [];
   for (const suppliedPath of suppliedPaths) {
     if (typeof suppliedPath !== "string" || suppliedPath.length === 0 || suppliedPath.includes("\0")) {
@@ -215,19 +221,18 @@ function pathspec(paths: string[]): string[] {
   return paths.length > 0 ? ["--", ...paths] : [];
 }
 
-function requireWorkspaceExecution(policy: HarnessPolicy, input: RunProfileInput): void {
-  if (input.paths && input.paths.length > 0) throw new Error(`paths are not supported by the ${input.profile} profile`);
-  assertNoMaxCount(input);
+function requireWorkspaceExecution(policy: RunHarnessPolicy, input: RunProfileInput): void {
+  if (input.paths && input.paths.length > 0) {
+    throw new Error(
+      `paths cannot be used with ${input.profile}. Remove paths; this profile runs the package script for the configured workspace.`,
+    );
+  }
   if (!policy.allowWorkspaceExecution && !policy.unsafeFullAccess) {
     throw new Error(
       `${input.profile} executes code from the workspace and is disabled by default. ` +
-      "Set PI_ALLOW_WORKSPACE_EXECUTION=true only for a trusted workspace, or use explicit full-access mode.",
+      "For a trusted workspace, set PI_ALLOW_WORKSPACE_EXECUTION=true and restart VSPiLink, or authorize explicit full-access mode.",
     );
   }
-}
-
-function assertNoMaxCount(input: RunProfileInput): void {
-  if (input.maxCount !== undefined) throw new Error(`maxCount is only supported by the git_log profile`);
 }
 
 function clampTimeout(timeout: number | undefined, maximum: number): number {

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="background" x1="32" y1="20" x2="224" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18372C"/>
+      <stop offset="1" stop-color="#0B1713"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="44" y1="69" x2="213" y2="201" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B7F7D8"/>
+      <stop offset="1" stop-color="#49C58D"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#background)"/>
+  <rect x="9" y="9" width="238" height="238" rx="55" stroke="#87E6B8" stroke-opacity=".32" stroke-width="2"/>
+  <g transform="translate(16 14) scale(7)" stroke="url(#mark)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5.5 10.25h15.25"/>
+    <path d="M8.25 10.25v12.5"/>
+    <path d="M18 10.25v7.25"/>
+    <path d="M21.25 16.5h2.25a3.75 3.75 0 0 1 0 7.5h-2.25"/>
+    <path d="M23.75 20.25H21.5a3.75 3.75 0 1 0 0 7.5h2.25" transform="translate(0 -3.75)"/>
+  </g>
+  <g transform="translate(16 14) scale(7)" fill="url(#mark)">
+    <circle cx="5.5" cy="10.25" r="1.7"/>
+    <circle cx="8.25" cy="22.75" r="1.7"/>
+    <circle cx="18" cy="10.25" r="1.7"/>
+  </g>
+</svg>

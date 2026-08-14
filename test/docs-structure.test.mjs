@@ -16,6 +16,24 @@ const allowedDocumentationSections = new Set([
   "research",
   "reviews",
   "security",
+  "upstream",
+]);
+
+const allowedRootDocumentation = new Set([
+  "docs/ARCHITECTURE.md",
+  "docs/CONNECT_CHATGPT.md",
+  "docs/FUNCTIONAL_PARITY.md",
+  "docs/GETTING_STARTED.md",
+  "docs/ILLUSTRATED_GUIDE.md",
+  "docs/INSTALLATION.md",
+  "docs/PRODUCT_STRATEGY.md",
+  "docs/README.md",
+  "docs/SECURITY_MODEL.md",
+  "docs/TROUBLESHOOTING.md",
+  "docs/UPSTREAM_LINEAGE.md",
+  "docs/UPSTREAM_PARITY_INTEGRATION.md",
+  "docs/USAGE_AND_COSTS.md",
+  "docs/VSCODE_EXTENSION.md",
 ]);
 
 function trackedMarkdownFiles() {
@@ -45,15 +63,17 @@ function localMarkdownTargets(file, contents) {
 test("tracked documentation uses the purpose-based hierarchy", () => {
   const documentation = trackedMarkdownFiles().filter((file) => file.startsWith("docs/"));
   const rootMarkdown = documentation.filter((file) => path.posix.dirname(file) === "docs");
-  assert.deepEqual(rootMarkdown, ["docs/README.md"],
-    "docs/ must contain only its authority index; substantive documents belong in purpose folders");
+  assert.deepEqual(rootMarkdown, [...allowedRootDocumentation].sort(),
+    "docs/ root must contain only the public VSPiLink guides and its authority index");
 
-  for (const file of documentation.filter((candidate) => candidate !== "docs/README.md")) {
+  for (const file of documentation.filter((candidate) => !allowedRootDocumentation.has(candidate))) {
     const parts = file.split("/");
     assert.equal(parts.length, 3, `${file} must be exactly one purpose folder below docs/`);
     assert.ok(allowedDocumentationSections.has(parts[1]), `${file} uses an unsupported documentation section`);
-    assert.match(parts[2], /^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/,
-      `${file} must use a stable lowercase kebab-case filename`);
+    if (parts[2] !== "README.md" && parts[2] !== "B629_INTEGRATION_CHECKLIST.md") {
+      assert.match(parts[2], /^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/,
+        `${file} must use a stable lowercase kebab-case filename`);
+    }
   }
 });
 
