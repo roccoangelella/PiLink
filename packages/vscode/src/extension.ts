@@ -567,8 +567,13 @@ class ExtensionController {
     if (!workspace) return;
     const selected = await vscode.window.showQuickPick([
       {
-        label: "Cloudflare Named Tunnel",
-        description: "Recommended for production · stable HTTPS domain and automatic startup",
+        label: "Cloudflare fixed domain (Named Tunnel)",
+        description: "Stable SSE/OAuth URL · works with a remotely managed tunnel token",
+        value: "cloudflare-fixed" as const,
+      },
+      {
+        label: "Managed Cloudflare Named Tunnel",
+        description: "Advanced Linux deployment · managed DNS and persistent systemd services",
         value: "cloudflare-named" as const,
       },
       {
@@ -601,7 +606,7 @@ class ExtensionController {
       return;
     }
 
-    const hosting = await this.collectHostingSelection(selected.value);
+    const hosting = await this.collectHostingSelection(selected.value, workspace);
     if (!hosting) return;
     const access = await vscode.window.showQuickPick([
       {
@@ -656,8 +661,48 @@ class ExtensionController {
 
   private async collectHostingSelection(
     kind: Exclude<HostingSelection["kind"], "nip-io">,
+    workspace: string,
   ): Promise<HostingSelection | undefined> {
     if (kind === "local" || kind === "quick-tunnel") return { kind };
+    if (kind === "cloudflare-fixed") {
+      const publicUrl = await vscode.window.showInputBox({
+        title: "Fixed Cloudflare HTTPS origin",
+        prompt: "Enter the hostname routed by your remotely managed Cloudflare Tunnel. Do not include /sse.",
+        placeHolder: "https://mcp.example.com",
+        ignoreFocusOut: true,
+        validateInput: validatePublicHttpsOrigin,
+      });
+      if (!publicUrl) return undefined;
+      const tunnelId = await vscode.window.showInputBox({
+        title: "Cloudflare tunnel UUID",
+        placeHolder: "00000000-0000-4000-8000-000000000000",
+        ignoreFocusOut: true,
+        validateInput: validateTunnelId,
+      });
+      if (!tunnelId) return undefined;
+      const credential = await this.selectCloudflareCredential("tunnel-token-file");
+      if (!credential) return undefined;
+      const origin = `http://127.0.0.1:${this.snapshot(workspace).port}`;
+      const routeReady = await vscode.window.showInformationMessage(
+        `Configure the Cloudflare Published application route for ${new URL(publicUrl).hostname}.`,
+        {
+          modal: true,
+          detail: `In Cloudflare, point the hostname to ${origin}. Keep this route and tunnel so the same /sse and OAuth URLs remain valid across PiLink restarts.`,
+        },
+        "Route is configured",
+      );
+      if (routeReady !== "Route is configured") return undefined;
+      const normalized = normalizeHostingSelection({
+        kind,
+        publicUrl,
+        tunnelId,
+        cloudflareAuthKind: "tunnel-token-file",
+        credentialReference: credential.reference,
+        credentialLabel: credential.label,
+      }, true);
+      if (!normalized) throw new Error("Invalid Cloudflare fixed-domain configuration.");
+      return normalized;
+    }
     if (kind === "custom-domain") {
       const publicUrl = await vscode.window.showInputBox({
         title: "Public HTTPS origin",
@@ -908,14 +953,14 @@ class ExtensionController {
         health = await waitForHealth(snapshot.port);
       } else {
         const start = await vscode.window.showInformationMessage(
-          snapshot.hostingMode === "cloudflare-named"
-            ? "The persistent service is not running. Start PiLink and the Named Tunnel?"
+          (snapshot.hostingMode === "cloudflare-named" || snapshot.hostingMode === "cloudflare-fixed")
+            ? "The configured PiLink service is not running. Start PiLink and its Cloudflare tunnel?"
             : "The server is not running. Start it locally with workspace-only access?",
           { modal: true },
           "Start and connect",
         );
         if (start !== "Start and connect") return;
-        if (snapshot.hostingMode === "cloudflare-named") await this.startConfigured();
+        if (snapshot.hostingMode === "cloudflare-named" || snapshot.hostingMode === "cloudflare-fixed") await this.startConfigured();
         else await this.runCli(["serve"], "Local · workspace access", false, snapshot.workspace);
         health = await waitForHealth(snapshot.port);
       }
@@ -1074,6 +1119,22 @@ class ExtensionController {
       port: snapshot.port,
       runtimeMode: this.effectiveRuntimeMode(snapshot),
     });
+    if (hosting.kind === "cloudflare-fixed") {
+      if (!hosting.credentialReference || !hosting.credentialLabel) {
+        throw new Error("Cloudflare fixed-domain token-file reference is missing.");
+      }
+      const stored = await this.cloudflareCredentials.get({
+        reference: hosting.credentialReference,
+        kind: "tunnel-token-file",
+        label: hosting.credentialLabel,
+      });
+      if (!stored || stored.kind !== "tunnel-token-file") {
+        throw new Error("The selected Cloudflare tunnel token file is no longer available.");
+      }
+      let contents = fs.readFileSync(snapshot.configPath, "utf8");
+      contents = updateEnvValue(contents, "PI_CLOUDFLARE_TOKEN_FILE", stored.filePath);
+      writePrivateFile(snapshot.configPath, contents.endsWith("\n") ? contents : `${contents}\n`);
+    }
     if (accessMode === "full") {
       let contents = fs.readFileSync(snapshot.configPath, "utf8");
       contents = updateEnvValue(contents, "PI_UNSAFE_FULL_ACCESS", "true");
@@ -1149,7 +1210,7 @@ class ExtensionController {
     const health = await waitForHealth(snapshot.port, 120_000);
     if (!health.online) throw new Error(`PiLink did not become reachable: ${health.error || "timeout"}`);
 
-    const publicUrl = hosting.kind === "custom-domain"
+    const publicUrl = hosting.kind === "custom-domain" || hosting.kind === "cloudflare-fixed"
       ? hosting.publicUrl as string
       : hosting.kind === "quick-tunnel"
         ? await this.supervisor.waitForPublicUrl(120_000)

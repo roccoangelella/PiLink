@@ -25,6 +25,7 @@ test("hosting selection accepts only strict HTTPS base URLs", () => {
 
 test("hosting plans preserve public and local modes", () => {
   assert.deepEqual(hostingStartPlan({ kind: "quick-tunnel" }), { command: "start", public: true, stable: false });
+  assert.deepEqual(hostingStartPlan({ kind: "cloudflare-fixed", publicUrl: "https://mcp.test", tunnelId: "11111111-2222-4333-8444-555555555555" }), { command: "start", public: true, stable: true });
   assert.deepEqual(hostingStartPlan({ kind: "custom-domain", publicUrl: "https://mcp.test" }), { command: "serve", public: true, stable: true });
   assert.deepEqual(hostingStartPlan({ kind: "local" }), { command: "serve", public: false, stable: true });
   assert.deepEqual(hostingStartPlan({ kind: "nip-io" }), { command: "start", public: true, stable: true });
@@ -36,6 +37,28 @@ test("managed MCP status normalizes an exact SSE endpoint to its HTTPS origin", 
   assert.equal(normalizeMcpEndpointOrigin("https://mcp.example.test/health"), undefined);
   assert.equal(normalizeMcpEndpointOrigin("http://mcp.example.test/sse"), undefined);
   assert.equal(normalizeMcpEndpointOrigin("https://user@mcp.example.test/sse"), undefined);
+});
+
+test("fixed Cloudflare tunnel selection keeps the stable URL and token reference separate", () => {
+  assert.deepEqual(normalizeHostingSelection({
+    kind: "cloudflare-fixed",
+    publicUrl: "https://MCP.Example.Test/",
+    tunnelId: "11111111-2222-4333-8444-555555555555",
+    credentialReference: "11111111-1111-4111-8111-111111111111",
+    credentialLabel: "tunnel-token",
+  }, true), {
+    kind: "cloudflare-fixed",
+    publicUrl: "https://mcp.example.test",
+    tunnelId: "11111111-2222-4333-8444-555555555555",
+    cloudflareAuthKind: "tunnel-token-file",
+    credentialReference: "11111111-1111-4111-8111-111111111111",
+    credentialLabel: "tunnel-token",
+  });
+  assert.equal(normalizeHostingSelection({
+    kind: "cloudflare-fixed",
+    publicUrl: "https://mcp.example.test",
+    tunnelId: "not-a-uuid",
+  }), undefined);
 });
 
 test("named tunnel fields are normalized without accepting credential paths from the webview", () => {

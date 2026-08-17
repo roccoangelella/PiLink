@@ -17,7 +17,7 @@ extension for graphical setup, monitoring, and local Pi chat.
 - Workspace-scoped read, search, edit, write, safe Git inspection, and optional execution.
 - OAuth with PKCE, refresh, revocation, client controls, and bounded MCP sessions.
 - Single-agent and collaborative runtime catalogs with durable coordination services.
-- Local-only, existing-domain, Cloudflare, and legacy direct HTTPS hosting.
+- Quick Tunnel, fixed Cloudflare domain, existing-domain, local-only, and legacy direct HTTPS hosting.
 - Explicit opt-ins for repository execution and unrestricted machine access.
 - Optional Textual monitor, VSPiLink extension, and local Codex plugin.
 
@@ -52,6 +52,8 @@ pilink start --mode single
 pilink start --mode collaboration
 pilink start --mode vscode
 ```
+
+The CLI hosting wizard offers Quick Tunnel, direct `nip.io`, or a Cloudflare fixed domain (Named Tunnel). The fixed-domain choice keeps the same `/sse` URL across restarts.
 
 | Entry | Purpose |
 | --- | --- |

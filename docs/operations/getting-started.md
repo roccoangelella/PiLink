@@ -10,7 +10,7 @@ You need:
 - a ChatGPT plan/UI that supports remote MCP servers and custom OAuth settings
 - this repository cloned locally
 
-On Linux, PiLink automatically downloads the official hosting binary (`cloudflared` for Quick Tunnel or `caddy` for `nip.io`) on the first `start`; no separate Cloudflare account or `sudo` is required. On macOS and Windows, install `cloudflared` or `caddy` yourself first.
+PiLink automatically downloads its pinned `cloudflared` binary on first use on Linux and Windows x64. Direct `nip.io` hosting still uses Caddy and has separate platform requirements. Quick Tunnel needs no Cloudflare account.
 
 ## 2. Install and build
 
@@ -55,6 +55,8 @@ The first `pilink start` asks which mode to save in the private configuration:
 
 1. **Cloudflare Quick Tunnel** is the default. It needs no account, router configuration, or extra installation. Its `trycloudflare.com` URL changes each restart, and ChatGPT treats each URL as a new connector. After every Quick Tunnel restart, create a new connector and use `pilink start --setup` to register an OAuth client for that connector's callback URL.
 2. **Direct `nip.io` HTTPS hosting** uses a hostname containing your public IPv4 address. It stays the same while that IP address remains unchanged, allowing one ChatGPT connector to be reused. PiLink downloads Caddy automatically on Linux and runs it locally to obtain and renew a trusted HTTPS certificate.
+
+3. **Cloudflare fixed domain (Named Tunnel)** uses a hostname in a Cloudflare zone you own, such as `mcp.example.com`. Create a remotely managed tunnel in Cloudflare, add a Published application route from that hostname to the PiLink loopback origin printed by the wizard (normally `http://127.0.0.1:3200`), save the tunnel token in a private local file, and note the tunnel UUID. Choose option 3 and enter those values. PiLink runs `cloudflared` with `--token-file`, saves the stable `SERVER_URL`, and reuses the same `/sse` and OAuth URLs on ordinary restarts. No inbound router forwarding is required.
 
 After explicit confirmation, PiLink first attempts UPnP and NAT-PMP router mappings for public TCP `80 → 8080` and `443 → 8443`. The mappings are renewed while PiLink runs and released on shutdown. Caddy uses them to obtain and renew a trusted HTTPS certificate. This removes the normal router-configuration step on compatible home networks.
 

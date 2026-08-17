@@ -1,4 +1,4 @@
-export const HOSTING_KINDS = ["quick-tunnel", "cloudflare-named", "custom-domain", "local", "nip-io"] as const;
+export const HOSTING_KINDS = ["quick-tunnel", "cloudflare-fixed", "cloudflare-named", "custom-domain", "local", "nip-io"] as const;
 export const CLOUDFLARE_AUTH_KINDS = ["origin-certificate", "tunnel-token-file"] as const;
 
 export type HostingKind = (typeof HOSTING_KINDS)[number];
@@ -28,6 +28,25 @@ export function normalizeHostingSelection(value: unknown, allowCredentialReferen
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.kind !== "string" || !(HOSTING_KINDS as readonly string[]).includes(candidate.kind)) return undefined;
   const kind = candidate.kind as HostingKind;
+  if (kind === "cloudflare-fixed") {
+    if (typeof candidate.publicUrl !== "string") return undefined;
+    const publicUrl = normalizePublicBaseUrl(candidate.publicUrl);
+    const tunnelId = normalizeTunnelId(candidate.tunnelId);
+    if (!publicUrl || !tunnelId) return undefined;
+    const credentialReference = allowCredentialReference && typeof candidate.credentialReference === "string" &&
+      /^[0-9a-f-]{36}$/i.test(candidate.credentialReference) ? candidate.credentialReference : undefined;
+    const credentialLabel = allowCredentialReference && typeof candidate.credentialLabel === "string"
+      ? candidate.credentialLabel.replace(/[\r\n\0]/g, "").slice(0, 160)
+      : undefined;
+    return {
+      kind,
+      publicUrl,
+      tunnelId,
+      cloudflareAuthKind: "tunnel-token-file",
+      ...(credentialReference ? { credentialReference } : {}),
+      ...(credentialLabel ? { credentialLabel } : {}),
+    };
+  }
   if (kind === "cloudflare-named") {
     const tunnelName = normalizeTunnelName(candidate.tunnelName);
     const zoneName = typeof candidate.zoneName === "string" ? normalizeHostname(candidate.zoneName) : undefined;
@@ -115,6 +134,8 @@ export function hostingStartPlan(selection: HostingSelection): HostingStartPlan 
   switch (selection.kind) {
     case "quick-tunnel":
       return { command: "start", public: true, stable: false };
+    case "cloudflare-fixed":
+      return { command: "start", public: true, stable: true };
     case "cloudflare-named":
       return { command: "serve", public: true, stable: true };
     case "nip-io":
@@ -129,7 +150,8 @@ export function hostingStartPlan(selection: HostingSelection): HostingStartPlan 
 export function hostingLabel(kind: HostingKind): string {
   switch (kind) {
     case "quick-tunnel": return "Cloudflare Quick Tunnel";
-    case "cloudflare-named": return "Cloudflare Named Tunnel";
+    case "cloudflare-fixed": return "Cloudflare fixed domain (Named Tunnel)";
+    case "cloudflare-named": return "Managed Cloudflare Named Tunnel";
     case "custom-domain": return "Stable HTTPS domain";
     case "local": return "Local VS Code only";
     case "nip-io": return "HTTPS nip.io legacy";

@@ -277,3 +277,27 @@ test("readConfigSnapshot applies defaults and never exposes client secret hashes
   const withoutFolder = readConfigSnapshot(missingConfigPath, "");
   assert.equal(withoutFolder.workspace, "");
 });
+
+
+test("fixed Cloudflare hosting persists a stable server URL without storing a token value", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "vspilink-fixed-domain-"));
+  try {
+    const configPath = path.join(root, ".env");
+    provisionWizardConfiguration({
+      configPath,
+      workspace: root,
+      hosting: {
+        kind: "cloudflare-fixed",
+        publicUrl: "https://mcp.example.test",
+        tunnelId: "11111111-2222-4333-8444-555555555555",
+      },
+    });
+    const contents = fs.readFileSync(configPath, "utf8");
+    assert.match(contents, /^PI_HOSTING_MODE=cloudflare-fixed$/m);
+    assert.match(contents, /^SERVER_URL=https:\/\/mcp\.example\.test$/m);
+    assert.match(contents, /^PI_CLOUDFLARE_TUNNEL_ID=11111111-2222-4333-8444-555555555555$/m);
+    assert.doesNotMatch(contents, /PI_CLOUDFLARE_TOKEN_FILE=/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

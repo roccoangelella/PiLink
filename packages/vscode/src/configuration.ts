@@ -176,6 +176,16 @@ export function provisionWizardConfiguration(options: {
   contents = updateEnvValue(contents, "TOKEN_EXPIRY", "3600");
   contents = updateEnvValue(contents, "PI_REFRESH_TOKEN_EXPIRY", "2592000");
   switch (options.hosting.kind) {
+    case "cloudflare-fixed":
+      if (!options.hosting.publicUrl || !options.hosting.tunnelId) {
+        throw new Error("Configure the Cloudflare fixed hostname and tunnel UUID.");
+      }
+      contents = updateEnvValue(contents, "PI_HOSTING_MODE", "cloudflare-fixed");
+      contents = updateEnvValue(contents, "TRUST_PROXY", "true");
+      contents = updateEnvValue(contents, "SERVER_URL", options.hosting.publicUrl);
+      contents = updateEnvValue(contents, "PI_CLOUDFLARE_TUNNEL_ID", options.hosting.tunnelId);
+      contents = removeEnvValue(contents, "PI_LANDING_HOSTNAME");
+      break;
     case "quick-tunnel":
       contents = updateEnvValue(contents, "PI_HOSTING_MODE", "quick-tunnel");
       contents = updateEnvValue(contents, "TRUST_PROXY", "true");
@@ -287,6 +297,8 @@ const RUNTIME_ENVIRONMENT_KEYS = [
   "PI_CLOUDFLARED_PATH",
   "PI_CLOUDFLARED_URL",
   "PI_CLOUDFLARED_SHA256",
+  "PI_CLOUDFLARE_TUNNEL_ID",
+  "PI_CLOUDFLARE_TOKEN_FILE",
   "PI_CADDY_PATH",
   "PI_CADDY_URL",
   "PI_CADDY_SHA256",
