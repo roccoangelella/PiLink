@@ -30,7 +30,7 @@ assertRequiredNodeVersion();
 const [, , command = "start", ...args] = process.argv;
 let configPath = process.env.PILINK_CONFIG || defaultConfigPath();
 type LaunchMode = "single" | "collaboration" | "vscode";
-type HostingMode = "quick-tunnel" | "nip-io" | "cloudflare-named";
+type HostingMode = "quick-tunnel" | "nip-io" | "cloudflare-fixed";
 interface LaunchOptions {
   mode?: LaunchMode;
   unsafe: boolean;
@@ -656,7 +656,7 @@ async function start(options: LaunchOptions): Promise<void> {
     await startNipIo(options.unsafe, options.setup);
     return;
   }
-  if (hostingMode === "cloudflare-named") {
+  if (hostingMode === "cloudflare-fixed") {
     await startCloudflareNamed(options.unsafe, options.setup);
     return;
   }
@@ -774,11 +774,11 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
 async function selectHostingMode(forceSetup: boolean): Promise<HostingMode> {
   loadEnvironment();
   const configuredMode = process.env.PI_HOSTING_MODE?.trim();
-  if (!forceSetup && (configuredMode === "quick-tunnel" || configuredMode === "nip-io" || configuredMode === "cloudflare-named")) {
+  if (!forceSetup && (configuredMode === "quick-tunnel" || configuredMode === "nip-io" || configuredMode === "cloudflare-fixed")) {
     return configuredMode;
   }
-  if (configuredMode && configuredMode !== "quick-tunnel" && configuredMode !== "nip-io" && configuredMode !== "cloudflare-named") {
-    throw new Error("PI_HOSTING_MODE must be 'quick-tunnel', 'nip-io', or 'cloudflare-named'");
+  if (configuredMode && configuredMode !== "quick-tunnel" && configuredMode !== "nip-io" && configuredMode !== "cloudflare-fixed") {
+    throw new Error("PI_HOSTING_MODE must be 'quick-tunnel', 'nip-io', or 'cloudflare-fixed'");
   }
 
   if (forceSetup) console.error("\n=== Reconfigure public hosting ===");
@@ -804,7 +804,7 @@ async function selectHostingMode(forceSetup: boolean): Promise<HostingMode> {
   }
   if (choice === "3") {
     await configureCloudflareNamedHosting();
-    return "cloudflare-named";
+    return "cloudflare-fixed";
   }
   throw new Error("Hosting setup cancelled: choose 1, 2, or 3.");
 }
@@ -826,14 +826,14 @@ async function configureCloudflareNamedHosting(): Promise<void> {
     if (confirmation !== "FIXED") throw new Error("Cloudflare fixed-domain setup cancelled.");
     const serverUrl = `https://${hostname}`;
     saveConfig({
-      PI_HOSTING_MODE: "cloudflare-named",
+      PI_HOSTING_MODE: "cloudflare-fixed",
       PI_CLOUDFLARE_TUNNEL_ID: tunnelId,
       PI_CLOUDFLARE_TOKEN_FILE: tokenFile,
       SERVER_URL: serverUrl,
       TRUST_PROXY: "true",
       PI_OAUTH_PUBLIC_CHATGPT_DCR: "true",
     });
-    process.env.PI_HOSTING_MODE = "cloudflare-named";
+    process.env.PI_HOSTING_MODE = "cloudflare-fixed";
     process.env.PI_CLOUDFLARE_TUNNEL_ID = tunnelId;
     process.env.PI_CLOUDFLARE_TOKEN_FILE = tokenFile;
     process.env.SERVER_URL = serverUrl;

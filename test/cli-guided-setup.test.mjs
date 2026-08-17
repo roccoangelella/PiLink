@@ -231,7 +231,7 @@ for (const mode of ["single", "collaboration"]) {
     assert.match(output, new RegExp(`Use this MCP server URL in ChatGPT: https://${hostname.replaceAll(".", "\\.")}\\/sse`));
     assert.match(output, /existing ChatGPT connector and OAuth client can be reused/);
     const config = await fs.readFile(configPath, "utf8");
-    assert.match(config, /^PI_HOSTING_MODE=cloudflare-named$/m);
+    assert.match(config, /^PI_HOSTING_MODE=cloudflare-fixed$/m);
     assert.match(config, new RegExp(`^PI_RUNTIME_MODE=${mode}$`, "m"));
     assert.match(config, new RegExp(`^SERVER_URL=https://${hostname.replaceAll(".", "\\.")}$`, "m"));
     assert.match(config, new RegExp(`^PI_CLOUDFLARE_TUNNEL_ID=${tunnelId}$`, "m"));
