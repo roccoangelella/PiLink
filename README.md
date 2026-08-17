@@ -53,7 +53,7 @@ pilink start --mode collaboration
 pilink start --mode vscode
 ```
 
-The CLI hosting wizard offers Quick Tunnel, direct `nip.io`, or a Cloudflare fixed domain (Named Tunnel). The fixed-domain choice keeps the same `/sse` URL across restarts.
+The CLI hosting wizard offers Quick Tunnel, direct `nip.io`, or a Cloudflare fixed domain (Named Tunnel). For a fixed domain, the user supplies a hostname in a Cloudflare-managed DNS zone plus one scoped API token (Cloudflare Tunnel Edit, DNS Edit, and Zone Read); PiLink creates the tunnel, ingress, DNS record, and private tunnel-token file automatically, then discards the account token. The `/sse` URL stays the same across restarts.
 
 | Entry | Purpose |
 | --- | --- |

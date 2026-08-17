@@ -96,3 +96,23 @@ test("ChatGPT MCP connection is primary and opens the real VS Code integrated br
   assert.match(monitor, /isPathInside\(snapshot\.workspace, snapshot\.dataDir\)/);
   assert.doesNotMatch(monitor, /configureAgents|setupChat/);
 });
+
+
+test("fixed-domain wizard provisions Cloudflare from one protected API token", () => {
+  const collect = methodSource("collectHostingSelection");
+  const fixedStart = collect.indexOf('if (kind === "cloudflare-fixed")');
+  const fixedEnd = collect.indexOf('if (kind === "custom-domain")', fixedStart);
+  assert.ok(fixedStart >= 0 && fixedEnd > fixedStart);
+  const fixed = collect.slice(fixedStart, fixedEnd);
+  assert.match(fixed, /Cloudflare API token/);
+  assert.match(fixed, /password: true/);
+  assert.match(fixed, /provisionFixedDomainViaCli/);
+  assert.doesNotMatch(fixed, /Cloudflare tunnel UUID|selectCloudflareCredential|Route is configured/);
+
+  const provision = methodSource("provisionFixedDomainViaCli");
+  assert.match(provision, /runJsonCli/);
+  assert.match(provision, /"fixed-domain-provision"/);
+  assert.match(provision, /environment: \{ CLOUDFLARE_API_TOKEN: apiToken \}/);
+  assert.match(provision, /cloudflareCredentials\.store\("tunnel-token-file", tokenFile\)/);
+  assert.doesNotMatch(provision, /args: \[[^\]]*apiToken/s);
+});

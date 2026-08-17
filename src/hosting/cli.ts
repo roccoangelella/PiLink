@@ -1,6 +1,7 @@
 import type { Writable } from "node:stream";
 
 import { CloudflareNamedTunnelHosting, HostingProvisionBlockedError } from "./cloudflare.js";
+import { provisionFixedDomainTunnel } from "./fixed-domain.js";
 import { RedactedCommandError } from "./command.js";
 import {
   SystemdUnitInstallBlockedError,
@@ -48,6 +49,9 @@ export interface HostingCliIo {
 export async function runHostingCli(argv: string[], io: HostingCliIo = {}): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
+  if (argv[0] === "fixed-domain-provision") {
+    return runFixedDomainProvisionCli(argv.slice(1), stdout, stderr);
+  }
   let parsed: ParsedHostingCli | undefined;
   try {
     parsed = parseHostingCli(argv);
@@ -73,6 +77,60 @@ export async function runHostingCli(argv: string[], io: HostingCliIo = {}): Prom
     });
     return 1;
   }
+}
+
+async function runFixedDomainProvisionCli(
+  argv: string[],
+  stdout: Pick<Writable, "write">,
+  stderr: Pick<Writable, "write">,
+): Promise<number> {
+  try {
+    const values = parseFixedDomainProvisionOptions(argv);
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+    if (!apiToken) {
+      throw new HostingCliInputError(
+        "HOSTING_CLOUDFLARE_API_TOKEN_REQUIRED",
+        "CLOUDFLARE_API_TOKEN is required in the process environment for fixed-domain provisioning",
+      );
+    }
+    const result = await provisionFixedDomainTunnel({
+      hostname: required(values, "--hostname"),
+      origin: required(values, "--origin"),
+      tokenDirectory: required(values, "--token-dir"),
+      apiToken,
+    });
+    writeJson(stdout, { ok: true, command: "fixed-domain-provision", dryRun: false, result });
+    return 0;
+  } catch (error) {
+    writeJson(stderr, {
+      ok: false,
+      command: "fixed-domain-provision",
+      dryRun: false,
+      error: normalizeCliError(error, ["fixed-domain-provision", ...argv]),
+    });
+    return 1;
+  }
+}
+
+function parseFixedDomainProvisionOptions(args: string[]): Map<string, string> {
+  const allowed = new Set(["--hostname", "--origin", "--token-dir"]);
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (["--api-token", "--token", "--secret"].some((name) => option === name || option.startsWith(`${name}=`))) {
+      throw new HostingCliInputError("HOSTING_SECRET_IN_ARGV", "Cloudflare API tokens are forbidden in argv; use CLOUDFLARE_API_TOKEN in the process environment");
+    }
+    if (!allowed.has(option)) throw new HostingCliInputError("HOSTING_OPTION_UNKNOWN", "unknown or malformed fixed-domain provisioning option");
+    if (values.has(option)) throw new HostingCliInputError("HOSTING_OPTION_DUPLICATE", `${option} may be specified only once`);
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--") || /[\0\r\n]/.test(value)) {
+      throw new HostingCliInputError("HOSTING_OPTION_VALUE_MISSING", `${option} requires one value`);
+    }
+    values.set(option, value);
+    index += 1;
+  }
+  for (const name of allowed) required(values, name);
+  return values;
 }
 
 async function executeCommand(

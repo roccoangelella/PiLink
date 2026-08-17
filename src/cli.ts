@@ -6,7 +6,7 @@ import https from "node:https";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { pipeline } from "node:stream/promises";
-import { Readable, Transform } from "node:stream";
+import { Readable, Transform, Writable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, loadRuntimeConfig, defaultConfigPath, defaultCoordinationDataDir, type RuntimeConfig } from "./config.js";
@@ -23,7 +23,7 @@ import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublic
 import { assertRequiredNodeVersion } from "./runtime.js";
 import { runHostingCli } from "./hosting/cli.js";
 import { resolveCloudflaredRelease } from "./hosting/cloudflared-release.js";
-import { fixedDomainCloudflaredArgs, normalizeFixedDomainHostname, normalizeFixedDomainTunnelId, resolveFixedDomainTokenFile } from "./hosting/fixed-domain.js";
+import { fixedDomainCloudflaredArgs, normalizeFixedDomainHostname, normalizeFixedDomainTunnelId, provisionFixedDomainTunnel, resolveFixedDomainTokenFile } from "./hosting/fixed-domain.js";
 import { runAgentAuthCli } from "./agents/auth-cli.js";
 
 assertRequiredNodeVersion();
@@ -811,36 +811,72 @@ async function selectHostingMode(forceSetup: boolean): Promise<HostingMode> {
 async function configureCloudflareNamedHosting(): Promise<void> {
   const port = readPort();
   console.error("\n=== Cloudflare fixed-domain setup ===");
-  console.error("Use a remotely managed Cloudflare Named Tunnel so PiLink needs only that tunnel's token, not an account-wide Cloudflare credential.");
-  console.error("In Cloudflare, create/select the tunnel and add a Published application route from your fixed hostname to:");
-  console.error(`  http://127.0.0.1:${port}`);
-  console.error("Save the tunnel token in a private local file. On Linux/macOS, run: chmod 600 /path/to/tunnel-token");
-  console.error("PiLink stores only the token-file path and tunnel UUID; the token value is never written to PiLink configuration or command arguments.");
+  console.error("PiLink can create the remotely managed tunnel, ingress rule, DNS record, and scoped tunnel token automatically.");
+  console.error("Your domain must already use Cloudflare DNS. Create a scoped Cloudflare API token with:");
+  console.error("  Account → Cloudflare Tunnel → Edit");
+  console.error("  Zone → DNS → Edit");
+  console.error("  Zone → Zone → Read");
+  console.error("Scope the token to the account and DNS zone you want PiLink to use. PiLink uses this token only for provisioning and never writes it to configuration.");
   const readline = createInterface({ input: process.stdin, output: process.stderr });
+  let hostname: string;
   try {
-    const hostname = normalizeFixedDomainHostname(await readline.question("Fixed Cloudflare hostname (for example mcp.example.com): "));
-    const tunnelId = normalizeFixedDomainTunnelId(await readline.question("Cloudflare tunnel UUID: "));
-    const tokenFile = resolveFixedDomainTokenFile(await readline.question("Path to private tunnel token file: "));
-    const confirmation = (await readline.question(`Type FIXED after Cloudflare routes https://${hostname} to http://127.0.0.1:${port}: `)).trim();
-    if (confirmation !== "FIXED") throw new Error("Cloudflare fixed-domain setup cancelled.");
-    const serverUrl = `https://${hostname}`;
-    saveConfig({
-      PI_HOSTING_MODE: "cloudflare-fixed",
-      PI_CLOUDFLARE_TUNNEL_ID: tunnelId,
-      PI_CLOUDFLARE_TOKEN_FILE: tokenFile,
-      SERVER_URL: serverUrl,
-      TRUST_PROXY: "true",
-      PI_OAUTH_PUBLIC_CHATGPT_DCR: "true",
-    });
-    process.env.PI_HOSTING_MODE = "cloudflare-fixed";
-    process.env.PI_CLOUDFLARE_TUNNEL_ID = tunnelId;
-    process.env.PI_CLOUDFLARE_TOKEN_FILE = tokenFile;
-    process.env.SERVER_URL = serverUrl;
-    process.env.TRUST_PROXY = "true";
-    process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
-    console.error(`PiLink will reuse the fixed MCP URL: ${serverUrl}/sse`);
+    hostname = normalizeFixedDomainHostname(await readline.question("Fixed Cloudflare hostname (for example mcp.example.com): "));
   } finally {
     readline.close();
+  }
+  const configuredToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  const apiToken = configuredToken || await questionSecret("Cloudflare API token (input hidden): ");
+  if (configuredToken) console.error("Using CLOUDFLARE_API_TOKEN from the current process environment; it will not be saved.");
+  const tokenDirectory = path.join(path.dirname(configPath), "cloudflare");
+  console.error(`Provisioning ${hostname} through Cloudflare…`);
+  const provisioned = await provisionFixedDomainTunnel({
+    hostname,
+    origin: `http://127.0.0.1:${port}`,
+    apiToken,
+    tokenDirectory,
+  });
+  if (configuredToken) delete process.env.CLOUDFLARE_API_TOKEN;
+  const serverUrl = `https://${hostname}`;
+  saveConfig({
+    PI_HOSTING_MODE: "cloudflare-fixed",
+    PI_CLOUDFLARE_TUNNEL_ID: provisioned.tunnelId,
+    PI_CLOUDFLARE_TOKEN_FILE: provisioned.tokenFile,
+    SERVER_URL: serverUrl,
+    TRUST_PROXY: "true",
+    PI_OAUTH_PUBLIC_CHATGPT_DCR: "true",
+  });
+  process.env.PI_HOSTING_MODE = "cloudflare-fixed";
+  process.env.PI_CLOUDFLARE_TUNNEL_ID = provisioned.tunnelId;
+  process.env.PI_CLOUDFLARE_TOKEN_FILE = provisioned.tokenFile;
+  process.env.SERVER_URL = serverUrl;
+  process.env.TRUST_PROXY = "true";
+  process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
+  console.error(`Cloudflare tunnel ready: ${provisioned.tunnelName}`);
+  console.error(`PiLink saved only the scoped tunnel run token at: ${provisioned.tokenFile}`);
+  console.error("The Cloudflare account API token was not saved.");
+  console.error(`PiLink will reuse the fixed MCP URL: ${serverUrl}/sse`);
+}
+
+async function questionSecret(prompt: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
+    throw new Error("Set CLOUDFLARE_API_TOKEN in the process environment when fixed-domain provisioning is non-interactive.");
+  }
+  let muted = false;
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      if (!muted) process.stderr.write(chunk);
+      callback();
+    },
+  });
+  const readline = createInterface({ input: process.stdin, output, terminal: true });
+  process.stderr.write(prompt);
+  muted = true;
+  try {
+    return (await readline.question("")).trim();
+  } finally {
+    muted = false;
+    readline.close();
+    process.stderr.write("\n");
   }
 }
 

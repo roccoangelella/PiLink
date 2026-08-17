@@ -192,8 +192,13 @@ for (const mode of ["single", "collaboration"]) {
       `PORT=${port}`,
       `JWT_SECRET=${"a".repeat(32)}`,
       `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+      "PI_HOSTING_MODE=cloudflare-fixed",
+      `SERVER_URL=https://${hostname}`,
+      `PI_CLOUDFLARE_TUNNEL_ID=${tunnelId}`,
+      `PI_CLOUDFLARE_TOKEN_FILE=${tokenFile}`,
+      "TRUST_PROXY=true",
     ].join("\n"));
-    await fs.writeFile(tokenFile, "test-tunnel-token\n", { mode: 0o600 });
+    await fs.writeFile(tokenFile, "test-tunnel-token-value\n", { mode: 0o600 });
     if (process.platform !== "win32") await fs.chmod(tokenFile, 0o600);
     await fs.writeFile(
       fakeCloudflared,
@@ -213,21 +218,11 @@ for (const mode of ["single", "collaboration"]) {
     cliProcess.stdout.on("data", (chunk) => { output += chunk; });
     cliProcess.stderr.on("data", (chunk) => { output += chunk; });
 
-    await waitFor(() => output.includes("Select hosting [1/2/3]:"));
-    assert.match(output, /Cloudflare fixed domain \(Named Tunnel\)/);
-    cliProcess.stdin.write("3\n");
-    await waitFor(() => output.includes("Fixed Cloudflare hostname"));
-    cliProcess.stdin.write(`${hostname}\n`);
-    await waitFor(() => output.includes("Cloudflare tunnel UUID"));
-    cliProcess.stdin.write(`${tunnelId}\n`);
-    await waitFor(() => output.includes("Path to private tunnel token file"));
-    cliProcess.stdin.write(`${tokenFile}\n`);
-    await waitFor(() => output.includes("Type FIXED"));
-    cliProcess.stdin.write("FIXED\n");
     await waitFor(() => output.includes("Paste callback URL here:"));
     cliProcess.stdin.write("\n");
     await waitFor(() => output.includes("ChatGPT client registration skipped"));
 
+    assert.doesNotMatch(output, /Select hosting \[1\/2\/3\]:/);
     assert.match(output, new RegExp(`Use this MCP server URL in ChatGPT: https://${hostname.replaceAll(".", "\\.")}\\/sse`));
     assert.match(output, /existing ChatGPT connector and OAuth client can be reused/);
     const config = await fs.readFile(configPath, "utf8");
@@ -238,7 +233,7 @@ for (const mode of ["single", "collaboration"]) {
     assert.match(config, new RegExp(`^PI_CLOUDFLARE_TOKEN_FILE=${escapeRegExp(tokenFile)}$`, "m"));
     const args = await fs.readFile(argsLog, "utf8");
     assert.match(args, new RegExp(`run --token-file ${escapeRegExp(tokenFile)} ${tunnelId}`));
-    assert.doesNotMatch(args, /test-tunnel-token/);
+    assert.doesNotMatch(args, /test-tunnel-token-value/);
   });
 }
 

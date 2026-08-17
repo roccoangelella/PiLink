@@ -568,7 +568,7 @@ class ExtensionController {
     const selected = await vscode.window.showQuickPick([
       {
         label: "Cloudflare fixed domain (Named Tunnel)",
-        description: "Stable SSE/OAuth URL · works with a remotely managed tunnel token",
+        description: "Stable SSE/OAuth URL · PiLink provisions the tunnel and DNS from a scoped API token",
         value: "cloudflare-fixed" as const,
       },
       {
@@ -606,8 +606,6 @@ class ExtensionController {
       return;
     }
 
-    const hosting = await this.collectHostingSelection(selected.value, workspace);
-    if (!hosting) return;
     const access = await vscode.window.showQuickPick([
       {
         label: "Project folder only",
@@ -625,6 +623,8 @@ class ExtensionController {
     });
     if (!access) return;
     if (access.value === "full" && !await this.confirmWizardFullAccess()) return;
+    const hosting = await this.collectHostingSelection(selected.value, workspace);
+    if (!hosting) return;
 
     const runtime = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
@@ -659,6 +659,47 @@ class ExtensionController {
     if (action === "Copy endpoint") await vscode.env.clipboard.writeText(runtime.mcpUrl);
   }
 
+  private async provisionFixedDomainViaCli(
+    workspace: string,
+    publicUrl: string,
+    apiToken: string,
+  ): Promise<{ tunnelId: string; credential: CloudflareCredentialSummary }> {
+    const snapshot = this.snapshot(workspace);
+    const cliPath = resolveCliPath(this.context.extensionPath);
+    if (!fs.existsSync(cliPath)) throw new Error(`PiLink runtime not found at ${cliPath}. Run npm run build.`);
+    const sidecarNode = this.sidecarNodeRuntime();
+    if (!sidecarNode.ok) throw new Error(sidecarNode.error);
+    const origin = `http://127.0.0.1:${snapshot.port}`;
+    const tokenDirectory = path.join(path.dirname(snapshot.configPath), "cloudflare");
+    const envelope = await runJsonCli({
+      nodeExecutable: sidecarNode.executable,
+      cliPath,
+      args: [
+        "hosting",
+        "fixed-domain-provision",
+        "--hostname",
+        new URL(publicUrl).hostname,
+        "--origin",
+        origin,
+        "--token-dir",
+        tokenDirectory,
+      ],
+      cwd: workspace,
+      configPath: snapshot.configPath,
+      environment: { CLOUDFLARE_API_TOKEN: apiToken },
+      timeoutMs: 120_000,
+    });
+    const result = jsonObject(envelope.result);
+    const tunnelId = typeof result?.tunnelId === "string" ? result.tunnelId : "";
+    if (validateTunnelId(tunnelId)) throw new Error("Cloudflare provisioning returned an invalid tunnel UUID.");
+    const tokenFile = typeof result?.tokenFile === "string" ? result.tokenFile : "";
+    if (!tokenFile || !path.isAbsolute(tokenFile) || /[\r\n\0]/u.test(tokenFile)) {
+      throw new Error("Cloudflare provisioning returned an invalid tunnel-token file path.");
+    }
+    const credential = await this.cloudflareCredentials.store("tunnel-token-file", tokenFile);
+    return { tunnelId, credential };
+  }
+
   private async collectHostingSelection(
     kind: Exclude<HostingSelection["kind"], "nip-io">,
     workspace: string,
@@ -667,38 +708,35 @@ class ExtensionController {
     if (kind === "cloudflare-fixed") {
       const publicUrl = await vscode.window.showInputBox({
         title: "Fixed Cloudflare HTTPS origin",
-        prompt: "Enter the hostname routed by your remotely managed Cloudflare Tunnel. Do not include /sse.",
+        prompt: "Enter a hostname in a DNS zone already managed by your Cloudflare account. Do not include /sse.",
         placeHolder: "https://mcp.example.com",
         ignoreFocusOut: true,
         validateInput: validatePublicHttpsOrigin,
       });
       if (!publicUrl) return undefined;
-      const tunnelId = await vscode.window.showInputBox({
-        title: "Cloudflare tunnel UUID",
-        placeHolder: "00000000-0000-4000-8000-000000000000",
+      const apiToken = await vscode.window.showInputBox({
+        title: "Cloudflare API token",
+        prompt: "Use a scoped token with Account · Cloudflare Tunnel · Edit, Zone · DNS · Edit, and Zone · Zone · Read. PiLink uses it once for provisioning and does not save it.",
+        placeHolder: "Paste the scoped Cloudflare API token",
+        password: true,
         ignoreFocusOut: true,
-        validateInput: validateTunnelId,
+        validateInput: (value) => value.trim().length >= 20 && value.trim().length <= 512 && !/\\s/u.test(value.trim())
+          ? undefined
+          : "Enter the scoped Cloudflare API token.",
       });
-      if (!tunnelId) return undefined;
-      const credential = await this.selectCloudflareCredential("tunnel-token-file");
-      if (!credential) return undefined;
-      const origin = `http://127.0.0.1:${this.snapshot(workspace).port}`;
-      const routeReady = await vscode.window.showInformationMessage(
-        `Configure the Cloudflare Published application route for ${new URL(publicUrl).hostname}.`,
-        {
-          modal: true,
-          detail: `In Cloudflare, point the hostname to ${origin}. Keep this route and tunnel so the same /sse and OAuth URLs remain valid across PiLink restarts.`,
-        },
-        "Route is configured",
-      );
-      if (routeReady !== "Route is configured") return undefined;
+      if (!apiToken) return undefined;
+      const provisioned = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Provision Cloudflare fixed domain",
+        cancellable: false,
+      }, () => this.provisionFixedDomainViaCli(workspace, publicUrl, apiToken));
       const normalized = normalizeHostingSelection({
         kind,
         publicUrl,
-        tunnelId,
+        tunnelId: provisioned.tunnelId,
         cloudflareAuthKind: "tunnel-token-file",
-        credentialReference: credential.reference,
-        credentialLabel: credential.label,
+        credentialReference: provisioned.credential.reference,
+        credentialLabel: provisioned.credential.label,
       }, true);
       if (!normalized) throw new Error("Invalid Cloudflare fixed-domain configuration.");
       return normalized;
