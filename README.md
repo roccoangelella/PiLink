@@ -64,6 +64,53 @@ pilink start --mode collaboration
 pilink start --mode vscode
 ```
 
+### Full machine access (unsafe)
+
+If you want PiLink to act as a general local coding agent with filesystem and
+shell access outside the selected workspace, start it explicitly in Full access
+mode:
+
+```bash
+pilink start --allow-unsafe-full-access
+```
+
+You can combine Full access with either server runtime:
+
+```bash
+pilink start --mode single --allow-unsafe-full-access
+pilink start --mode collaboration --allow-unsafe-full-access
+```
+
+**Full access cannot be enabled on an already-running PiLink server.** If you
+started with plain `pilink start`, stop PiLink and restart it with
+`--allow-unsafe-full-access` (or configure the equivalent environment settings
+below and restart).
+
+The command-line flag enables unrestricted access for the client IDs in
+`PI_FULL_ACCESS_CLIENT_IDS`. If no allowlist is configured, the launcher uses
+`*`, meaning every otherwise-authorized OAuth client is eligible for Full
+access. Prefer restricting it to the specific client you trust:
+
+```bash
+pilink clients list
+PI_FULL_ACCESS_CLIENT_IDS=pi_your_client_id \
+  pilink start --allow-unsafe-full-access
+```
+
+To make the choice persistent, set these values in PiLink's private
+configuration and restart PiLink:
+
+```dotenv
+PI_UNSAFE_FULL_ACCESS=true
+PI_FULL_ACCESS_CLIENT_IDS=pi_your_client_id
+```
+
+Full access removes the workspace filesystem boundary and enables general
+process execution as the PiLink operating-system user. Use it only on a machine
+and OAuth client you are willing to grant that authority. See
+[Security](#security) and the [security model](docs/SECURITY_MODEL.md) for the
+full threat model.
+
 | Entry | Purpose |
 | --- | --- |
 | **Single agent** | Classic workspace tool harness without public orchestration; VSPiLink may run one loopback-controlled local Pi agent |
