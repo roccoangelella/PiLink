@@ -616,7 +616,6 @@ function armChatCliAutoLaunch(server: StartedServer, prerequisite: Promise<unkno
       if (server.process.exitCode === null && !server.process.killed) server.process.kill("SIGINT");
       if (error || (code !== 0 && signal === null)) process.exitCode = code ?? 1;
     };
-
     child.once("error", (error) => finish(null, null, error));
     child.once("exit", (code, signal) => finish(code, signal));
     server.process.once("exit", () => {
@@ -681,7 +680,7 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
       const startedServer = startServer(unsafe, url, tunnel);
       server = startedServer.process;
       const setup = startedServer.ready.then((serverReady) => {
-        if (serverReady) return runFirstTimeSetup(url, forceSetup);
+        if (serverReady) return runFirstTimeSetup(url, forceSetup, true);
       });
       armChatCliAutoLaunch(startedServer, setup);
     }
@@ -901,12 +900,14 @@ function printNipIoStartupInstructions(serverUrl: string, automaticMappings: boo
   console.error(`4. Then use this MCP server URL in ChatGPT: ${serverUrl}/sse`);
 }
 
-async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promise<void> {
+async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean, allowAdditionalClient = false): Promise<void> {
+  let retryCommand = allowAdditionalClient ? "pilink start" : "pilink start --setup";
   try {
     loadEnvironment();
     const runtimeConfig = loadRuntimeConfig();
     const clients = loadClients();
-    if (!forceSetup && clients.length > 0) {
+    if (clients.length === 0) retryCommand = "pilink start";
+    if (!forceSetup && clients.length > 0 && !allowAdditionalClient) {
       console.error("An OAuth client is already configured. Use 'pilink start --setup' to register another client.");
       return;
     }
@@ -923,7 +924,7 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
       flushDeferredServerOutput();
     }
     if (!callbackUrl) {
-      console.error("ChatGPT client registration skipped. Restart with 'pilink start --setup' when you have the callback URL.");
+      console.error(`ChatGPT client registration skipped. Restart with '${retryCommand}' when you have the callback URL.`);
       return;
     }
     assertHttpUrl(callbackUrl, "callback URL");
@@ -947,7 +948,7 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean): Promis
     console.error("Back in ChatGPT, click Scan Tools, complete the PiLink OAuth approval, and wait for the scan to finish.\n");
   } catch (error) {
     console.error(`First-time ChatGPT setup could not complete: ${error instanceof Error ? error.message : "unknown error"}`);
-    console.error("The MCP server is still running. Restart with 'pilink start --setup' to try again.");
+    console.error(`The MCP server is still running. Restart with '${retryCommand}' to try again.`);
   }
 }
 
