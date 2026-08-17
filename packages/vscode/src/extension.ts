@@ -567,8 +567,8 @@ class ExtensionController {
     if (!workspace) return;
     const selected = await vscode.window.showQuickPick([
       {
-        label: "Cloudflare Named Tunnel",
-        description: "Recommended for production · stable HTTPS domain and automatic startup",
+        label: "Cloudflare fixed domain (Named Tunnel)",
+        description: "Recommended for production · stable SSE/OAuth URL and automatic startup",
         value: "cloudflare-named" as const,
       },
       {

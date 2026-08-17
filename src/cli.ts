@@ -23,12 +23,14 @@ import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublic
 import { assertRequiredNodeVersion } from "./runtime.js";
 import { runHostingCli } from "./hosting/cli.js";
 import { resolveCloudflaredRelease } from "./hosting/cloudflared-release.js";
+import { fixedDomainCloudflaredArgs, normalizeFixedDomainHostname, normalizeFixedDomainTunnelId, resolveFixedDomainTokenFile } from "./hosting/fixed-domain.js";
 import { runAgentAuthCli } from "./agents/auth-cli.js";
 
 assertRequiredNodeVersion();
 const [, , command = "start", ...args] = process.argv;
 let configPath = process.env.PILINK_CONFIG || defaultConfigPath();
 type LaunchMode = "single" | "collaboration" | "vscode";
+type HostingMode = "quick-tunnel" | "nip-io" | "cloudflare-named";
 interface LaunchOptions {
   mode?: LaunchMode;
   unsafe: boolean;
@@ -640,7 +642,7 @@ async function start(options: LaunchOptions): Promise<void> {
   }
   if (!fs.existsSync(configPath)) initialize();
   configureRuntimeMode(mode);
-  let hostingMode: "quick-tunnel" | "nip-io";
+  let hostingMode: HostingMode;
   try {
     hostingMode = await selectHostingMode(options.setup);
   } catch (error) {
@@ -654,7 +656,74 @@ async function start(options: LaunchOptions): Promise<void> {
     await startNipIo(options.unsafe, options.setup);
     return;
   }
+  if (hostingMode === "cloudflare-named") {
+    await startCloudflareNamed(options.unsafe, options.setup);
+    return;
+  }
   await startQuickTunnel(options.unsafe, options.setup);
+}
+
+async function startCloudflareNamed(unsafe: boolean, forceSetup: boolean): Promise<void> {
+  loadEnvironment();
+  const serverUrl = configuredFixedDomainServerUrl();
+  const tunnelId = normalizeFixedDomainTunnelId(process.env.PI_CLOUDFLARE_TUNNEL_ID || "");
+  const tokenFile = resolveFixedDomainTokenFile(process.env.PI_CLOUDFLARE_TOKEN_FILE || "");
+  let executable: string;
+  try {
+    executable = await ensureCloudflared();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Unable to install cloudflared");
+    process.exitCode = 1;
+    return;
+  }
+
+  const tunnel = spawn(executable, fixedDomainCloudflaredArgs({ tunnelId, tokenFile }), {
+    stdio: ["ignore", "ignore", "pipe"],
+    windowsHide: true,
+  });
+  let server: ChildProcess | undefined;
+  let shuttingDown = false;
+  tunnel.stderr?.on("data", (chunk: Buffer) => writeServerOutput(chunk.toString()));
+  tunnel.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") console.error("cloudflared could not be executed after installation.");
+    else console.error(`Unable to start the Cloudflare Named Tunnel: ${error.message}`);
+    server?.kill("SIGINT");
+    process.exitCode = 1;
+  });
+  tunnel.on("exit", (code) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`Cloudflare Named Tunnel exited (${code ?? "signal"}); stopping PiLink.`);
+    server?.kill("SIGINT");
+    process.exitCode = code === 0 ? 0 : 1;
+  });
+
+  printCloudflareNamedStartupInstructions(serverUrl);
+  const startedServer = startServer(unsafe, serverUrl, tunnel);
+  server = startedServer.process;
+  const setup = startedServer.ready.then((serverReady) => {
+    if (serverReady) return runFirstTimeSetup(serverUrl, forceSetup);
+  });
+  armChatCliAutoLaunch(startedServer, setup);
+}
+
+function configuredFixedDomainServerUrl(): string {
+  const raw = process.env.SERVER_URL?.trim();
+  if (!raw) throw new Error("Cloudflare fixed-domain hosting requires SERVER_URL. Run the hosting setup again.");
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("Cloudflare fixed-domain SERVER_URL is invalid. Run the hosting setup again.");
+  }
+  const hostname = normalizeFixedDomainHostname(parsed.hostname);
+  if (
+    parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port ||
+    (parsed.pathname !== "/" && parsed.pathname !== "") || parsed.search || parsed.hash
+  ) {
+    throw new Error("Cloudflare fixed-domain SERVER_URL must be a bare HTTPS origin such as https://mcp.example.com");
+  }
+  return `https://${hostname}`;
 }
 
 async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<void> {
@@ -702,12 +771,14 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
   });
 }
 
-async function selectHostingMode(forceSetup: boolean): Promise<"quick-tunnel" | "nip-io"> {
+async function selectHostingMode(forceSetup: boolean): Promise<HostingMode> {
   loadEnvironment();
-  const configuredMode = process.env.PI_HOSTING_MODE;
-  if (!forceSetup && (configuredMode === "quick-tunnel" || configuredMode === "nip-io")) return configuredMode;
-  if (configuredMode && configuredMode !== "quick-tunnel" && configuredMode !== "nip-io") {
-    throw new Error("PI_HOSTING_MODE must be 'quick-tunnel' or 'nip-io'");
+  const configuredMode = process.env.PI_HOSTING_MODE?.trim();
+  if (!forceSetup && (configuredMode === "quick-tunnel" || configuredMode === "nip-io" || configuredMode === "cloudflare-named")) {
+    return configuredMode;
+  }
+  if (configuredMode && configuredMode !== "quick-tunnel" && configuredMode !== "nip-io" && configuredMode !== "cloudflare-named") {
+    throw new Error("PI_HOSTING_MODE must be 'quick-tunnel', 'nip-io', or 'cloudflare-named'");
   }
 
   if (forceSetup) console.error("\n=== Reconfigure public hosting ===");
@@ -716,18 +787,62 @@ async function selectHostingMode(forceSetup: boolean): Promise<"quick-tunnel" | 
   console.error("   No account, router changes, or extra setup. Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session.");
   console.error("2. Direct nip.io HTTPS hosting");
   console.error("   Keeps the same URL while your public IPv4 address stays the same. It exposes this computer to the Internet and requires router port forwarding plus a reachable public IPv4 address.");
+  console.error("3. Cloudflare fixed domain (Named Tunnel)");
+  console.error("   Uses a hostname you own, such as mcp.example.com. The SSE/OAuth URLs stay the same across PiLink restarts; no inbound router ports are required.");
   const readline = createInterface({ input: process.stdin, output: process.stderr });
-  const choice = (await readline.question("Select hosting [1/2]: ")).trim();
+  const choice = (await readline.question("Select hosting [1/2/3]: ")).trim();
   readline.close();
   if (choice === "" || choice === "1") {
     saveConfig({ PI_HOSTING_MODE: "quick-tunnel", PI_OAUTH_PUBLIC_CHATGPT_DCR: "true" });
+    process.env.PI_HOSTING_MODE = "quick-tunnel";
     process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
     return "quick-tunnel";
   }
-  if (choice !== "2") throw new Error("Hosting setup cancelled: choose 1 or 2.");
+  if (choice === "2") {
+    await configureNipIoHosting();
+    return "nip-io";
+  }
+  if (choice === "3") {
+    await configureCloudflareNamedHosting();
+    return "cloudflare-named";
+  }
+  throw new Error("Hosting setup cancelled: choose 1, 2, or 3.");
+}
 
-  await configureNipIoHosting();
-  return "nip-io";
+async function configureCloudflareNamedHosting(): Promise<void> {
+  const port = readPort();
+  console.error("\n=== Cloudflare fixed-domain setup ===");
+  console.error("Use a remotely managed Cloudflare Named Tunnel so PiLink needs only that tunnel's token, not an account-wide Cloudflare credential.");
+  console.error("In Cloudflare, create/select the tunnel and add a Published application route from your fixed hostname to:");
+  console.error(`  http://127.0.0.1:${port}`);
+  console.error("Save the tunnel token in a private local file. On Linux/macOS, run: chmod 600 /path/to/tunnel-token");
+  console.error("PiLink stores only the token-file path and tunnel UUID; the token value is never written to PiLink configuration or command arguments.");
+  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const hostname = normalizeFixedDomainHostname(await readline.question("Fixed Cloudflare hostname (for example mcp.example.com): "));
+    const tunnelId = normalizeFixedDomainTunnelId(await readline.question("Cloudflare tunnel UUID: "));
+    const tokenFile = resolveFixedDomainTokenFile(await readline.question("Path to private tunnel token file: "));
+    const confirmation = (await readline.question(`Type FIXED after Cloudflare routes https://${hostname} to http://127.0.0.1:${port}: `)).trim();
+    if (confirmation !== "FIXED") throw new Error("Cloudflare fixed-domain setup cancelled.");
+    const serverUrl = `https://${hostname}`;
+    saveConfig({
+      PI_HOSTING_MODE: "cloudflare-named",
+      PI_CLOUDFLARE_TUNNEL_ID: tunnelId,
+      PI_CLOUDFLARE_TOKEN_FILE: tokenFile,
+      SERVER_URL: serverUrl,
+      TRUST_PROXY: "true",
+      PI_OAUTH_PUBLIC_CHATGPT_DCR: "true",
+    });
+    process.env.PI_HOSTING_MODE = "cloudflare-named";
+    process.env.PI_CLOUDFLARE_TUNNEL_ID = tunnelId;
+    process.env.PI_CLOUDFLARE_TOKEN_FILE = tokenFile;
+    process.env.SERVER_URL = serverUrl;
+    process.env.TRUST_PROXY = "true";
+    process.env.PI_OAUTH_PUBLIC_CHATGPT_DCR = "true";
+    console.error(`PiLink will reuse the fixed MCP URL: ${serverUrl}/sse`);
+  } finally {
+    readline.close();
+  }
 }
 
 async function configureNipIoHosting(): Promise<void> {
@@ -879,6 +994,14 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
     if (serverReady && certificateObtained && caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
   });
   armChatCliAutoLaunch(startedServer, setup);
+}
+
+function printCloudflareNamedStartupInstructions(serverUrl: string): void {
+  console.error("\n=== Cloudflare fixed domain started ===");
+  console.error(`1. Your persistent public address is: ${serverUrl}`);
+  console.error(`2. Use this MCP server URL in ChatGPT: ${serverUrl}/sse`);
+  console.error("3. Keep the Cloudflare Published application route pointed at this PiLink instance.");
+  console.error("4. This URL remains the same across ordinary PiLink restarts, so an existing ChatGPT connector and OAuth client can be reused.");
 }
 
 function printQuickTunnelStartupInstructions(serverUrl: string): void {

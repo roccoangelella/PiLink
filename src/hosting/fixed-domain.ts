@@ -32,9 +32,8 @@ export function normalizeFixedDomainTunnelId(value: string): string {
 export function resolveFixedDomainTokenFile(value: string): string {
   const trimmed = value.trim();
   if (!trimmed || /[\r\n\0]/u.test(trimmed)) throw new Error("Cloudflare tunnel token file path is invalid");
-  const expanded = trimmed === "~" || trimmed.startsWith(`~${path.sep}`)
-    ? path.join(os.homedir(), trimmed.slice(2))
-    : trimmed;
+  const homeRelative = trimmed.match(/^~[\\/](.*)$/u);
+  const expanded = trimmed === "~" ? os.homedir() : homeRelative ? path.join(os.homedir(), homeRelative[1]) : trimmed;
   const tokenFile = path.resolve(expanded);
   let stat: fs.Stats;
   try {

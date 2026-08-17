@@ -148,7 +148,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   assert.match(output, /Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session/);
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:")).catch((error) => {
@@ -175,6 +175,72 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   assert.equal(store.clients.length, 1);
   assert.deepEqual(store.clients[0].redirect_uris, ["https://chatgpt.example/callback"]);
 });
+
+for (const mode of ["single", "collaboration"]) {
+  test(`Cloudflare fixed-domain hosting keeps one SSE URL in ${mode} mode`, async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), `pilink-fixed-${mode}-`));
+    const configPath = path.join(root, ".env");
+    const tokenFile = path.join(root, "tunnel-token");
+    const argsLog = path.join(root, "cloudflared-args.txt");
+    const fakeCloudflared = path.join(root, "cloudflared");
+    const port = await availablePort();
+    const tunnelId = "11111111-2222-4333-8444-555555555555";
+    const hostname = `mcp-${mode}.example.test`;
+    await fs.writeFile(configPath, [
+      `PI_WORK_DIR=${root}`,
+      `PI_DATA_DIR=${path.join(root, "data")}`,
+      `PORT=${port}`,
+      `JWT_SECRET=${"a".repeat(32)}`,
+      `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
+    ].join("\n"));
+    await fs.writeFile(tokenFile, "test-tunnel-token\n", { mode: 0o600 });
+    if (process.platform !== "win32") await fs.chmod(tokenFile, 0o600);
+    await fs.writeFile(
+      fakeCloudflared,
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 0; fi\nprintf "%s\\n" "$*" > "$PI_CLOUDFLARED_ARGS_LOG"\nexec sleep 30\n',
+      { mode: 0o700 },
+    );
+    const cliProcess = spawnCli(["start", "--mode", mode], root, {
+      PILINK_CONFIG: configPath,
+      PI_CLOUDFLARED_PATH: fakeCloudflared,
+      PI_CLOUDFLARED_ARGS_LOG: argsLog,
+    });
+    t.after(async () => {
+      cliProcess.kill("SIGINT");
+      await fs.rm(root, { recursive: true, force: true });
+    });
+    let output = "";
+    cliProcess.stdout.on("data", (chunk) => { output += chunk; });
+    cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+
+    await waitFor(() => output.includes("Select hosting [1/2/3]:"));
+    assert.match(output, /Cloudflare fixed domain \(Named Tunnel\)/);
+    cliProcess.stdin.write("3\n");
+    await waitFor(() => output.includes("Fixed Cloudflare hostname"));
+    cliProcess.stdin.write(`${hostname}\n`);
+    await waitFor(() => output.includes("Cloudflare tunnel UUID"));
+    cliProcess.stdin.write(`${tunnelId}\n`);
+    await waitFor(() => output.includes("Path to private tunnel token file"));
+    cliProcess.stdin.write(`${tokenFile}\n`);
+    await waitFor(() => output.includes("Type FIXED"));
+    cliProcess.stdin.write("FIXED\n");
+    await waitFor(() => output.includes("Paste callback URL here:"));
+    cliProcess.stdin.write("\n");
+    await waitFor(() => output.includes("ChatGPT client registration skipped"));
+
+    assert.match(output, new RegExp(`Use this MCP server URL in ChatGPT: https://${hostname.replaceAll(".", "\\.")}\\/sse`));
+    assert.match(output, /existing ChatGPT connector and OAuth client can be reused/);
+    const config = await fs.readFile(configPath, "utf8");
+    assert.match(config, /^PI_HOSTING_MODE=cloudflare-named$/m);
+    assert.match(config, new RegExp(`^PI_RUNTIME_MODE=${mode}$`, "m"));
+    assert.match(config, new RegExp(`^SERVER_URL=https://${hostname.replaceAll(".", "\\.")}$`, "m"));
+    assert.match(config, new RegExp(`^PI_CLOUDFLARE_TUNNEL_ID=${tunnelId}$`, "m"));
+    assert.match(config, new RegExp(`^PI_CLOUDFLARE_TOKEN_FILE=${escapeRegExp(tokenFile)}$`, "m"));
+    const args = await fs.readFile(argsLog, "utf8");
+    assert.match(args, new RegExp(`run --token-file ${escapeRegExp(tokenFile)} ${tunnelId}`));
+    assert.doesNotMatch(args, /test-tunnel-token/);
+  });
+}
 
 test("paired CLI setup opens a one-use owner session before ChatGPT OAuth", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-cli-paired-"));
@@ -211,7 +277,7 @@ test("paired CLI setup opens a one-use owner session before ChatGPT OAuth", asyn
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
 
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
   cliProcess.stdin.write("https://chatgpt.example/paired-callback\n");
@@ -270,7 +336,7 @@ test("start --setup resets generated state before the first-time flow", async (t
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
   const health = await fetch(`http://127.0.0.1:${port}/health`);
@@ -317,7 +383,7 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Allow PiLink to request these temporary router mappings? [Y/n]:"));
   cliProcess.stdin.write("n\n");
@@ -392,7 +458,7 @@ test("a clean direct-hosting setup installs and extracts a checksum-verified Cad
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Allow PiLink to request these temporary router mappings? [Y/n]:"));
   cliProcess.stdin.write("n\n");
@@ -648,7 +714,7 @@ test("first start downloads cloudflared from PI_CLOUDFLARED_URL when not preinst
 
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("cloudflared is not installed; downloading"));
   const downloadedPath = path.join(root, "bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared");
@@ -688,7 +754,7 @@ test("a custom cloudflared download URL is rejected without its SHA-256 digest",
 
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   const [code] = await once(cliProcess, "exit");
 
@@ -727,7 +793,7 @@ test("a cloudflared checksum mismatch leaves no executable or temporary download
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   const [code] = await once(cliProcess, "exit");
 
@@ -770,7 +836,7 @@ test("an oversized managed binary download is rejected before it is written", as
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
   cliProcess.stdin.write("2\n");
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   const [code] = await once(cliProcess, "exit");
 
@@ -835,7 +901,7 @@ test("start --setup option 1 creates a separate instance without deleting existi
   cliProcess.stdin.write(`${newConfigDirectory}\n`);
   await waitFor(() => output.includes("Enter new server port"));
   cliProcess.stdin.write(`${newPort}\n`);
-  await waitFor(() => output.includes("Select hosting [1/2]:"));
+  await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:"));
   const health = await fetch(`http://127.0.0.1:${newPort}/health`);

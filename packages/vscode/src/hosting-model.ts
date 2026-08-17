@@ -129,7 +129,7 @@ export function hostingStartPlan(selection: HostingSelection): HostingStartPlan 
 export function hostingLabel(kind: HostingKind): string {
   switch (kind) {
     case "quick-tunnel": return "Cloudflare Quick Tunnel";
-    case "cloudflare-named": return "Cloudflare Named Tunnel";
+    case "cloudflare-named": return "Cloudflare fixed domain (Named Tunnel)";
     case "custom-domain": return "Stable HTTPS domain";
     case "local": return "Local VS Code only";
     case "nip-io": return "HTTPS nip.io legacy";
