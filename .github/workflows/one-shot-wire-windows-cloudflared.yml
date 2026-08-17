@@ -31,21 +31,13 @@ jobs:
               raise SystemExit("expected exactly one hosting import anchor")
           text = text.replace(old_import, new_import, 1)
 
-          old_block = '''  const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());
-          if (process.platform !== "linux") {
-            throw new Error("cloudflared is not installed. Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ and run pilink start again.");
-          }
-
-          const asset = cloudflaredAsset();
-          const architecture = supportedLinuxArchitecture("cloudflared");
-          const source = customOrPinnedDownload(
-            "cloudflared",
-            process.env.PI_CLOUDFLARED_URL,
-            process.env.PI_CLOUDFLARED_SHA256,
-            `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset}`,
-            CLOUDFLARED_LINUX_SHA256[architecture],
-          );'''
-          new_block = '''  const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());
+          start_marker = '  const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());\n'
+          end_marker = '  if (await isVerifiedManagedFile(destination, source.sha256) && canRun(destination)) return destination;\n'
+          if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+              raise SystemExit("expected unique cloudflared installer markers")
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''  const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());
           const release = process.platform === "linux"
             ? {
                 asset: cloudflaredAsset(),
@@ -59,10 +51,9 @@ jobs:
             process.env.PI_CLOUDFLARED_SHA256,
             `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset}`,
             release.sha256,
-          );'''
-          if text.count(old_block) != 1:
-              raise SystemExit("expected exactly one cloudflared installer block")
-          text = text.replace(old_block, new_block, 1)
+          );
+          '''
+          text = text[:start] + replacement + text[end:]
           path.write_text(text, encoding="utf-8")
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
