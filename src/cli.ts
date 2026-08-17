@@ -22,6 +22,7 @@ import {
 import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublicIpv4, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
 import { assertRequiredNodeVersion } from "./runtime.js";
 import { runHostingCli } from "./hosting/cli.js";
+import { resolveCloudflaredRelease } from "./hosting/cloudflared-release.js";
 import { runAgentAuthCli } from "./agents/auth-cli.js";
 
 assertRequiredNodeVersion();
@@ -1248,18 +1249,19 @@ async function ensureCloudflared(): Promise<string> {
   if (canRun("cloudflared")) return "cloudflared";
 
   const destination = path.join(path.dirname(configPath), "bin", cloudflaredFileName());
-  if (process.platform !== "linux") {
-    throw new Error("cloudflared is not installed. Install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ and run pilink start again.");
-  }
-
-  const asset = cloudflaredAsset();
-  const architecture = supportedLinuxArchitecture("cloudflared");
+  const release = process.platform === "linux"
+    ? {
+        asset: cloudflaredAsset(),
+        sha256: CLOUDFLARED_LINUX_SHA256[supportedLinuxArchitecture("cloudflared")],
+      }
+    : resolveCloudflaredRelease();
+  const { asset } = release;
   const source = customOrPinnedDownload(
     "cloudflared",
     process.env.PI_CLOUDFLARED_URL,
     process.env.PI_CLOUDFLARED_SHA256,
     `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset}`,
-    CLOUDFLARED_LINUX_SHA256[architecture],
+    release.sha256,
   );
   if (await isVerifiedManagedFile(destination, source.sha256) && canRun(destination)) return destination;
   console.error(`cloudflared is not installed; downloading verified cloudflared ${CLOUDFLARED_VERSION} (${asset}) for this first launch...`);
