@@ -18,6 +18,7 @@ test("fixed-domain hosting normalizes stable Cloudflare identities", () => {
   assert.equal(normalizeFixedDomainTunnelId(TUNNEL_ID.toUpperCase()), TUNNEL_ID);
   assert.throws(() => normalizeFixedDomainHostname("https://mcp.example.com"), /valid lowercase DNS hostname/);
   assert.throws(() => normalizeFixedDomainTunnelId("not-a-tunnel"), /valid UUID/);
+  assert.throws(() => resolveFixedDomainTokenFile("/tmp/token#unsafe"), /cannot be stored safely/);
 });
 
 test("fixed-domain token files stay private and never enter cloudflared argv as values", async (t) => {

@@ -31,7 +31,7 @@ export function normalizeFixedDomainTunnelId(value: string): string {
 
 export function resolveFixedDomainTokenFile(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed || /[\r\n\0]/u.test(trimmed)) throw new Error("Cloudflare tunnel token file path is invalid");
+  if (!trimmed || /[\r\n\0#]/u.test(trimmed)) throw new Error("Cloudflare tunnel token file path is invalid or cannot be stored safely in PiLink configuration");
   const homeRelative = trimmed.match(/^~[\\/](.*)$/u);
   const expanded = trimmed === "~" ? os.homedir() : homeRelative ? path.join(os.homedir(), homeRelative[1]) : trimmed;
   const tokenFile = path.resolve(expanded);

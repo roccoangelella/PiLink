@@ -606,7 +606,7 @@ class ExtensionController {
       return;
     }
 
-    const hosting = await this.collectHostingSelection(selected.value);
+    const hosting = await this.collectHostingSelection(selected.value, workspace);
     if (!hosting) return;
     const access = await vscode.window.showQuickPick([
       {
@@ -661,6 +661,7 @@ class ExtensionController {
 
   private async collectHostingSelection(
     kind: Exclude<HostingSelection["kind"], "nip-io">,
+    workspace: string,
   ): Promise<HostingSelection | undefined> {
     if (kind === "local" || kind === "quick-tunnel") return { kind };
     if (kind === "cloudflare-fixed") {
@@ -681,6 +682,16 @@ class ExtensionController {
       if (!tunnelId) return undefined;
       const credential = await this.selectCloudflareCredential("tunnel-token-file");
       if (!credential) return undefined;
+      const origin = `http://127.0.0.1:${this.snapshot(workspace).port}`;
+      const routeReady = await vscode.window.showInformationMessage(
+        `Configure the Cloudflare Published application route for ${new URL(publicUrl).hostname}.`,
+        {
+          modal: true,
+          detail: `In Cloudflare, point the hostname to ${origin}. Keep this route and tunnel so the same /sse and OAuth URLs remain valid across PiLink restarts.`,
+        },
+        "Route is configured",
+      );
+      if (routeReady !== "Route is configured") return undefined;
       const normalized = normalizeHostingSelection({
         kind,
         publicUrl,
