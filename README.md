@@ -53,7 +53,28 @@ pilink start --mode collaboration
 pilink start --mode vscode
 ```
 
-The CLI hosting wizard offers Quick Tunnel, direct `nip.io`, or a Cloudflare fixed domain (Named Tunnel). For a fixed domain, the user supplies a hostname in a Cloudflare-managed DNS zone plus one scoped API token (Cloudflare Tunnel Edit, DNS Edit, and Zone Read); PiLink creates the tunnel, ingress, DNS record, and private tunnel-token file automatically, then discards the account token. The `/sse` URL stays the same across restarts.
+The CLI hosting wizard offers Quick Tunnel, direct `nip.io`, or a Cloudflare fixed domain (Named Tunnel). For a fixed domain, the user supplies a hostname in a Cloudflare-managed DNS zone plus one scoped API token; PiLink creates the tunnel, ingress, DNS record, and private tunnel-token file automatically, then discards the account token. The `/sse` URL stays the same across restarts.
+
+### Cloudflare fixed domain: create the provisioning token
+
+Before choosing hosting option **3**, the domain must already be active on Cloudflare DNS. In Cloudflare, open **My Profile → API Tokens → Create Token → Create Custom Token**, then configure:
+
+| Field | Value |
+| --- | --- |
+| Token name | `PiLink fixed-domain provisioning` |
+| Permission 1 | **Account → Cloudflare Tunnel → Edit** |
+| Permission 2 | **Zone → DNS → Edit** |
+| Permission 3 | **Zone → Zone → Read** |
+| Account Resources | **Include → your specific Cloudflare account** |
+| Zone Resources | **Include → Specific zone → the domain PiLink will use**, for example `example.com` |
+| Client IP Address Filtering | Leave blank unless you have a stable source IP/range for the machine doing provisioning |
+| TTL | Optional; a short-lived token is preferred for one-time setup |
+
+Do not select **All accounts**, **All zones**, broad **Account Edit**, broad **Zone Edit**, or the Global API Key. If you use IP filtering, enter the source address Cloudflare will see (normally the machine/network's public egress IP), not a private LAN address such as `192.168.x.x`. Cloudflare TTL dates are evaluated at `00:00 UTC`, so allow enough time for setup.
+
+Select **Continue to summary**, verify that only the account, zone, and three permissions above are present, then select **Create Token**. Cloudflare shows the token secret only on the confirmation page: copy it and paste it into PiLink's hidden **Cloudflare API token** prompt (or the password field in VSPiLink). Treat it like a password.
+
+After provisioning succeeds, PiLink does not save the account API token. It keeps only the tunnel-specific run token in a private local file for future restarts, so you may revoke/delete the provisioning API token afterward. If you later re-provision or change the fixed hostname, create another scoped token.
 
 | Entry | Purpose |
 | --- | --- |
