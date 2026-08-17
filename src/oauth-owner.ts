@@ -4,12 +4,23 @@ import type { Request, Response } from "express";
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const OWNER_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const MAX_PENDING_PAIRINGS = 32;
+const MAX_PAIRING_ATTEMPTS = 5;
 const MAX_OWNER_SESSIONS = 16;
-const pairingCodes = new Map<string, number>();
+const VERIFICATION_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+interface PendingOwnerPairing {
+  expiresAt: number;
+  verificationHash: string;
+  attempts: number;
+}
+
+const pairingCodes = new Map<string, PendingOwnerPairing>();
 const ownerSessions = new Map<string, number>();
+let registrationWindowExpiresAt = 0;
 
 export interface OwnerPairing {
   pairingUrl: string;
+  verificationCode: string;
   expiresAt: string;
 }
 
@@ -21,21 +32,61 @@ export function createOwnerPairing(serverUrl: string): OwnerPairing {
     if (oldest) pairingCodes.delete(oldest);
   }
   const code = crypto.randomBytes(32).toString("base64url");
+  const verificationCode = createVerificationCode();
   const expiresAt = now + PAIRING_TTL_MS;
-  pairingCodes.set(hash(code), expiresAt);
+  pairingCodes.set(hash(code), {
+    expiresAt,
+    verificationHash: hash(normalizeVerificationCode(verificationCode)!),
+    attempts: 0,
+  });
+  registrationWindowExpiresAt = Math.max(registrationWindowExpiresAt, expiresAt);
   const pairingUrl = new URL("/oauth/pair", serverUrl);
   pairingUrl.searchParams.set("code", code);
-  return { pairingUrl: pairingUrl.toString(), expiresAt: new Date(expiresAt).toISOString() };
+  return {
+    pairingUrl: pairingUrl.toString(),
+    verificationCode,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
-export function consumeOwnerPairing(_req: Request, res: Response, code: unknown, serverUrl: string): boolean {
+export function hasPendingOwnerPairing(code: unknown): boolean {
   if (typeof code !== "string" || code.length < 32 || code.length > 256) return false;
   const now = Date.now();
   prune(now);
+  const pending = pairingCodes.get(hash(code));
+  return Boolean(pending && pending.expiresAt > now);
+}
+
+export function isOwnerRegistrationWindowOpen(): boolean {
+  const now = Date.now();
+  prune(now);
+  return registrationWindowExpiresAt > now;
+}
+
+export function consumeOwnerPairing(
+  _req: Request,
+  res: Response,
+  code: unknown,
+  verificationCode: unknown,
+  serverUrl: string,
+): boolean {
+  if (typeof code !== "string" || code.length < 32 || code.length > 256) return false;
+  const normalizedVerificationCode = normalizeVerificationCode(verificationCode);
+  if (!normalizedVerificationCode) return false;
+  const now = Date.now();
+  prune(now);
   const codeHash = hash(code);
-  const expiresAt = pairingCodes.get(codeHash);
+  const pending = pairingCodes.get(codeHash);
+  if (!pending || pending.expiresAt <= now) return false;
+
+  const presentedHash = hash(normalizedVerificationCode);
+  const matched = crypto.timingSafeEqual(Buffer.from(presentedHash), Buffer.from(pending.verificationHash));
+  if (!matched) {
+    pending.attempts += 1;
+    if (pending.attempts >= MAX_PAIRING_ATTEMPTS) pairingCodes.delete(codeHash);
+    return false;
+  }
   pairingCodes.delete(codeHash);
-  if (!expiresAt || expiresAt <= now) return false;
 
   if (ownerSessions.size >= MAX_OWNER_SESSIONS) {
     const oldest = ownerSessions.keys().next().value as string | undefined;
@@ -112,8 +163,22 @@ function parseCookies(header: string | undefined): Map<string, string> {
 }
 
 function prune(now: number): void {
-  for (const [key, expiresAt] of pairingCodes) if (expiresAt <= now) pairingCodes.delete(key);
+  for (const [key, pairing] of pairingCodes) if (pairing.expiresAt <= now) pairingCodes.delete(key);
   for (const [key, expiresAt] of ownerSessions) if (expiresAt <= now) ownerSessions.delete(key);
+  if (registrationWindowExpiresAt <= now) registrationWindowExpiresAt = 0;
+}
+
+function createVerificationCode(): string {
+  const bytes = crypto.randomBytes(8);
+  let raw = "";
+  for (const byte of bytes) raw += VERIFICATION_ALPHABET[byte % VERIFICATION_ALPHABET.length];
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+}
+
+function normalizeVerificationCode(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 32) return undefined;
+  const normalized = value.toUpperCase().replace(/[\s-]/gu, "");
+  return /^[A-HJ-NP-Z2-9]{8}$/u.test(normalized) ? normalized : undefined;
 }
 
 function hash(value: string): string {

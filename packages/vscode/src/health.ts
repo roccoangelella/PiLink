@@ -19,6 +19,7 @@ export interface AdminStatusResult {
 
 export interface PairingResult {
   pairingUrl: string;
+  verificationCode: string;
   expiresAt: string;
 }
 
@@ -305,10 +306,19 @@ export async function createOwnerPairing(
   const identity = await readAuthenticatedHealth(port, bootstrapSecret, timeoutMs);
   if (!identity.online) throw new Error(`The local PiLink server identity could not be verified: ${identity.error || "health proof missing"}`);
   const payload = await loopbackJson(port, "/admin/oauth/pairing", "POST", bootstrapSecret, timeoutMs);
-  if (typeof payload.pairing_url !== "string" || typeof payload.expires_at !== "string") {
+  if (
+    typeof payload.pairing_url !== "string" ||
+    typeof payload.verification_code !== "string" ||
+    !/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/u.test(payload.verification_code) ||
+    typeof payload.expires_at !== "string"
+  ) {
     throw new Error("Invalid OAuth pairing response.");
   }
-  return { pairingUrl: payload.pairing_url, expiresAt: payload.expires_at };
+  return {
+    pairingUrl: payload.pairing_url,
+    verificationCode: payload.verification_code,
+    expiresAt: payload.expires_at,
+  };
 }
 
 export async function readAdminAgents(

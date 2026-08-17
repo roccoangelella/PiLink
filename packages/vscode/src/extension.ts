@@ -1243,7 +1243,7 @@ class ExtensionController {
       `${plan.public ? "Public" : "Local"} · ${accessMode === "full" ? "Full access" : "Project folder only"}`,
       false,
       workspace,
-      { PI_OAUTH_CONSENT_MODE: "paired" },
+      { PI_OAUTH_CONSENT_MODE: "paired", PILINK_OAUTH_SETUP_DRIVER: "vscode" },
     );
     const health = await waitForHealth(snapshot.port, 120_000);
     if (!health.online) throw new Error(`PiLink did not become reachable: ${health.error || "timeout"}`);
@@ -1257,20 +1257,8 @@ class ExtensionController {
       const publicHealth = await waitForPublicHealth(publicUrl, 45_000);
       if (!publicHealth.online) throw new Error(`The public HTTPS endpoint is not ready: ${publicHealth.error || "timeout"}`);
     }
-    if (plan.public) await this.skipLegacyCallbackPrompt();
     const normalized = publicUrl.replace(/\/$/, "");
     return { configPath: snapshot.configPath, publicUrl: normalized, mcpUrl: `${normalized}/sse` };
-  }
-
-  private async skipLegacyCallbackPrompt(timeoutMs = 3_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline && this.supervisor.isActive) {
-      if (this.supervisor.viewState.awaitingInput) {
-        this.supervisor.sendLine("");
-        return;
-      }
-      await delay(100);
-    }
   }
 
   private async pairWizardOwner(destination: ChatGptDestination): Promise<boolean> {
@@ -1281,6 +1269,16 @@ class ExtensionController {
     if (!snapshot.bootstrapSecret) throw new Error("PI_BOOTSTRAP_SECRET is missing from the private configuration.");
     const pairing = await createOwnerPairing(snapshot.port, snapshot.bootstrapSecret);
     const pairingUrl = validatePairingUrl(pairing.pairingUrl, state.publicUrl, pairing.expiresAt);
+    const action = await vscode.window.showInformationMessage(
+      "Verify this computer before connecting ChatGPT.",
+      {
+        modal: true,
+        detail: `Local verification code: ${pairing.verificationCode}\n\nThe pairing URL alone cannot authorize access. Copy this short-lived code only into the PiLink pairing page opened by VSPiLink.`,
+      },
+      "Copy code and open pairing",
+    );
+    if (action !== "Copy code and open pairing") return false;
+    await vscode.env.clipboard.writeText(pairing.verificationCode);
     const navigation = chatGptNavigation(destination);
     const pairedNavigation = new URL(pairingUrl);
     pairedNavigation.searchParams.set("continue", navigation.url);
@@ -2703,10 +2701,6 @@ function validatePairingUrl(value: string, expectedPublicUrl: string, expiresAt:
 function isLoopbackBrowserHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
   return normalized === "localhost" || normalized === "::1" || normalized === "127.0.0.1" || normalized.startsWith("127.");
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function samePath(left: string, right: string): boolean {

@@ -373,6 +373,31 @@ test("bootstrap client registration is confined to the loopback administration b
   assert.equal(localBootstrapRegistration.status, 201);
   assert.ok((await localBootstrapRegistration.json()).client_secret);
 
+  const publicDcrMetadata = JSON.stringify({
+    client_name: "ChatGPT",
+    redirect_uris: ["https://chatgpt.com/connector/oauth/BoundaryTest_123"],
+    grant_types: ["authorization_code", "refresh_token"],
+    scope: "mcp:tools offline_access",
+    token_endpoint_auth_method: "none",
+  });
+  const closedWindowRegistration = await requestWithHost(
+    localServerUrl,
+    "/oauth/register",
+    publicHostname,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: publicDcrMetadata,
+    },
+  );
+  assert.equal(closedWindowRegistration.status, 401, "the public PiLink URL alone must not open DCR registration");
+
+  const pairingWindow = await fetch(`${localServerUrl}/admin/oauth/pairing`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${bootstrapSecret}` },
+  });
+  assert.equal(pairingWindow.status, 200);
+
   const publicDcrRegistration = await requestWithHost(
     localServerUrl,
     "/oauth/register",
@@ -380,13 +405,7 @@ test("bootstrap client registration is confined to the loopback administration b
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_name: "ChatGPT",
-        redirect_uris: ["https://chatgpt.com/connector/oauth/BoundaryTest_123"],
-        grant_types: ["authorization_code", "refresh_token"],
-        scope: "mcp:tools offline_access",
-        token_endpoint_auth_method: "none",
-      }),
+      body: publicDcrMetadata,
     },
   );
   assert.equal(publicDcrRegistration.status, 201);
@@ -432,6 +451,19 @@ test("public ChatGPT DCR is opt-in, PKCE-only and restricted to ChatGPT callback
     scope: "mcp:tools offline_access",
     token_endpoint_auth_method: "client_secret_post",
   };
+  const registrationWithoutLocalPairing = await fetch(`${serverUrl}/oauth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(registrationBody),
+  });
+  assert.equal(registrationWithoutLocalPairing.status, 401, "DCR must stay closed until the local owner opens a short setup window");
+
+  const pairingWindow = await fetch(`${serverUrl}/admin/oauth/pairing`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${"e".repeat(32)}` },
+  });
+  assert.equal(pairingWindow.status, 200);
+
   const registration = await fetch(`${serverUrl}/oauth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -552,9 +584,34 @@ test("paired consent requires a one-use owner session and protects the local adm
   assert.equal(pairingResponse.status, 200);
   const pairing = await pairingResponse.json();
   assert.match(pairing.pairing_url, new RegExp(`^${serverUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/oauth/pair\\?code=`));
+  assert.match(pairing.verification_code, /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/u);
   const pairResult = await fetch(pairing.pairing_url);
   assert.equal(pairResult.status, 200);
-  const ownerCookie = pairResult.headers.get("set-cookie")?.split(";", 1)[0];
+  assert.equal(pairResult.headers.get("set-cookie"), null, "possessing the pairing URL alone must not create an owner session");
+  assert.match(await pairResult.text(), /verification code shown by PiLink in the local terminal/i);
+
+  const pairingUrl = new URL(pairing.pairing_url);
+  const wrongVerification = await fetch(`${serverUrl}/oauth/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code: pairingUrl.searchParams.get("code") || "",
+      verification_code: "AAAA-AAAA",
+    }),
+  });
+  assert.equal(wrongVerification.status, 400);
+  assert.equal(wrongVerification.headers.get("set-cookie"), null);
+
+  const verifiedPairing = await fetch(`${serverUrl}/oauth/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code: pairingUrl.searchParams.get("code") || "",
+      verification_code: pairing.verification_code,
+    }),
+  });
+  assert.equal(verifiedPairing.status, 200);
+  const ownerCookie = verifiedPairing.headers.get("set-cookie")?.split(";", 1)[0];
   assert.ok(ownerCookie);
   assert.equal((await fetch(pairing.pairing_url)).status, 400);
 
@@ -565,7 +622,19 @@ test("paired consent requires a one-use owner session and protects the local adm
   const continuedPairing = await continuedPairingResponse.json();
   const continuedUrl = new URL(continuedPairing.pairing_url);
   continuedUrl.searchParams.set("continue", "https://chatgpt.com/plugins");
-  const continuedResult = await fetch(continuedUrl, { redirect: "manual" });
+  const continuedPrompt = await fetch(continuedUrl, { redirect: "manual" });
+  assert.equal(continuedPrompt.status, 200);
+  assert.equal(continuedPrompt.headers.get("set-cookie"), null);
+  const continuedResult = await fetch(`${serverUrl}/oauth/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    redirect: "manual",
+    body: new URLSearchParams({
+      code: continuedUrl.searchParams.get("code") || "",
+      verification_code: continuedPairing.verification_code,
+      continue: "https://chatgpt.com/plugins",
+    }),
+  });
   assert.equal(continuedResult.status, 303);
   assert.equal(continuedResult.headers.get("location"), "https://chatgpt.com/plugins");
   assert.ok(continuedResult.headers.get("set-cookie"));

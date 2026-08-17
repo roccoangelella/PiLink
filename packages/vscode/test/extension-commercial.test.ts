@@ -82,8 +82,13 @@ test("ChatGPT MCP connection is primary and opens the real VS Code integrated br
 
   const pairing = methodSource("pairWizardOwner");
   assert.match(pairing, /requirePersistentBrowserStorage\(\)/);
+  assert.match(pairing, /pairing\.verificationCode/);
+  assert.match(pairing, /clipboard\.writeText\(pairing\.verificationCode\)/);
   assert.match(pairing, /searchParams\.set\("continue", navigation\.url\)/);
   assert.match(pairing, /openIntegratedBrowser\(/);
+
+  const runtime = methodSource("startWizardRuntime");
+  assert.match(runtime, /PILINK_OAUTH_SETUP_DRIVER: "vscode"/);
 
   const storage = methodSource("requirePersistentBrowserStorage");
   assert.match(storage, /storage !== "ephemeral"/);

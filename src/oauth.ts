@@ -29,7 +29,9 @@ import {
   createOwnerPairing,
   hasBootstrapAccess,
   hasOwnerSession,
+  hasPendingOwnerPairing,
   isLocalAdminRequest,
+  isOwnerRegistrationWindowOpen,
 } from "./oauth-owner.js";
 import type { OAuthClient } from "./types.js";
 import { recordOAuthActivity } from "./service-status.js";
@@ -111,18 +113,42 @@ export function createOAuthRouter(): Router {
     }
     res.setHeader("Cache-Control", "no-store");
     const pairing = createOwnerPairing(config.serverUrl);
-    res.json({ pairing_url: pairing.pairingUrl, expires_at: pairing.expiresAt });
+    res.json({
+      pairing_url: pairing.pairingUrl,
+      verification_code: pairing.verificationCode,
+      expires_at: pairing.expiresAt,
+    });
   });
 
   router.get("/oauth/pair", (req: Request, res: Response) => {
-    const config = loadRuntimeConfig();
     res.setHeader("Cache-Control", "no-store");
     const continuation = pairingContinuation(req.query.continue);
     if (req.query.continue !== undefined && !continuation) {
       res.status(400).type("html").send(renderPairingResult(false));
       return;
     }
-    const paired = consumeOwnerPairing(req, res, req.query.code, config.serverUrl);
+    if (!hasPendingOwnerPairing(req.query.code)) {
+      res.status(400).type("html").send(renderPairingResult(false));
+      return;
+    }
+    res.type("html").send(renderPairingPrompt(req.query.code as string, continuation));
+  });
+
+  router.post("/oauth/pair", (req: Request, res: Response) => {
+    const config = loadRuntimeConfig();
+    res.setHeader("Cache-Control", "no-store");
+    const continuation = pairingContinuation(req.body.continue);
+    if (req.body.continue !== undefined && req.body.continue !== "" && !continuation) {
+      res.status(400).type("html").send(renderPairingResult(false));
+      return;
+    }
+    const paired = consumeOwnerPairing(
+      req,
+      res,
+      req.body.code,
+      req.body.verification_code,
+      config.serverUrl,
+    );
     if (paired && continuation) {
       res.redirect(303, continuation);
       return;
@@ -537,7 +563,10 @@ export function createOAuthRouter(): Router {
     }
     const config = loadRuntimeConfig();
     const bootstrapRegistration = isLocalAdminRequest(req) && hasBootstrapAccess(req, config.bootstrapSecret);
-    const publicChatGptDcr = !bootstrapRegistration && config.publicChatGptDcr && isPublicChatGptDcrRequest(req.body);
+    const publicChatGptDcr = !bootstrapRegistration &&
+      config.publicChatGptDcr &&
+      isOwnerRegistrationWindowOpen() &&
+      isPublicChatGptDcrRequest(req.body);
     if (!bootstrapRegistration && !publicChatGptDcr) {
       res.status(401).set("WWW-Authenticate", "Bearer").json({ error: "invalid_token", error_description: "A registration access token is required" });
       return;
@@ -837,12 +866,16 @@ function pruneConsentRequests(now: number): void {
   }
 }
 
+function renderPairingPrompt(code: string, continuation?: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verify PiLink owner</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#0f0f14;color:#e7e7ec;font:16px/1.5 system-ui,sans-serif}.card{width:min(560px,100%);padding:32px;border:1px solid #2b2b38;border-radius:18px;background:#181821;box-shadow:0 24px 80px #0008}h1{font-size:24px;margin:0 0 12px}p{margin:0 0 20px;color:#b5b5c3}.code{display:block;width:100%;padding:14px 16px;border:1px solid #45455a;border-radius:10px;background:#101017;color:#fff;font:600 20px/1.2 ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase}button{width:100%;margin-top:14px;padding:13px;border:0;border-radius:10px;background:#10b981;color:white;font-weight:700;cursor:pointer}.note{margin-top:16px;font-size:13px;color:#8d8d9c}</style></head><body><main class="card"><h1>Verify this computer</h1><p>Enter the verification code shown by PiLink in the local terminal. The public PiLink or pairing URL alone cannot authorize access to this computer.</p><form method="POST" action="/oauth/pair"><input type="hidden" name="code" value="${escapeHtml(code)}">${continuation ? `<input type="hidden" name="continue" value="${escapeHtml(continuation)}">` : ""}<input class="code" name="verification_code" inputmode="text" autocomplete="one-time-code" maxlength="16" required autofocus aria-label="Verification code"><button type="submit">Verify this computer</button></form><p class="note">The code expires quickly and repeated incorrect attempts invalidate this pairing request.</p></main></body></html>`;
+}
+
 function renderPairingResult(paired: boolean): string {
   return renderNoticePage(
     paired ? "PiLink connected" : "Invalid connection",
     paired
-      ? "This browser session can now approve the OAuth connection. Return to the wizard and continue in ChatGPT."
-      : "This code has expired or has already been used. Return to the PiLink wizard and select Retry.",
+      ? "This browser session can now approve the OAuth connection. Return to ChatGPT and continue the connection."
+      : "This pairing request is invalid, expired, already used, or the verification code was incorrect. Start a new local PiLink pairing if needed.",
     paired,
   );
 }

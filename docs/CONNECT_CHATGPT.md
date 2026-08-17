@@ -99,20 +99,29 @@ client-registration methods.
 
 ### Dynamic Client Registration
 
-Use DCR when the plugin builder offers it:
+Use DCR when the plugin builder offers it. This is the preferred setup because
+there is no client secret to copy between PiLink and ChatGPT:
 
-1. Select **OAuth** for the PiLink connection.
-2. Select **Dynamic Client Registration (DCR)** if a registration method is
+1. Start PiLink locally and keep its terminal or VSPiLink wizard open.
+2. In ChatGPT, select **OAuth** for the PiLink connection and paste only the MCP
+   URL ending in `/sse`.
+3. Select **Dynamic Client Registration (DCR)** if a registration method is
    requested.
-3. Create or save the connection.
-4. Select **Connect**, **Authenticate**, or **Sign in with PiLink**.
-5. On the PiLink consent page, verify the client name, endpoint, workspace,
-   and requested scopes.
-6. Select **Approve** once and wait for the redirect back to ChatGPT.
+4. PiLink opens a short owner-registration window from the local loopback
+   process. The public DCR endpoint rejects ChatGPT registration attempts when
+   that local window is closed.
+5. Open the one-use PiLink pairing page launched by the CLI/VSPiLink and enter
+   the short verification code shown only by the local PiLink process. The
+   pairing URL by itself does not create an owner session.
+6. Back in ChatGPT, select **Connect**, **Authenticate**, or **Sign in with
+   PiLink**. On the PiLink consent page, verify the client name, endpoint,
+   workspace, and requested scopes, then select **Approve** once.
 
 DCR registers the callback and client automatically. Do **not** search for a
 callback/fallback URL, invent a client ID, or paste a secret when DCR succeeds.
-PiLink uses Authorization Code with PKCE for the public DCR client.
+PiLink constrains this path to ChatGPT callback URLs, uses a secretless public
+client with Authorization Code + S256 PKCE, rate-limits registration, and still
+requires the paired owner browser session before OAuth consent can succeed.
 
 ### User-defined compatibility fallback
 
@@ -129,8 +138,10 @@ client but cannot use DCR:
 6. Request only the scopes required for the intended tools.
 
 Never paste the client secret into ChatGPT conversation text, a repository,
-issue, screenshot, or log. If the builder does not expose these controls, the
-manual fallback is not available on that surface.
+issue, screenshot, or log. The local pairing verification code is also
+short-lived and should be entered only into the PiLink pairing page opened for
+that setup. If the builder does not expose these controls, the manual fallback
+is not available on that surface.
 
 ### Legacy Developer Mode
 

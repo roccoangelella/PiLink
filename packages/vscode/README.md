@@ -79,7 +79,9 @@ including on a Pro plan.
    public catalog result named "MCP server."
 7. Complete OAuth once. Prefer **Dynamic Client Registration (DCR)** when it is
    available; DCR does not require you to copy a callback URL, client ID, or
-   client secret.
+   client secret. VSPiLink opens a one-use owner pairing page and shows a
+   separate short local verification code, so possession of the public pairing
+   URL alone cannot authorize the browser.
 8. Start a bounded read-only Work task, verify the reported workspace, and
    authorize writes only when the scope is correct.
 

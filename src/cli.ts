@@ -1070,6 +1070,28 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean, allowAd
       console.error("An OAuth client is already configured. Use 'pilink start --setup' to register another client.");
       return;
     }
+
+    if (runtimeConfig.oauthConsentMode === "paired" && runtimeConfig.publicChatGptDcr) {
+      const externallyManagedPairing = process.env.PILINK_OAUTH_SETUP_DRIVER === "vscode";
+      const ownerPairing = externallyManagedPairing
+        ? undefined
+        : await requestOwnerPairing(
+            runtimeConfig.port,
+            runtimeConfig.bootstrapSecret,
+            serverUrl,
+          );
+      printChatGptDcrSetupInstructions(serverUrl);
+      if (ownerPairing) {
+        openOwnerPairing(ownerPairing);
+        console.error("Back in ChatGPT, save/connect the MCP URL and choose Dynamic Client Registration (DCR) if prompted.");
+        console.error("PiLink accepts that secretless PKCE registration only during this short owner-opened setup window.");
+        console.error("After verifying this computer in the browser, complete the PiLink OAuth approval in ChatGPT.\n");
+      } else {
+        console.error("VSPiLink will open the local-owner verification step and the short DCR registration window.\n");
+      }
+      return;
+    }
+
     printChatGptSetupInstructions(serverUrl);
     const readline = createInterface({ input: process.stdin, output: process.stderr });
     let callbackUrl: string;
@@ -1113,6 +1135,7 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean, allowAd
 
 interface CliOwnerPairing {
   pairingUrl: string;
+  verificationCode: string;
   expiresAt: string;
 }
 
@@ -1144,12 +1167,18 @@ async function requestOwnerPairing(
     throw new Error("Owner pairing response is invalid");
   }
   const pairingUrl = (payload as Record<string, unknown>).pairing_url;
+  const verificationCode = (payload as Record<string, unknown>).verification_code;
   const expiresAt = (payload as Record<string, unknown>).expires_at;
-  if (typeof pairingUrl !== "string" || typeof expiresAt !== "string") {
+  if (
+    typeof pairingUrl !== "string" ||
+    typeof verificationCode !== "string" ||
+    !/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/u.test(verificationCode) ||
+    typeof expiresAt !== "string"
+  ) {
     throw new Error("Owner pairing response is invalid");
   }
   validateOwnerPairingUrl(pairingUrl, expectedServerUrl, expiresAt);
-  return { pairingUrl, expiresAt };
+  return { pairingUrl, verificationCode, expiresAt };
 }
 
 function validateOwnerPairingUrl(pairingUrl: string, expectedServerUrl: string, expiresAt: string): void {
@@ -1176,8 +1205,10 @@ function validateOwnerPairingUrl(pairingUrl: string, expectedServerUrl: string, 
 function openOwnerPairing(pairing: CliOwnerPairing): void {
   console.error("Open this one-use owner pairing URL in the same browser where you use ChatGPT:");
   console.error(pairing.pairingUrl);
+  console.error(`Local verification code: ${pairing.verificationCode}`);
+  console.error("The URL alone cannot authorize this computer; the browser must also receive the code shown only by this local PiLink process.");
   if (!shouldOpenBrowser()) {
-    console.error("Automatic browser opening is disabled for this non-interactive session. Open the URL printed above manually.");
+    console.error("Automatic browser opening is disabled for this non-interactive session. Open the URL printed above manually and enter the local verification code.");
     return;
   }
   const opener = process.platform === "win32"
@@ -1191,11 +1222,11 @@ function openOwnerPairing(pairing: CliOwnerPairing): void {
     windowsHide: true,
   }).status === 0;
   if (opened) {
-    console.error("PiLink opened the one-use owner pairing page in your browser. Confirm that it reports success before clicking Scan Tools.");
+    console.error("PiLink opened the owner pairing page. Enter the local verification code there before continuing in ChatGPT.");
     return;
   }
   console.error("PiLink could not open the owner pairing page automatically.");
-  console.error("Open the URL printed above manually, confirm success, then return to ChatGPT.");
+  console.error("Open the URL printed above manually, enter the local verification code, then return to ChatGPT.");
 }
 
 function shouldOpenBrowser(): boolean {
@@ -1209,12 +1240,22 @@ function shouldOpenBrowser(): boolean {
   return process.stdin.isTTY === true && process.env.CI !== "true";
 }
 
-function printChatGptSetupInstructions(serverUrl: string): void {
-  console.error("\n=== First-time ChatGPT setup ===");
+function printChatGptDcrSetupInstructions(serverUrl: string): void {
+  console.error("\n=== First-time ChatGPT setup (safe DCR) ===");
   console.error("1. In ChatGPT, open Settings → Apps/Connectors (or your MCP connections page) → Add connection.");
   console.error(`2. Set the connection/MCP server URL to: ${serverUrl}/sse`);
   console.error("3. Select Authentication: OAuth.");
-  console.error("4. Open Advanced OAuth settings and select Registration method: User defined.");
+  console.error("4. Select Dynamic Client Registration (DCR) if ChatGPT asks for a registration method.");
+  console.error("5. Do not copy a callback URL, client ID, or client secret. ChatGPT registers a secretless PKCE client automatically.");
+  console.error("6. PiLink will now open a local-owner verification step for this computer.");
+}
+
+function printChatGptSetupInstructions(serverUrl: string): void {
+  console.error("\n=== First-time ChatGPT setup (manual OAuth fallback) ===");
+  console.error("1. In ChatGPT, open Settings → Apps/Connectors (or your MCP connections page) → Add connection.");
+  console.error(`2. Set the connection/MCP server URL to: ${serverUrl}/sse`);
+  console.error("3. Select Authentication: OAuth.");
+  console.error("4. Only if DCR is unavailable, open Advanced OAuth settings and select Registration method: User defined.");
   console.error("5. Copy ChatGPT's callback URL and paste it below. PiLink will create and print the client ID and secret.");
 }
 

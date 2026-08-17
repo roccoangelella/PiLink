@@ -75,7 +75,7 @@ test("quick tunnel restart registers a new OAuth client without --setup", {
     throw new Error(`${error.message}\nCLI output:\n${output}`);
   });
   assert.match(output, /=== Cloudflare Quick Tunnel started ===/);
-  assert.match(output, /=== First-time ChatGPT setup ===/);
+  assert.match(output, /=== First-time ChatGPT setup \(manual OAuth fallback\) ===/);
   assert.doesNotMatch(output, /An OAuth client is already configured/);
 
   cliProcess.stdin.write("https://chatgpt.example/new-callback\n");

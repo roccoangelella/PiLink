@@ -237,7 +237,7 @@ for (const mode of ["single", "collaboration"]) {
   });
 }
 
-test("paired CLI setup opens a one-use owner session before ChatGPT OAuth", async (t) => {
+test("paired CLI setup uses secretless DCR plus a local verification code", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-cli-paired-"));
   const configPath = path.join(root, ".env");
   const fakeCloudflared = path.join(root, "cloudflared");
@@ -274,30 +274,68 @@ test("paired CLI setup opens a one-use owner session before ChatGPT OAuth", asyn
 
   await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
-  await waitFor(() => output.includes("Paste callback URL here:"));
-  cliProcess.stdin.write("https://chatgpt.example/paired-callback\n");
-  await waitFor(() => output.includes("one-use owner pairing page"));
+  await waitFor(() => output.includes("Local verification code:"));
+  assert.match(output, /First-time ChatGPT setup \(safe DCR\)/);
+  assert.match(output, /Dynamic Client Registration \(DCR\)/);
+  assert.doesNotMatch(output, /Paste callback URL here:|Client secret:/);
 
+  const verificationCode = output.match(/Local verification code: ([A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4})/u)?.[1];
+  assert.ok(verificationCode);
   const pairingUrl = (await fs.readFile(browserLog, "utf8")).trim();
   const parsedPairing = new URL(pairingUrl);
   assert.equal(parsedPairing.origin, "https://cli-test.trycloudflare.com");
   assert.equal(parsedPairing.pathname, "/oauth/pair");
   assert.match(parsedPairing.searchParams.get("code") || "", /^[A-Za-z0-9_-]{20,512}$/);
 
-  const paired = await localRequest(port, `${parsedPairing.pathname}${parsedPairing.search}`, {
+  const pairingPrompt = await localRequest(port, `${parsedPairing.pathname}${parsedPairing.search}`, {
     Host: parsedPairing.host,
+  });
+  assert.equal(pairingPrompt.status, 200);
+  assert.equal(pairingPrompt.headers["set-cookie"], undefined, "the public pairing link alone must not authenticate the browser");
+  assert.match(pairingPrompt.body, /verification code shown by PiLink in the local terminal/i);
+
+  const paired = await localRequest(port, "/oauth/pair", {
+    Host: parsedPairing.host,
+    "Content-Type": "application/x-www-form-urlencoded",
+  }, {
+    method: "POST",
+    body: new URLSearchParams({
+      code: parsedPairing.searchParams.get("code") || "",
+      verification_code: verificationCode,
+    }).toString(),
   });
   assert.equal(paired.status, 200);
   const ownerCookie = String(paired.headers["set-cookie"] || "").split(";")[0];
   assert.match(ownerCookie, /^__Host-vspilink_owner=/);
 
+  const redirectUri = "https://chatgpt.com/connector/oauth/CliPaired_123";
+  const registration = await localRequest(port, "/oauth/register", {
+    Host: parsedPairing.host,
+    "Content-Type": "application/json",
+  }, {
+    method: "POST",
+    body: JSON.stringify({
+      client_name: "ChatGPT",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      scope: "mcp:tools offline_access",
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  assert.equal(registration.status, 201);
+  const registeredClient = JSON.parse(registration.body);
+  assert.equal(registeredClient.token_endpoint_auth_method, "none");
+  assert.equal("client_secret" in registeredClient, false);
+
   const store = JSON.parse(await fs.readFile(path.join(root, "data", "clients.json"), "utf8"));
+  assert.equal(store.clients.length, 1);
+  assert.equal(store.clients[0].client_id, registeredClient.client_id);
   const verifier = "v".repeat(64);
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const authorization = new URL("/oauth/authorize", `http://127.0.0.1:${port}`);
   authorization.searchParams.set("response_type", "code");
-  authorization.searchParams.set("client_id", store.clients[0].client_id);
-  authorization.searchParams.set("redirect_uri", "https://chatgpt.example/paired-callback");
+  authorization.searchParams.set("client_id", registeredClient.client_id);
+  authorization.searchParams.set("redirect_uri", redirectUri);
   authorization.searchParams.set("scope", "mcp:tools offline_access");
   authorization.searchParams.set("state", "paired-cli-test");
   authorization.searchParams.set("code_challenge", challenge);
@@ -333,21 +371,15 @@ test("start --setup resets generated state before the first-time flow", async (t
   cliProcess.stdin.write("2\n");
   await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
-  await waitFor(() => output.includes("Paste callback URL here:"));
+  await waitFor(() => output.includes("Local verification code:"));
   const health = await fetch(`http://127.0.0.1:${port}/health`);
   assert.equal(health.status, 200);
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.ok(output.endsWith("> "), "The callback prompt must remain the final output while input is pending");
-  assert.doesNotMatch(output, /\[HTTP\] GET \/health/);
-  cliProcess.stdin.write("https://chatgpt.example/renamed-repository-callback\n");
-  await waitFor(() => output.includes("Scope: mcp:tools"));
+  await waitFor(() => output.includes("[HTTP] GET /health → 200"));
+  assert.match(output, /First-time ChatGPT setup \(safe DCR\)/);
   assert.match(output, /Automatic browser opening is disabled for this non-interactive session/);
-  assert.doesNotMatch(output, /opened the one-use owner pairing page/);
-  assert.match(output, /\[HTTP\] GET \/health → 200/);
+  assert.doesNotMatch(output, /Paste callback URL here:|Client secret:/);
 
-  const store = JSON.parse(await fs.readFile(path.join(root, "clients.json"), "utf8"));
-  assert.equal(store.clients.length, 1);
-  assert.deepEqual(store.clients[0].redirect_uris, ["https://chatgpt.example/renamed-repository-callback"]);
+  await assert.rejects(fs.stat(path.join(root, "clients.json")), { code: "ENOENT" });
   assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PI_WORK_DIR=${escapeRegExp(root)}`));
 });
 
@@ -385,8 +417,8 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   await waitFor(() => output.includes("Type DIRECT after completing the router configuration:"));
   cliProcess.stdin.write("DIRECT\n");
   await waitFor(() => output.includes("Detecting the public IPv4 address..."));
-  await waitFor(() => output.includes("Paste callback URL here:"));
-  assert.ok(output.indexOf("certificate obtained successfully") < output.indexOf("Paste callback URL here:"), "OAuth setup must wait for Caddy's certificate");
+  await waitFor(() => output.includes("Local verification code:"));
+  assert.ok(output.indexOf("certificate obtained successfully") < output.indexOf("First-time ChatGPT setup (safe DCR)"), "OAuth setup must wait for Caddy's certificate");
   assert.match(output, /forward public TCP port 80 to this computer's TCP port 8080/);
   assert.match(output, /=== Direct nip\.io hosting started ===/);
   assert.match(output, /Wait for Caddy to report that it obtained a public TLS certificate before connecting ChatGPT/);
@@ -398,8 +430,8 @@ test("first start configures direct nip.io hosting through Caddy", async (t) => 
   assert.match(caddyfile, /https_port 8443/);
   assert.match(await fs.readFile(configPath, "utf8"), /PI_HOSTING_MODE=nip-io/);
   assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PI_NIP_IO_HOSTNAME=${escapeRegExp(hostname)}`));
-  cliProcess.stdin.write("https://chatgpt.example/nip-io-callback\n");
-  await waitFor(() => output.includes("Scope: mcp:tools"));
+  assert.match(output, /Local verification code: [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}/u);
+  assert.doesNotMatch(output, /Paste callback URL here:|Client secret:/);
 });
 
 test("a clean direct-hosting setup installs and extracts a checksum-verified Caddy archive", {
@@ -459,7 +491,7 @@ test("a clean direct-hosting setup installs and extracts a checksum-verified Cad
   cliProcess.stdin.write("n\n");
   await waitFor(() => output.includes("Type DIRECT after completing the router configuration:"));
   cliProcess.stdin.write("DIRECT\n");
-  await waitFor(() => output.includes("Paste callback URL here:")).catch((error) => {
+  await waitFor(() => output.includes("Local verification code:")).catch((error) => {
     throw new Error(`${error.message}\nCLI output:\n${output}`);
   });
 
@@ -467,8 +499,8 @@ test("a clean direct-hosting setup installs and extracts a checksum-verified Cad
   const installed = path.join(root, "bin", "caddy");
   assert.equal((await fs.stat(installed)).isFile(), true);
   assert.equal((await fs.stat(installed)).mode & 0o777, 0o700);
-  cliProcess.stdin.write("\n");
-  await waitFor(() => output.includes("client registration skipped"));
+  assert.match(output, /Local verification code: [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}/u);
+  assert.doesNotMatch(output, /Paste callback URL here:|Client secret:/);
   cliProcess.kill("SIGINT");
   await once(cliProcess, "exit");
 });
@@ -898,11 +930,11 @@ test("start --setup option 1 creates a separate instance without deleting existi
   cliProcess.stdin.write(`${newPort}\n`);
   await waitFor(() => output.includes("Select hosting [1/2/3]:"));
   cliProcess.stdin.write("1\n");
-  await waitFor(() => output.includes("Paste callback URL here:"));
+  await waitFor(() => output.includes("Local verification code:"));
   const health = await fetch(`http://127.0.0.1:${newPort}/health`);
   assert.equal(health.status, 200);
-  cliProcess.stdin.write("https://chatgpt.example/sep-callback\n");
-  await waitFor(() => output.includes("Scope: mcp:tools"));
+  assert.match(output, /Local verification code: [A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}/u);
+  assert.doesNotMatch(output, /Paste callback URL here:|Client secret:/);
 
   const originalStore = JSON.parse(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"));
   assert.equal(originalStore.clients[0].client_id, "original-client");
@@ -938,13 +970,13 @@ async function availablePort() {
   return port;
 }
 
-async function localRequest(port, requestPath, headers = {}) {
+async function localRequest(port, requestPath, headers = {}, options = {}) {
   return new Promise((resolve, reject) => {
     const request = http.request({
       host: "127.0.0.1",
       port,
       path: requestPath,
-      method: "GET",
+      method: options.method || "GET",
       headers,
     }, (response) => {
       const chunks = [];
@@ -956,7 +988,7 @@ async function localRequest(port, requestPath, headers = {}) {
       }));
     });
     request.once("error", reject);
-    request.end();
+    request.end(options.body);
   });
 }
 

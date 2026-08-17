@@ -186,6 +186,7 @@ test("private admin endpoints report real ChatGPT activity and create one-use pa
     if (url.pathname === "/admin/oauth/pairing") {
       response.end(JSON.stringify({
         pairing_url: "https://mcp.example.test/oauth/pair?code=one-use",
+        verification_code: "ABCD-2345",
         expires_at: "2026-08-03T01:00:00.000Z",
       }));
       return;
@@ -200,6 +201,7 @@ test("private admin endpoints report real ChatGPT activity and create one-use pa
   assert.equal(status.activeSessions, 3);
   assert.deepEqual(await createOwnerPairing(port, bootstrapSecret), {
     pairingUrl: "https://mcp.example.test/oauth/pair?code=one-use",
+    verificationCode: "ABCD-2345",
     expiresAt: "2026-08-03T01:00:00.000Z",
   });
   assert.deepEqual(observed, [
