@@ -14,7 +14,8 @@ import type { OAuthClient } from "./types.js";
 const LOCAL_APPROVAL_TIMEOUT_MS = 90_000;
 const CLIENT_ID_PATTERN = /^pi_[a-f0-9]{16}$/iu;
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/u;
-const UNSAFE_TERMINAL_TEXT = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
+const UNSAFE_TERMINAL_TEXT = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
+const UNSAFE_TERMINAL_TEXT_GLOBAL = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
 
 interface LocalApprovalRequest {
   client: OAuthClient;
@@ -204,7 +205,7 @@ function singleQueryValue(value: unknown): string | undefined {
 }
 
 function terminalText(value: string, maxLength: number): string {
-  return value.replace(UNSAFE_TERMINAL_TEXT, " ").slice(0, maxLength);
+  return value.replace(UNSAFE_TERMINAL_TEXT_GLOBAL, " ").slice(0, maxLength);
 }
 
 function maskClientId(clientId: string): string {
