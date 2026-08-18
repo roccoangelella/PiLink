@@ -37,7 +37,7 @@ assertRequiredFiles([
   ...requiredDocumentation.map((filename) => path.join(repositoryRoot, "docs", filename)),
 ]);
 
-runNpm(["run", "build"], repositoryRoot);
+runNpm(["run", "build:core"], repositoryRoot);
 run(process.execPath, [path.join(scriptDirectory, "build.mjs")], repositoryRoot);
 
 fs.rmSync(runtimeDirectory, { recursive: true, force: true });
