@@ -3,9 +3,12 @@ import fs from "node:fs";
 import test from "node:test";
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  displayName?: string;
   description?: string;
+  capabilities?: { untrustedWorkspaces?: { restrictedConfigurations?: string[] } };
   contributes?: {
-    commands?: Array<{ command?: string; title?: string }>;
+    commands?: Array<{ command?: string; title?: string; category?: string }>;
+    configuration?: { title?: string; properties?: Record<string, unknown> };
     viewsContainers?: { secondarySidebar?: Array<{ title?: string }> };
     views?: Record<string, Array<{ name?: string }>>;
   };
@@ -14,10 +17,13 @@ const manifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.me
 const commands = manifest.contributes?.commands || [];
 const commandIds = commands.map((entry) => entry.command);
 
-test("the extension describes itself as a PiLink bridge control surface", () => {
-  assert.match(manifest.description || "", /Start, connect, and manage the PiLink MCP bridge/);
+test("the extension presents itself as PiLink's MCP bridge", () => {
+  assert.equal(manifest.displayName, "PiLink — MCP Bridge");
+  assert.match(manifest.description || "", /Start, connect, and monitor the PiLink MCP bridge/);
   assert.equal(manifest.contributes?.viewsContainers?.secondarySidebar?.[0]?.title, "PiLink");
   assert.equal(manifest.contributes?.views?.vspilinkSecondaryViewContainer?.[0]?.name, "PiLink");
+  assert.equal(manifest.contributes?.configuration?.title, "PiLink");
+  for (const command of commands) assert.equal(command.category, "PiLink");
 });
 
 test("the command palette exposes only ordinary recovery and navigation entry points", () => {
@@ -47,5 +53,16 @@ test("state-sensitive, dangerous and specialist commands are not promoted into t
     "vspilink.reset",
     "vspilink.legacySetup",
   ];
-  for (const command of hidden) assert.ok(!commandIds.includes(command), `${command} must stay behind the dashboard's state-aware UI`);
+  for (const command of hidden) assert.ok(!commandIds.includes(command), `${command} must stay out of the ordinary palette`);
+});
+
+test("specialist native-MCP scope is no longer a user-facing setting", () => {
+  const properties = manifest.contributes?.configuration?.properties || {};
+  assert.ok(!("vspilink.nativeMcpScope" in properties));
+  assert.ok(!(manifest.capabilities?.untrustedWorkspaces?.restrictedConfigurations || []).includes("vspilink.nativeMcpScope"));
+  assert.deepEqual(Object.keys(properties), [
+    "vspilink.openOnStartup",
+    "vspilink.configPath",
+    "vspilink.nodeExecutable",
+  ]);
 });
