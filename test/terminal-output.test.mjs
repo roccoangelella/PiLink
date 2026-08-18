@@ -6,7 +6,7 @@ import {
   filterInteractiveTerminalLine,
   shouldQuietInteractiveStart,
   terminalLogsAreVerbose,
-} from "../dist/cli.js";
+} from "../dist/terminal-launcher.js";
 
 test("interactive pilink start is quiet by default only in a TTY", () => {
   assert.equal(shouldQuietInteractiveStart(["start"], true, {}), true);
