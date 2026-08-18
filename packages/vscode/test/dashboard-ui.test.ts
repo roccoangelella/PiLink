@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const script = fs.readFileSync(new URL("../media/main.js", import.meta.url), "utf8");
-const styles = fs.readFileSync(new URL("../media/styles.css", import.meta.url), "utf8");
+const script = fs.readFileSync(new URL("../media/app.js", import.meta.url), "utf8");
+const styles = fs.readFileSync(new URL("../media/app.css", import.meta.url), "utf8");
+const dashboard = fs.readFileSync(new URL("../src/dashboard.ts", import.meta.url), "utf8");
 
 function functionSource(name: string): string {
   const start = script.indexOf(`  function ${name}(`);
@@ -12,281 +13,136 @@ function functionSource(name: string): string {
   return script.slice(start, next === -1 ? script.length : next);
 }
 
-test("the dashboard exposes an explicit runtime workflow and keeps surfaces separate", () => {
+test("the dashboard is a PiLink control surface rather than a second chat product", () => {
   assert.match(script, /brand__title", "PiLink"/);
-  assert.match(script, /VSPiLink · optional VS Code extension/);
-  assert.match(script, /restoredSurfaceMode\(restoredUiState\)/);
-  assert.match(script, /value\.version === UI_STATE_VERSION/);
-  assert.match(script, /setState\(\{ version: UI_STATE_VERSION, mode: uiMode \}\)/);
-  assert.match(script, /selectRuntimeMode/);
-  assert.match(script, /runtimeMode\.configured/);
-  assert.match(functionSource("renderRuntimeModeChooser"), /Single-agent/);
-  assert.match(functionSource("renderRuntimeModeChooser"), /Public chat & orchestration/);
-  assert.match(functionSource("runtimeModeChoice"), /selectRuntimeMode/);
-  const render = functionSource("render");
-  assert.match(render, /renderRuntimeModeChooser\(\)/);
-  assert.match(render, /renderRuntimeModePrompt\(\)/);
-  assert.match(render, /uiMode === "remote"/);
-  assert.match(render, /renderChatGptWorkspace\(\)/);
-  assert.match(render, /renderRemoteAgents\(\)/);
-  assert.match(render, /renderTaskBoard\(\)/);
-  assert.match(render, /renderLocalModeIntro\(\)/);
-  assert.match(render, /renderConversation\(\)/);
-  assert.match(render, /renderServerDetails\(\)/);
+  assert.match(functionSource("primaryModel"), /Start PiLink/);
+  assert.match(functionSource("primaryModel"), /Connect ChatGPT/);
+  assert.match(functionSource("primaryModel"), /Open ChatGPT Work/);
+  assert.doesNotMatch(script, /mode-switch/);
+  assert.doesNotMatch(script, /buildComposer|composerInput|renderConversation|renderTaskBoard/);
+  assert.doesNotMatch(script, /Waiting for the first agent message/);
 });
 
-test("volatile health timestamps do not trigger a visible-state render", () => {
-  const healthSource = functionSource("healthIsOnline");
-  const signatureSource = functionSource("visibleStateSignature");
-  const signature = Function(`
-    let hasReceivedState = true;
-    function isRecord(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
-    function asText(value, fallback) {
-      if (typeof value === "string") return value;
-      if (typeof value === "number" || typeof value === "boolean") return String(value);
-      return fallback || "";
-    }
-    function errorMessage(value) { return value ? String(value) : ""; }
-    ${healthSource}
-    ${signatureSource}
-    return visibleStateSignature;
-  `)() as (state: Record<string, unknown>) => string;
-
-  assert.doesNotMatch(signatureSource, /health:\s*state\.health/);
-  assert.match(signatureSource, /healthOnline:\s*healthIsOnline\(state\.health\)/);
-  assert.equal(
-    signature({ health: { online: true, timestamp: "2026-08-04T10:00:00Z" } }),
-    signature({ health: { online: true, timestamp: "2026-08-04T10:00:02Z" } }),
-  );
-  assert.notEqual(
-    signature({ health: { online: true, timestamp: "2026-08-04T10:00:00Z" } }),
-    signature({ health: { online: false, timestamp: "2026-08-04T10:00:02Z" } }),
-  );
+test("first run defaults to the safe single-agent path", () => {
+  const primary = functionSource("primaryModel");
+  assert.match(primary, /single-agent workflow, project-folder access, no unrestricted shell/);
+  assert.match(primary, /Quick start for ChatGPT/);
+  assert.match(primary, /hosting: \{ kind: "quick-tunnel" \}/);
+  assert.match(primary, /accessMode: "workspace"/);
+  assert.match(primary, /Local only/);
+  assert.match(primary, /Stable endpoint…/);
+  assert.match(primary, /temporary HTTPS address/);
+  assert.doesNotMatch(primary, /Full access.*variant: "primary"/s);
 });
 
-test("real renders preserve transcript, composer and disclosure state", () => {
-  const render = functionSource("render");
-  const capture = functionSource("captureRenderState");
-  const restore = functionSource("restoreRenderState");
-
-  assert.match(render, /const renderState = captureRenderState\(\)/);
-  assert.match(render, /restoreRenderState\(renderState, revision\)/);
-  assert.match(capture, /transcript\.scrollTop/);
-  assert.match(capture, /document\.activeElement === input/);
-  assert.match(capture, /draft: input\.value/);
-  assert.match(capture, /details\[data-render-state-key\]/);
-  assert.match(capture, /#vspilink-callback-url/);
-  assert.match(capture, /value: callbackInput\.value/);
-  assert.match(restore, /details\.open = renderState\.details\[key\]/);
-  assert.match(restore, /refs\.composerInput\.value = composer\.draft/);
-  assert.match(restore, /callbackInput\.value = renderState\.callback\.value/);
-  assert.match(restore, /setSelectionRange/);
-  assert.match(restore, /revision !== renderRevision/);
-  assert.match(restore, /transcript\.scrollTop = renderState\.transcript\.scrollTop/);
-  assert.match(functionSource("renderCompactAgents"), /renderStateKey = "agents"/);
-  assert.match(functionSource("renderServerDetails"), /renderStateKey = "server"/);
-  assert.match(functionSource("renderLogsDisclosure"), /renderStateKey = "logs"/);
+test("normal lifecycle exposes one obvious action for each state", () => {
+  const primary = functionSource("primaryModel");
+  assert.match(primary, /PiLink is stopped/);
+  assert.match(primary, /Start PiLink", command: "start", variant: "primary"/);
+  assert.match(primary, /PiLink is online/);
+  assert.match(primary, /Connect ChatGPT", command: "connectChatGpt", variant: "primary"/);
+  assert.match(primary, /Finish the ChatGPT connection/);
+  assert.match(primary, /Continue connection", command: "connectChatGpt", variant: "primary"/);
+  assert.match(primary, /ChatGPT is using PiLink/);
+  assert.match(primary, /PiLink is ready/);
+  assert.match(primary, /Open ChatGPT Work", command: "openChatGpt", variant: "primary"/);
+  assert.match(primary, /this panel only manages the bridge/);
 });
 
-test("the primary onboarding follows ChatGPT Work and keeps legacy setup secondary", () => {
-  assert.doesNotMatch(
-    script,
-    /Apps\s*(?:→|->)\s*Create|Workspace settings|Enterprise\/Edu|Scan Tools|admin\/ca/i,
-  );
-  const guide = functionSource("renderChatGptConnectionGuide");
-  assert.match(guide, /Connect ChatGPT Work to this workspace/);
-  assert.match(guide, /Open ChatGPT Work/);
-  assert.match(guide, /Install or connect the private PiLink plugin/);
-  assert.match(guide, /personal or workspace plugin source/);
-  assert.match(guide, /Searching for “mcp server” will show other vendors/);
-  assert.match(guide, /Legacy Developer Mode compatibility/);
-  assert.match(guide, /supported primary Work flow/);
-  assert.match(guide, /destination: "work"/);
-  assert.match(guide, /destination: "plugins"/);
-  const oauth = functionSource("renderCallbackStep");
-  assert.match(oauth, /Dynamic Client Registration \(DCR\)/);
-  assert.match(oauth, /you do not need to find or copy it/);
-  assert.match(oauth, /Only when DCR is unavailable: User-Defined setup/);
-  assert.match(oauth, /Callback URL shown by ChatGPT/);
+test("advanced capabilities are progressively disclosed", () => {
+  const advanced = functionSource("renderAdvanced");
+  assert.match(advanced, /el\("details", "advanced"\)/);
+  assert.match(advanced, /Hosting, workflow, access, integrations/);
+  assert.match(advanced, /advancedServerSection\(\)/);
+  assert.match(advanced, /advancedWorkflowSection\(\)/);
+  assert.match(advanced, /advancedAccessSection\(\)/);
+  assert.match(advanced, /advancedIntegrationSection\(\)/);
+  assert.match(advanced, /advancedLocalAgentSection\(\)/);
+
+  const workflow = functionSource("advancedWorkflowSection");
+  assert.match(workflow, /Single-agent is the default/);
+  assert.match(workflow, /Enable collaboration…/);
+  assert.match(workflow, /Switch back to single-agent/);
+  assert.match(workflow, /selectRuntimeMode/);
+
+  const access = functionSource("advancedAccessSection");
+  assert.match(access, /Start with Full access…/);
+  assert.match(access, /client\.grantTypes\.includes\("authorization_code"\)/);
+  assert.match(access, /mcp:tools/);
+  assert.match(access, /!eligible/);
 });
 
-test("chat messages follow the narrow dashboard contract", () => {
-  const normalizeState = functionSource("normalizeState");
-  assert.match(normalizeState, /agentId: safeAgentId\(chat\.agentId\)/);
-  assert.match(normalizeState, /status: cleanText\(chat\.status/);
-  assert.match(normalizeState, /busy: chat\.busy === true/);
-  assert.match(normalizeState, /messages: normalizeChatMessages\(chat\.messages\)/);
-  assert.match(normalizeState, /error: cleanText\(chat\.error/);
-  assert.match(normalizeState, /authReady: agentRuntime\.authReady === true/);
-
-  const messages = functionSource("normalizeChatMessages");
-  assert.match(messages, /source\.role !== "user"/);
-  assert.match(messages, /source\.role !== "assistant"/);
-  assert.match(messages, /source\.role !== "status"/);
-  assert.match(messages, /cursor: nonNegativeInteger/);
-  assert.match(messages, /createdAt: cleanText/);
+test("optional local agents remain available without becoming the main UI", () => {
+  const local = functionSource("advancedLocalAgentSection");
+  assert.match(local, /Optional local Pi agent/);
+  assert.match(local, /separate from ChatGPT MCP/);
+  assert.match(local, /Provider & model…/);
+  assert.match(local, /Create local agent…/);
+  assert.match(local, /viewAgentOutput/);
+  assert.match(local, /stopAgent/);
 });
 
-test("the upstream public-agent chat and task board use bounded normalized data", () => {
-  const state = functionSource("normalizeState");
-  assert.match(state, /messages: normalizeCollaborationMessages\(collaboration\.messages\)/);
-  assert.match(state, /tasks: normalizeCollaborationTasks\(collaboration\.tasks\)/);
-  assert.match(state, /activity: normalizeToolActivity\(collaboration\.activity\)/);
-  assert.match(state, /clients: normalizeCollaborationClients\(collaboration\.clients\)/);
+test("status distinguishes service, OAuth readiness and active MCP sessions", () => {
+  const remote = functionSource("remoteStatus");
+  assert.match(remote, /Local only/);
+  assert.match(remote, /OAuth ready/);
+  assert.match(remote, /Authorize/);
+  assert.match(remote, /Not connected/);
+  assert.match(remote, /activeSessions/);
 
-  const messages = functionSource("normalizeCollaborationMessages");
-  assert.match(messages, /slice\(-20\)/);
-  assert.match(messages, /cleanText\(source\.message, 8192\)/);
-  const tasks = functionSource("normalizeCollaborationTasks");
-  assert.match(tasks, /slice\(0, 200\)/);
-  assert.match(tasks, /cleanText\(source\.artifact, 16384\)/);
-  assert.match(functionSource("renderCollaborationMessage"), /el\("div", "chat-message__body", message\.message\)/);
-  assert.match(functionSource("renderTaskBoard"), /agent_task_\*/);
-  const activity = functionSource("normalizeToolActivity");
-  assert.match(activity, /slice\(-100\)/);
-  assert.match(activity, /source\.outcome === "success"/);
-  assert.doesNotMatch(activity, /args|prompt|path|result|output/);
-  const activityView = functionSource("renderToolActivity");
-  assert.match(activityView, /Recent MCP activity/);
-  assert.match(activityView, /Prompts, paths, arguments, and results are not displayed/);
+  const top = functionSource("topStatus");
+  assert.match(top, /Restricted/);
+  assert.match(top, /Stopped/);
+  assert.match(top, /Connected/);
+  assert.match(top, /Ready/);
+  assert.match(top, /Online/);
 });
 
-test("the remote monitor separates MCP connections from observed agent identities", () => {
-  const status = functionSource("chatStatusModel");
-  assert.match(status, /Active MCP connections:/);
+test("recent activity stays metadata-only and bounded", () => {
+  const normalize = functionSource("normalizeActivity");
+  assert.match(normalize, /slice\(-8\)/);
+  assert.match(normalize, /tool:/);
+  assert.match(normalize, /outcome:/);
+  assert.match(normalize, /durationMs:/);
+  assert.match(normalize, /accessMode:/);
+  assert.doesNotMatch(normalize, /prompt|args|arguments|result|output|path/);
 
-  const workspace = functionSource("renderChatGptWorkspace");
-  assert.match(workspace, /!currentState\.externalMcp\.configured/);
-  assert.match(workspace, /the callback does not need to be entered again/);
-  assert.match(workspace, /The OAuth client is already registered/);
-  assert.match(workspace, /Write in the main ChatGPT tab/);
-  assert.match(workspace, /No coordination activity yet/);
-  assert.match(workspace, /MCP calls and messages published by agents will appear here automatically/);
-  assert.doesNotMatch(workspace, /Waiting for the first agent message/);
-
-  const agents = functionSource("renderRemoteAgents");
-  assert.match(agents, /Observed agent identities/);
-  assert.match(agents, /String\(identities\.size\)/);
-  assert.doesNotMatch(agents, /Math\.max\(identities\.size,\s*currentState\.externalMcp\.activeSessions\)/);
-  assert.match(agents, /This count measures MCP connections, not agents/);
-  assert.match(agents, /Observed MCP clients/);
-  assert.match(agents, /it is not a remote prompt box/);
+  const render = functionSource("renderActivity");
+  assert.match(render, /slice\(-5\)\.reverse\(\)/);
+  assert.match(render, /Metadata only/);
+  assert.match(render, /Arguments, file paths, prompts, and results are intentionally not shown here/);
 });
 
-test("the composer sends on Enter, preserves Shift+Enter and retains an unconfirmed draft", () => {
-  const keys = functionSource("handleComposerKeydown");
-  assert.match(keys, /event\.key === "Enter"/);
-  assert.match(keys, /!event\.shiftKey/);
-  assert.match(keys, /!event\.isComposing/);
-  assert.match(keys, /event\.preventDefault\(\)/);
-  assert.match(keys, /submitChat\(\)/);
-
-  const submit = functionSource("submitChat");
-  assert.match(submit, /postCommand\("sendChat", message\)/);
-  assert.match(submit, /pendingChatSubmission = \{/);
-  assert.doesNotMatch(submit, /refs\.composerInput\.value = ""/);
-
-  const reconcile = functionSource("reconcilePendingChatSubmission");
-  assert.match(reconcile, /entry\.role === "user"/);
-  assert.match(reconcile, /entry\.cursor > pending\.baselineCursor/);
-  assert.match(reconcile, /entry\.text\.trim\(\) === pending\.message/);
-  assert.match(reconcile, /currentState\.chat\.error/);
-
-  const settle = functionSource("settlePendingChatSubmission");
-  assert.match(settle, /if \(accepted\)/);
-  assert.match(settle, /refs\.composerInput\.value === pending\.draft/);
-  assert.match(settle, /refs\.composerInput\.value = pending\.draft/);
-  assert.match(settle, /Your text was preserved/);
+test("polling does not constantly rebuild the dashboard or collapse disclosures", () => {
+  assert.match(script, /if \(signature === lastSignature\) return/);
+  const signature = functionSource("visibleSignature");
+  assert.doesNotMatch(signature, /health/);
+  assert.match(script, /vscode\.getState/);
+  assert.match(script, /vscode\.setState\(uiState\)/);
+  assert.match(script, /advancedOpen/);
+  assert.match(script, /localAgentOpen/);
 });
 
-test("composer availability and controls reflect a ready or busy chat", () => {
-  const composer = functionSource("updateComposerState");
-  assert.match(composer, /uiMode === "local" && isChatReady\(\)/);
-  assert.match(composer, /classList\.toggle\("is-hidden", !ready\)/);
-  assert.match(composer, /refs\.composerInput\.disabled = busy/);
-  assert.match(composer, /refs\.cancelButton\.classList\.toggle\("is-hidden", !busy\)/);
-  assert.match(composer, /refs\.sendButton\.classList\.toggle\("is-hidden", busy\)/);
-  assert.match(composer, /Boolean\(pendingChatSubmission\)/);
-
-  const readiness = functionSource("isChatReady");
-  assert.match(readiness, /currentState\.trusted !== true/);
-  assert.match(readiness, /currentState\.configured !== true/);
-  assert.match(readiness, /!agentIsConfigured\(\)/);
-
-  const agentConfiguration = functionSource("agentIsConfigured");
-  assert.match(agentConfiguration, /currentState\.agentRuntime\.authReady/);
-  assert.doesNotMatch(agentConfiguration, /configuredAuthType/);
+test("webview content is built with textContent rather than HTML interpolation", () => {
+  const element = functionSource("el");
+  assert.match(element, /node\.textContent = String\(content\)/);
+  assert.doesNotMatch(script, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.match(script, /replace\(\/\\0\/g, ""\)/);
 });
 
-test("ChatGPT is primary while local provider, new chat and stop remain available", () => {
-  const initialize = functionSource("initialize");
-  assert.match(initialize, /"ChatGPT MCP"/);
-  assert.match(initialize, /"Pi Local"/);
-  assert.match(initialize, /makeButton\("Open ChatGPT Work", "openChatGpt"/);
-
-  const local = functionSource("renderLocalModeIntro");
-  assert.match(local, /makeButton\("Provider and model", "configureAgents"/);
-  assert.match(local, /makeButton\("New local chat", "newChat"/);
-
-  const composer = functionSource("buildComposer");
-  assert.match(composer, /dataset\.command = "cancelChat"/);
-  assert.match(composer, /aria-label", "Stop the current turn"/);
+test("the new assets are the only dashboard entry point", () => {
+  assert.match(dashboard, /media", "app\.css"/);
+  assert.match(dashboard, /media", "app\.js"/);
+  assert.doesNotMatch(dashboard, /styles\.css|main\.js/);
+  assert.match(dashboard, /Content-Security-Policy/);
+  assert.match(dashboard, /script-src 'nonce-\$\{nonce\}'/);
 });
 
-test("agents are compact and expose spawn, inspect and stop commands", () => {
-  const agents = functionSource("renderCompactAgents");
-  assert.match(agents, /el\("details", "compact-agents"\)/);
-  assert.match(agents, /makeButton\("New agent", "spawnAgent"/);
-  assert.match(agents, /makeButton\("Sign out of provider", "logoutAgent"/);
-  assert.match(agents, /"viewAgentOutput"/);
-  assert.match(agents, /"stopAgent"/);
-  assert.match(agents, /value: agent\.agentId/);
-});
-
-test("server, hosting and MCP controls stay inside advanced details", () => {
-  const server = functionSource("renderServerDetails");
-  assert.match(server, /el\("details", "server-details"\)/);
-  assert.match(server, /MCP server and advanced settings/);
-  assert.match(server, /"copyMcpUrl"/);
-  assert.match(server, /"connectNativeMcp"/);
-  assert.match(server, /"registerClient"/);
-  assert.match(server, /"guidedSetup"/);
-  assert.match(server, /"startUnsafe"/);
-  assert.doesNotMatch(server, /hostingMode === "cloudflare-named"/);
-  assert.match(server, /Manage full access/);
-});
-
-test("untrusted state uses the native workspace trust manager", () => {
-  const empty = functionSource("emptyChatModel");
-  assert.match(empty, /currentState\.trusted === false/);
-  assert.match(empty, /command: "manageTrust"/);
-});
-
-test("a different configured workspace is blocked until the user confirms the open folder", () => {
-  const empty = functionSource("emptyChatModel");
-  assert.match(empty, /currentState\.chat\.status === "workspace-mismatch"/);
-  assert.match(empty, /label: "Use this folder"/);
-  assert.match(empty, /command: "setupChat"/);
-});
-
-test("an empty VS Code window explicitly asks for a workspace", () => {
-  const empty = functionSource("emptyChatModel");
-  assert.match(empty, /currentState\.chat\.status === "needs-workspace"/);
-  assert.match(empty, /label: "Choose folder"/);
-  assert.match(empty, /never chooses a folder implicitly/);
-});
-
-test("all remote text is rendered through safe DOM APIs", () => {
-  assert.doesNotMatch(script, /\.innerHTML\s*=|\.outerHTML\s*=|insertAdjacentHTML|document\.write\s*\(/);
-  assert.match(functionSource("el"), /element\.textContent = asText\(textValue\)/);
-  assert.match(functionSource("renderChatMessage"), /el\("div", "chat-message__body", message\.text\)/);
-});
-
-test("styles keep the transcript primary and the composer pinned", () => {
-  assert.match(styles, /\.conversation-shell\s*\{/);
-  assert.match(styles, /\.transcript\s*\{[\s\S]*?overflow-y:\s*auto/);
-  assert.match(styles, /\.composer-shell\s*\{[\s\S]*?position:\s*fixed/);
-  assert.match(styles, /\.server-details__body\s*\{/);
-  assert.match(styles, /@media \(max-width:\s*720px\)/);
-  assert.match(styles, /@media \(prefers-reduced-motion:\s*reduce\)/);
+test("the layout uses VS Code theme tokens and adapts to a narrow sidebar", () => {
+  assert.match(styles, /--vscode-foreground/);
+  assert.match(styles, /--vscode-button-background/);
+  assert.match(styles, /--vscode-focusBorder/);
+  assert.match(styles, /@media \(max-width: 420px\)/);
+  assert.match(styles, /grid-template-columns: 1fr/);
+  assert.doesNotMatch(styles, /font-family:\s*(?:Arial|Helvetica|Roboto)/i);
 });
