@@ -30,7 +30,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider, vscode.Dis
     }
     const panel = vscode.window.createWebviewPanel(
       "vspilink.dashboard",
-      "VSPiLink",
+      "PiLink",
       { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
       {
         enableScripts: true,
@@ -116,8 +116,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider, vscode.Dis
 
   private html(webview: vscode.Webview): string {
     const nonce = crypto.randomBytes(16).toString("base64");
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "styles.css"));
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "main.js"));
+    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "app.css"));
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "app.js"));
     const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "logo.png"));
     return `<!doctype html>
 <html lang="en">
@@ -126,7 +126,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider, vscode.Dis
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="${styleUri}">
-  <title>PiLink · VSPiLink extension</title>
+  <title>PiLink</title>
 </head>
 <body>
   <div id="app" data-logo-uri="${logoUri}"></div>
