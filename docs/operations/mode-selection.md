@@ -8,22 +8,27 @@ PiLink has two core server capability modes:
 | **Collaborative public chat** | `PI_RUNTIME_MODE=collaboration` | Authenticated agents must coordinate through PiLink's durable chat, tasks, work loop, memory projections, or remote supervised-agent controls. |
 
 `pilink start --mode vscode` is not a third server capability mode. It is only a
-handoff into the optional VSPiLink graphical control surface.
+handoff into the optional PiLink VS Code graphical control surface.
 
-## VSPiLink behavior
+## VS Code launcher behavior
 
-A fresh VSPiLink installation automatically persists **Single agent**. The user
-does not have to understand the collaboration architecture before starting the
-MCP bridge.
+A fresh VSPiLink installation uses **Single agent** for the ordinary graphical
+setup. The user does not have to understand the collaboration architecture
+before starting the MCP bridge.
 
-Collaboration remains available under **Advanced -> Workflow**. Enabling or
-disabling it is an explicit operator action and restarts PiLink so every MCP
-connection sees one coherent tool catalog.
+The main launcher no longer offers collaboration as a peer of the safe start
+buttons. **Quick start for ChatGPT** and **Local only** both use the single-agent
+workflow and Project-folder access.
+
+The retained **Advanced setup...** compatibility flow can still expose a
+workflow selector for operators who deliberately enter that path. An existing
+project already configured for collaboration is also detected rather than
+silently rewritten; the dashboard offers a clear switch back to Single agent.
 
 The graphical dashboard no longer has a top-level ChatGPT-MCP-versus-Pi-Local
 mode selector. ChatGPT is treated as an ordinary remote MCP client of the
-server. The optional local provider/agent runtime remains available under
-Advanced and uses separate provider credentials.
+server. The optional local Pi provider/runtime is separate from the core mode
+and is not promoted as a parallel graphical product.
 
 Neither server mode chooses hosting, authorizes an OAuth client, or grants Full
 machine access.
@@ -87,8 +92,8 @@ access and does not make the filesystem/process boundary broader by itself.
 
 The mode changes the MCP tool catalog and server-side coordination services.
 Changing that policy underneath already-initialized transports could give
-simultaneous clients inconsistent capabilities, so VSPiLink stops/restarts the
-service when the operator changes workflow.
+simultaneous clients inconsistent capabilities, so a mode change requires a
+restart.
 
 OAuth client records and secrets are not recreated merely because the runtime
 mode changes.
@@ -97,16 +102,17 @@ mode changes.
 
 The optional local Pi provider/runtime is separate from the core mode.
 
-In Single agent mode, the loopback-protected VS Code administration path can
-use a configured provider for local supervised work without registering the
-public collaboration toolset.
+In Single agent mode, the loopback-protected administration path can use a
+configured provider for local supervised work without registering the public
+collaboration toolset.
 
 In Collaboration mode, the additional server-side coordination and remote
 supervision services can be registered subject to their own authorization and
 private-state checks.
 
 Provider credentials never substitute for MCP OAuth, and MCP OAuth never signs
-the user into a model provider.
+the user into a model provider. The normal VS Code launcher does not ask users
+to configure this provider path.
 
 ## Headless and SSH operation
 
@@ -145,6 +151,12 @@ Existing collaboration data can remain in the private data directory while the
 server runs in Single agent mode; those collaboration services are simply not
 registered until Collaboration is enabled again.
 
+For an existing VS Code project already in Collaboration mode, the launcher
+shows that as an advanced configuration and can switch it back to Single agent.
+To enable Collaboration from a fresh setup, use the CLI or deliberately enter
+the retained Advanced setup compatibility flow rather than expecting a normal
+main-screen toggle.
+
 ## Troubleshooting
 
 - `runtime_mode` in PiLink health/admin status is the effective core mode, not a
@@ -152,9 +164,9 @@ registered until Collaboration is enabled again.
 - If collaboration tools are missing, check the runtime mode and restart after
   changing it. Do not enable Full access to repair a mode mismatch.
 - A collaboration-disabled response is expected in Single agent mode.
-- The VSPiLink main dashboard shows only bridge status and bounded MCP activity.
-  Open the separate Agent & Task Monitor when collaboration is enabled and you
-  need to inspect published coordination objects.
+- The main VS Code dashboard is a bridge launcher/status panel, not the
+  collaboration console. Use the CLI/Textual operator paths when you need to
+  inspect or operate collaboration-specific state.
 
-See [VSPiLink](../VSCODE_EXTENSION.md) for the graphical flow and
+See [PiLink VS Code extension](../VSCODE_EXTENSION.md) for the graphical flow and
 [Security model](../SECURITY_MODEL.md) for the independent access boundaries.
