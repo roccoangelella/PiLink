@@ -56,8 +56,10 @@
   "scripts": {
     "build": "npm run build:core && node dist/ensure-cli-link.js",
     "build:core": "tsc",
+    "cli": "node dist/terminal-launcher.js",
     "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsc --watch --preserveWatchOutput",
+    "dev:server": "tsx watch src/index.ts",
     "test": "npm run build:core && node --test test/*.test.mjs",
     "vscode:typecheck": "tsc -p packages/vscode/tsconfig.json --noEmit",
     "vscode:build": "npm run build:core && node packages/vscode/scripts/build.mjs",
