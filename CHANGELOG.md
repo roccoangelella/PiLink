@@ -24,6 +24,13 @@ All notable PiLink changes are documented in this file.
 - Reworked extension and operator documentation in English with exact VS Code
   navigation, `run` profile requirements, and separate release/source install
   commands.
+- Source builds now create a self-identifying, repairable user launcher on
+  POSIX systems instead of depending on a fragile source-tree symlink. Builds
+  migrate only recognized PiLink symlinks and continue to refuse unrelated
+  commands.
+- `npm run dev` is now compile/watch only; raw development-server startup moved
+  to the explicit `npm run dev:server` command. `npm run cli -- ...` provides a
+  source-checkout CLI fallback when no user PATH launcher can be created.
 
 ### Security
 
