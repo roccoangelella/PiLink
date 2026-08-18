@@ -74,13 +74,13 @@ export class DashboardProvider implements vscode.WebviewViewProvider, vscode.Dis
     const disposable = webview.onDidReceiveMessage(async (raw: unknown) => {
       const message = parseWebviewMessage(raw);
       if (!message) {
-        void vscode.window.showWarningMessage("VSPiLink ignored an invalid webview message.");
+        void vscode.window.showWarningMessage("PiLink ignored an invalid dashboard message.");
         return;
       }
       try {
         await this.commandHandler(message);
       } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : "The VSPiLink command failed.");
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : "The PiLink command failed.");
       } finally {
         void this.refresh();
       }
