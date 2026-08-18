@@ -28,3 +28,5 @@ tsconfig.json
 **/*.log
 runtime/**/*.tgz
 runtime/package-lock.json
+media/main.js
+media/styles.css
