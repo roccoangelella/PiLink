@@ -10,11 +10,11 @@ the public repository and release packages.
 | Goal | Guide |
 | --- | --- |
 | Install PiLink or the optional VSPiLink extension | [Installation](INSTALLATION.md) |
-| Understand the VSPiLink screen, buttons, statuses, and workflows | [VSPiLink: how the VS Code extension works](VSCODE_EXTENSION.md) |
-| Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
-| Start a first instance | [Getting started](GETTING_STARTED.md) |
-| Choose single-agent, collaboration, or VS Code entry | [Runtime mode selection](operations/mode-selection.md) |
+| Start through the simplified VS Code launcher | [Getting started](GETTING_STARTED.md) |
+| Understand the VSPiLink screen, buttons, statuses, and Advanced features | [VSPiLink: how the VS Code extension works](VSCODE_EXTENSION.md) |
 | Connect ChatGPT Work | [Connect ChatGPT Work](CONNECT_CHATGPT.md) |
+| Understand Single agent vs Collaboration | [Runtime mode selection](operations/mode-selection.md) |
+| Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
 | Diagnose a problem | [Troubleshooting](TROUBLESHOOTING.md) |
 
 ## Public guides
