@@ -7,10 +7,10 @@
 PiLink is a self-hosted, OAuth-protected MCP bridge for the Pi coding-tool
 harness. It gives authorized clients controlled access to a selected project.
 
-The core server and CLI do not require VS Code. **VSPiLink** is the optional
-VS Code control surface for choosing the project, starting/stopping PiLink,
-configuring hosting/OAuth, and checking bridge status. It is not a second chat
-frontend.
+The core server and CLI do not require VS Code. The optional **PiLink VS Code
+extension** is a graphical launcher/status panel for choosing the project,
+starting/stopping PiLink, configuring remote reachability, connecting ChatGPT,
+and checking bridge status. It is not a second chat frontend.
 
 ## Features
 
@@ -24,14 +24,15 @@ frontend.
 - Quick Tunnel, fixed Cloudflare domain, existing-domain, local-only, and legacy
   direct HTTPS hosting.
 - Explicit opt-ins for repository execution and unrestricted machine access.
-- Optional VSPiLink GUI, Textual collaboration monitor, and local Codex plugin.
+- Optional VS Code launcher, Textual collaboration monitor, and local Codex
+  plugin.
 
 ## Requirements
 
 - Node.js **24.18.0 exactly** and npm **11.16.0 exactly** for source builds.
 - A project directory you are willing to trust.
 - A public HTTPS endpoint only for remote clients such as ChatGPT Work.
-- VS Code 1.106 or newer only for VSPiLink.
+- VS Code 1.106 or newer only for the optional extension.
 - Python/Textual only for the optional terminal collaboration monitor.
 
 ## Install from source
@@ -81,7 +82,7 @@ handoff into the optional graphical control surface and is never stored as
 | --- | --- |
 | **Single agent** | Original project-tool bridge without public collaboration services |
 | **Collaboration** | Adds verified chat/tasks, memory/work-loop coordination, and remote supervised-agent controls |
-| **VS Code graphical** | Opens VSPiLink; fresh graphical setups use Single agent automatically |
+| **VS Code graphical** | Opens the PiLink launcher; fresh ordinary graphical setups use Single agent automatically |
 
 For a local server behind an existing reverse proxy:
 
@@ -107,31 +108,36 @@ capability split.
 
 ## Start PiLink from VS Code
 
-VSPiLink's ordinary path is intentionally simpler than the CLI surface:
+The ordinary graphical path is intentionally simpler than the CLI surface:
 
 1. open the project and trust the VS Code window;
 2. open **PiLink** in the Secondary Side Bar;
-3. select **Quick start for ChatGPT**, **Local only**, or **Stable endpoint...**;
+3. select **Quick start for ChatGPT** or **Local only**;
 4. when the public endpoint is ready, select **Connect ChatGPT**;
 5. do the coding task in ChatGPT Work or another MCP client.
 
-The default graphical path uses:
+The ordinary graphical path uses:
 
 - Single agent;
 - Project-folder access;
 - no unrestricted shell;
-- no collaboration services unless explicitly enabled.
+- no collaboration, provider, or native-MCP setup choice.
 
-Advanced hosting, collaboration, Full access, manual OAuth registration, VS
-Code's native MCP provider, and the optional provider-backed local Pi agent are
-kept under **Advanced**.
+**Advanced setup...** deliberately retains the older hosting/setup path for
+stable domains and specialist configurations. That flow can expose additional
+workflow/access choices, so it is not the one-click happy path.
 
-See [VSPiLink](docs/VSCODE_EXTENSION.md) and
+Other specialist features — local provider-backed agents, native VS Code MCP,
+manual OAuth registration, collaboration operation, and Full-access launch —
+remain CLI/backend compatibility capabilities rather than parallel products in
+the main dashboard.
+
+See [PiLink VS Code extension](docs/VSCODE_EXTENSION.md) and
 [Connect ChatGPT Work](docs/CONNECT_CHATGPT.md).
 
 ## Full machine access
 
-Full access is intentionally unsafe and is not part of the normal first-run
+Full access is intentionally unsafe and is not part of the normal graphical
 flow. From the CLI it must be enabled explicitly:
 
 ```bash
@@ -149,8 +155,11 @@ Full access removes the project filesystem boundary and enables process
 execution as the PiLink OS user. It does not grant root automatically, but it
 is remote code execution with that user's authority.
 
-VSPiLink keeps the capability under Advanced and visibly labels saved/active
-Full-access configurations so they cannot look like an ordinary safe start.
+If the VS Code launcher detects an existing Full-access configuration, it shows
+an explicit safety state instead of an ordinary Start button. Quick start and
+Local only never request Full access. Operators who actually need unrestricted
+operation should use the CLI or deliberately review the retained Advanced setup
+compatibility flow.
 
 Read [Security model](docs/SECURITY_MODEL.md) before enabling it.
 
@@ -167,19 +176,24 @@ PiLink supports temporary and stable HTTPS arrangements:
 A remote ChatGPT client needs a reachable HTTPS origin. Recreating a Quick
 Tunnel changes that origin and therefore changes the MCP/OAuth URL clients use.
 
+The VS Code Quick start uses the temporary option because it is the shortest
+safe onboarding path. For a durable origin, enter **Advanced setup...** and
+review the extra hosting/workflow/access choices explicitly.
+
 Hosting credentials must remain private. Automatic helper downloads are pinned
 and integrity-checked; controlled mirrors must provide both the download URL
 and independently verified SHA-256 digest.
 
 See [Installation](docs/INSTALLATION.md) for provisioning details.
 
-## Client options
+## Client and operator options
 
 - **ChatGPT Work / remote MCP clients:** connect to the OAuth-protected PiLink
   endpoint.
-- **VSPiLink:** optional graphical launcher/control surface for the same server.
-- **Optional local Pi agent:** provider-backed local supervised execution under
-  VSPiLink Advanced; its provider credentials are separate from MCP OAuth.
+- **PiLink VS Code extension:** optional graphical launcher/status panel for the
+  same server.
+- **Provider-backed local agents:** retained for operator/compatibility use with
+  provider credentials separate from MCP OAuth; not a normal launcher mode.
 - **Codex:** the optional local plugin under `plugins/pilink` targets a loopback
   PiLink instance.
 
@@ -190,7 +204,7 @@ canonical selected project, rejects traversal/symlink escapes, and does not
 expose a general shell. Repository execution and Full access require separate
 operator decisions.
 
-Public MCP OAuth, local VSPiLink administration, and optional model-provider
+Public MCP OAuth, local VS Code administration, and optional model-provider
 authentication are independent trust boundaries. Keep all private PiLink state
 outside the project.
 
