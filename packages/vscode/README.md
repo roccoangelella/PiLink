@@ -4,6 +4,12 @@ VSPiLink is the optional VS Code extension for the **PiLink** project. PiLink
 remains the server, CLI, and protocol implementation; VSPiLink adds a graphical
 control surface for both PiLink runtime workflows.
 
+If the sidebar controls or statuses are unclear, start with the
+[VSPiLink UX guide](../../docs/VSCODE_EXTENSION.md). It explains the difference
+between the server workflow, the **ChatGPT MCP / Pi Local** surface selector,
+workspace-vs-Full-access policy, hosting/OAuth, and what each connection status
+actually means.
+
 The extension connects ChatGPT Work to PiLink's workspace tool harness through
 an OAuth-protected MCP server:
 
