@@ -38,7 +38,20 @@ npm ci
 npm run build
 ```
 
-`npm run build` compiles PiLink and then safely tries to expose `pilink` through an existing user-writable directory already on `PATH` and inside your home directory. It never uses `sudo`, edits shell startup files, or replaces an unrelated `pilink` command. Set `PILINK_SKIP_CLI_LINK=1` to disable this convenience. If no safe persistent PATH directory is available, the build still succeeds and prints the `npm exec` or one-time `npm link` fallback. `npm link` does **not** copy or move the PiLink repository; it only creates a launcher that points back to this checkout. To see the npm prefix used on your machine, run `npm prefix -g`.
+`npm run build` compiles PiLink and then safely tries to expose `pilink` through
+an existing user-writable directory already on `PATH` and inside your home
+directory. On Linux/macOS it writes a small PiLink-marked launcher rather than
+a source-tree symlink, so a later build can safely repoint the command after a
+checkout move or re-clone. It also migrates old PiLink symlinks that can be
+proven to target this checkout's previous or current launcher. On Windows it
+uses the existing PiLink-marked `.cmd` shim. Builds never use `sudo`, edit shell
+startup files, or replace an unrelated `pilink` command.
+
+Set `PILINK_SKIP_CLI_LINK=1` to disable launcher creation. If no safe persistent
+PATH directory is available, the build still succeeds; run the built CLI from
+this checkout with `npm run cli -- start` (or another CLI subcommand), then add
+a user-owned bin directory to `PATH` and rebuild if you want a persistent
+`pilink` command.
 
 ### Where PiLink is installed and stores its files
 
@@ -47,7 +60,7 @@ There are three different locations to distinguish:
 | Purpose | Linux | Windows |
 | --- | --- | --- |
 | Source checkout | Wherever you ran `git clone`, for example `~/Projects/PiLink` | Wherever you ran `git clone`, for example `C:\Users\Alice\Projects\PiLink` |
-| `pilink` launcher | `npm run build` prefers an existing user PATH such as `~/.local/bin`; the `npm link` fallback normally uses `<npm-global-prefix>/bin/pilink` | `npm run build` creates a safe user PATH shim when available; the `npm link` fallback normally uses `<npm-global-prefix>\pilink.cmd` |
+| `pilink` launcher | `npm run build` prefers an existing user PATH such as `~/.local/bin/pilink`; it is a generated PiLink-owned launcher that later builds can repair/repoint | `npm run build` creates a generated PiLink-owned shim such as `%USERPROFILE%\bin\pilink.cmd` or another safe user PATH location |
 | PiLink private configuration and persistent data | `$XDG_CONFIG_HOME/pilink` when set, otherwise `~/.config/pilink` | `%USERPROFILE%\.config\pilink` by default |
 
 The private PiLink directory contains generated configuration and runtime state
@@ -95,6 +108,9 @@ pilink start --mode single
 pilink start --mode collaboration
 pilink start --mode vscode
 ```
+
+If the source build could not create a PATH launcher, use the equivalent
+checkout-local form, for example `npm run cli -- start --mode single`.
 
 The CLI hosting wizard offers Quick Tunnel, direct `nip.io`, or a Cloudflare fixed domain (Named Tunnel). For a fixed domain, the user supplies a hostname in a Cloudflare-managed DNS zone plus one scoped API token; PiLink creates the tunnel, ingress, DNS record, and private tunnel-token file automatically, then discards the account token. The `/sse` URL stays the same across restarts.
 
@@ -208,9 +224,15 @@ before exposing PiLink publicly.
 
 ```bash
 npm ci
+npm run dev          # compile/watch only; does not start PiLink
+npm run dev:server   # explicitly run the raw development server
 npm run test:all
 npm run release:check
 ```
+
+Run `npm run build` whenever you want a normal compiled build and the user-level
+`pilink` launcher refreshed. `npm run dev` intentionally does not create or
+repair that launcher.
 
 PiLink is distributed under the [MIT License](LICENSE) and uses the Pi Agent
 tool harness from
