@@ -63,6 +63,10 @@ export function isOwnerRegistrationWindowOpen(): boolean {
   return registrationWindowExpiresAt > now;
 }
 
+export function closeOwnerRegistrationWindow(): void {
+  registrationWindowExpiresAt = 0;
+}
+
 export function consumeOwnerPairing(
   _req: Request,
   res: Response,
