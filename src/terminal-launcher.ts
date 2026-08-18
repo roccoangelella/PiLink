@@ -9,9 +9,13 @@ import { fileURLToPath } from "node:url";
 import { isRequiredNodeVersion, REQUIRED_NODE_VERSION } from "./runtime.js";
 
 const modulePath = fileURLToPath(import.meta.url);
-const coreCliPath = path.join(path.dirname(modulePath), "cli.js");
+const moduleDirectory = path.dirname(modulePath);
+const coreCliPath = path.join(moduleDirectory, "cli.js");
+const terminalChildPath = path.join(moduleDirectory, "terminal-child.js");
 const QUIET_RUNTIME_PREFIXES = ["[HTTP]", "[MCP]"] as const;
 const BOX_DRAWING_PREFIXES = ["╔", "║", "╠", "╚"] as const;
+const PROXY_STDOUT_TTY = "PILINK_INTERNAL_PROXY_STDOUT_TTY";
+const PROXY_STDERR_TTY = "PILINK_INTERNAL_PROXY_STDERR_TTY";
 
 export function resolveNodeExecutable(
   currentVersion = process.version,
@@ -43,6 +47,21 @@ export function shouldQuietInteractiveStart(
 ): boolean {
   const command = argv[0] ?? "start";
   return command === "start" && stderrIsTty && !terminalLogsAreVerbose(env.PILINK_TERMINAL_LOGS);
+}
+
+export function terminalProxyEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  stdoutIsTty = process.stdout.isTTY === true,
+  stderrIsTty = process.stderr.isTTY === true,
+): NodeJS.ProcessEnv {
+  const childEnv = { ...env };
+  // These are internal truth markers, not user configuration. Always replace
+  // any inherited values so callers cannot spoof terminal interactivity.
+  if (stdoutIsTty) childEnv[PROXY_STDOUT_TTY] = "1";
+  else delete childEnv[PROXY_STDOUT_TTY];
+  if (stderrIsTty) childEnv[PROXY_STDERR_TTY] = "1";
+  else delete childEnv[PROXY_STDERR_TTY];
+  return childEnv;
 }
 
 export function filterInteractiveTerminalLine(line: string): string | undefined {
@@ -104,8 +123,8 @@ function runTerminalLauncher(): void {
 
   const argv = process.argv.slice(2);
   const quiet = shouldQuietInteractiveStart(argv);
-  const child = spawn(nodeExecutable, [coreCliPath, ...argv], {
-    env: process.env,
+  const child = spawn(nodeExecutable, [quiet ? terminalChildPath : coreCliPath, ...argv], {
+    env: quiet ? terminalProxyEnvironment() : process.env,
     stdio: quiet ? ["inherit", "pipe", "pipe"] : "inherit",
   });
 
