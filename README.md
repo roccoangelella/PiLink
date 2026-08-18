@@ -38,7 +38,49 @@ npm ci
 npm run build
 ```
 
-A source build safely exposes `pilink` through an existing user-writable PATH directory under your home; it never uses `sudo` or overwrites another command, and prints the `npm exec`/`npm link` fallback if no safe directory exists (`PILINK_SKIP_CLI_LINK=1` disables it). The fallback `npm link` only creates a launcher pointing back to this checkout (`npm prefix -g` shows its prefix); it does not move the source. PiLink private configuration/data stays outside the checkout/workspace under `$XDG_CONFIG_HOME/pilink` or `~/.config/pilink` on Linux and `%USERPROFILE%\.config\pilink` by default on Windows, while VSPiLink may separately install its pinned Node runtime in per-user application data; see the installation guide for overrides and exact paths.
+`npm run build` compiles PiLink and then safely tries to expose `pilink` through an existing user-writable directory already on `PATH` and inside your home directory. It never uses `sudo`, edits shell startup files, or replaces an unrelated `pilink` command. Set `PILINK_SKIP_CLI_LINK=1` to disable this convenience. If no safe persistent PATH directory is available, the build still succeeds and prints the `npm exec` or one-time `npm link` fallback. `npm link` does **not** copy or move the PiLink repository; it only creates a launcher that points back to this checkout. To see the npm prefix used on your machine, run `npm prefix -g`.
+
+### Where PiLink is installed and stores its files
+
+There are three different locations to distinguish:
+
+| Purpose | Linux | Windows |
+| --- | --- | --- |
+| Source checkout | Wherever you ran `git clone`, for example `~/Projects/PiLink` | Wherever you ran `git clone`, for example `C:\Users\Alice\Projects\PiLink` |
+| `pilink` launcher | `npm run build` prefers an existing user PATH such as `~/.local/bin`; the `npm link` fallback normally uses `<npm-global-prefix>/bin/pilink` | `npm run build` creates a safe user PATH shim when available; the `npm link` fallback normally uses `<npm-global-prefix>\pilink.cmd` |
+| PiLink private configuration and persistent data | `$XDG_CONFIG_HOME/pilink` when set, otherwise `~/.config/pilink` | `%USERPROFILE%\.config\pilink` by default |
+
+The private PiLink directory contains generated configuration and runtime state
+such as `.env`, OAuth client records, refresh/revocation state, audit data, and
+hosting helper files. For example:
+
+```text
+Linux:   ~/.config/pilink/.env
+Windows: C:\Users\Alice\.config\pilink\.env
+```
+
+This private directory is intentionally **outside the cloned repository and
+outside the MCP workspace**. The workspace is accessible to authorized remote
+agents, while `.env`, OAuth credentials, token state, and other PiLink control
+files must remain private. Keeping them separate also means that deleting,
+re-cloning, or updating the PiLink repository does not erase the machine's
+PiLink configuration.
+
+Set `XDG_CONFIG_HOME` or `PILINK_CONFIG` when you deliberately need a different
+location. `PI_DATA_DIR` can separately override the persistent data directory.
+Do not place these private files inside a directory exposed as `PI_WORK_DIR`.
+
+Some short-lived coordination files are stored in the per-user runtime/temp
+area instead of the persistent directory. On Linux this is normally under
+`$XDG_RUNTIME_DIR` or `/run/user/<uid>`; these files are ephemeral and are not
+part of the PiLink installation.
+
+The optional VSPiLink release installer may additionally provision its pinned
+Node.js runtime in a per-user application-data directory: on Linux/macOS this
+is `$XDG_DATA_HOME/vspilink/node-v24.18.0` or
+`~/.local/share/vspilink/node-v24.18.0`, and on Windows it is
+`%LOCALAPPDATA%\VSPiLink\node-v24.18.0`. See the
+[installation guide](docs/INSTALLATION.md) for that separate VS Code runtime.
 
 Verified PiLink 2.2.0 npm and VSIX artifacts are also available under
 `release/`; see the [installation guide](docs/INSTALLATION.md).
