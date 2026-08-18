@@ -1,14 +1,11 @@
 /**
  * The server workflow selected from the VSPiLink dashboard.
  *
- * This is deliberately separate from the dashboard's execution surface
- * (ChatGPT MCP or Pi Local). A user can observe a runtime from either
- * surface, but the server must still be launched with one explicit workflow
- * policy.
+ * Single-agent is the product default. Collaboration remains an explicit
+ * advanced opt-in because it changes the server capability catalog.
  */
 export const RUNTIME_MODES = ["single", "collaboration"] as const;
 export type RuntimeMode = (typeof RUNTIME_MODES)[number];
-/** Fail-closed default used when an installation has never chosen a workflow. */
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "single";
 
 export const RUNTIME_MODE_STATE_KEY = "vspilink.runtimeMode.v1";
@@ -89,15 +86,14 @@ export class RuntimeModeStore {
   }
 
   /**
-   * Upgrade a compatible pre-release value once. This is called during
-   * activation and is intentionally best-effort; the safe runtime fallback
-   * remains `single` when storage is unavailable or malformed.
+   * Upgrade a compatible pre-release value once. A fresh installation is
+   * deliberately initialized to single-agent so first run does not ask the
+   * user to understand an internal workflow distinction before starting MCP.
    */
-  async migrate(): Promise<RuntimeMode | undefined> {
+  async migrate(): Promise<RuntimeMode> {
     const persisted = normalizePersistedRuntimeMode(this.memento.get<unknown>(RUNTIME_MODE_STATE_KEY));
     if (persisted) return persisted.mode;
-    const mode = this.load();
-    if (!mode) return undefined;
+    const mode = this.load() || DEFAULT_RUNTIME_MODE;
     await this.set(mode);
     return mode;
   }
