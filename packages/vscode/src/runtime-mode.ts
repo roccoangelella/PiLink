@@ -86,14 +86,17 @@ export class RuntimeModeStore {
   }
 
   /**
-   * Upgrade a compatible pre-release value once. A fresh installation is
-   * deliberately initialized to single-agent so first run does not ask the
-   * user to understand an internal workflow distinction before starting MCP.
+   * Upgrade compatible pre-release extension state once. Fresh extension state
+   * is intentionally left unset here: the caller may already have a reviewed
+   * PI_RUNTIME_MODE in the private PiLink configuration, and migration must
+   * never overwrite that with a UI default. The graphical setup path uses
+   * DEFAULT_RUNTIME_MODE when no configured or persisted mode exists.
    */
-  async migrate(): Promise<RuntimeMode> {
+  async migrate(): Promise<RuntimeMode | undefined> {
     const persisted = normalizePersistedRuntimeMode(this.memento.get<unknown>(RUNTIME_MODE_STATE_KEY));
     if (persisted) return persisted.mode;
-    const mode = this.load() || DEFAULT_RUNTIME_MODE;
+    const mode = this.load();
+    if (!mode) return undefined;
     await this.set(mode);
     return mode;
   }
