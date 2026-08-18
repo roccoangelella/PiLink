@@ -140,48 +140,57 @@ Do not install a VSIX from an untrusted mirror.
 
 ## First launch
 
-The redesigned first run does not ask you to understand PiLink's internal
-workflow modes before starting the bridge.
+The current VS Code flow fixes the server/access policy and asks only how PiLink
+should be reached.
 
 1. Open the actual project folder, not a broad parent directory unless that
    broader access is intentional.
 2. Review VS Code Workspace Trust.
 3. Open **PiLink**.
-4. Choose an ordinary safe launch action:
-   - **Quick start for ChatGPT** — Single agent, Project-folder access, and a
-     temporary Cloudflare HTTPS endpoint;
-   - **Local only** — Single agent and Project-folder access without a public
-     endpoint.
-5. When a public endpoint is ready, select **Connect ChatGPT** and follow
+4. Choose one endpoint path:
+   - **Set up stable endpoint** — recommended for ChatGPT; choose a Cloudflare
+     fixed domain or an existing HTTPS domain/reverse proxy;
+   - **Temporary quick start** — Cloudflare Quick Tunnel for evaluation;
+   - **Local only** — no public endpoint.
+5. Every graphical setup writes **Single agent** and **Project-folder** access.
+6. When a public endpoint is ready, select **Connect ChatGPT** and follow
    [Connect ChatGPT Work](CONNECT_CHATGPT.md).
 
-Fresh ordinary graphical configurations use **Single agent** and
-**Project-folder** access automatically. Full access, collaboration, and model
-provider setup are not normal first-run choices.
+The graphical flow does not offer collaboration, Full access, provider/model
+setup, native VS Code MCP, or manual OAuth registration.
 
-For a durable domain or other specialist configuration, deliberately enter
-**Advanced setup...**. That retained compatibility flow supports stable and
-legacy hosting and can expose additional workflow/access choices. Review those
-choices explicitly and keep **Project folder only** unless broader authority is
-actually intended.
-
-## Hosting choices
+## Graphical hosting choices
 
 | Hosting | Intended use | URL stability |
 | --- | --- | --- |
+| Cloudflare fixed domain | Recommended regular remote use | Stable |
 | Existing HTTPS domain | Operator-managed reverse proxy | Stable |
-| Cloudflare fixed/Named Tunnel | Regular remote use | Stable |
 | Cloudflare Quick Tunnel | Temporary evaluation | Changes when recreated |
 | Local only | Same-machine clients | Not reachable by ChatGPT web |
-| `nip.io` direct HTTPS | Legacy IPv4/router deployment | Environment-dependent |
 
-Quick start uses the temporary option because it is the shortest safe setup.
-For regular use, enter Advanced setup deliberately and choose a stable endpoint.
-Recreating a Quick Tunnel changes the public origin, so clients configured with
-the old URL must be updated.
+The stable path is primary because OAuth/plugin configuration is easier to keep
+when the public origin does not change.
 
-Cloudflare credentials are provisioning inputs. Keep them out of the
-repository, prompts, logs, screenshots, and extension package.
+For Cloudflare fixed-domain provisioning, the extension asks for a scoped API
+token with the documented tunnel/DNS permissions, passes it only to the
+provisioning command, and does not save that API token. The generated private
+tunnel-token file is stored outside the workspace and referenced by the private
+PiLink configuration.
+
+The core PiLink CLI retains additional legacy hosting modes, including managed
+Named-Tunnel and `nip.io` paths, but the simplified VS Code launcher does not
+own those services.
+
+## Reconfiguration
+
+Use **Details & recovery -> Reconfigure endpoint...** or **PiLink: Reconfigure
+PiLink**. The graphical reconfiguration choices are the same safe endpoint
+families: fixed Cloudflare domain, existing HTTPS domain, Quick Tunnel, or
+local-only.
+
+Reconfiguration always reapplies Single agent and Project-folder access. It is
+also the safe migration path when the launcher detects a saved Full-access
+configuration.
 
 ## Verified hosting helper downloads
 
@@ -219,21 +228,22 @@ on your local computer.
    client.
 
 Do not run a CLI-owned PiLink process and an extension-owned process against
-the same configuration/port at the same time.
+the same configuration/port at the same time. The launcher refuses to take
+ownership of a PiLink process already running outside the current VS Code
+session.
 
-## Specialist compatibility features
+## Specialist core features
 
-No Python or model-provider credential is required merely to use the extension
-as a graphical PiLink launcher.
+No Python or model-provider credential is required to use the extension as a
+PiLink launcher.
 
-The backend still retains local provider/agent support, collaboration services,
-native VS Code MCP compatibility, and manual OAuth paths for existing/operator
-workflows, but the normal dashboard does not promote them as separate products.
-Use the relevant CLI or deliberately enter a compatibility flow only when you
-need that capability.
+Provider-backed agents, collaboration services, manual OAuth client management,
+Full access, and legacy service hosting remain core PiLink CLI/operator
+capabilities where appropriate. They are not separate products in the current
+VS Code extension.
 
 The optional `pilink chat` terminal monitor is for the collaboration workflow
-and requires its own Python/Textual environment when you deliberately use it.
+and requires its own Python/Textual environment when deliberately used.
 
 ## Private state
 
