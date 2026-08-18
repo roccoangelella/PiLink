@@ -49,6 +49,18 @@ test("normal lifecycle exposes one obvious action for each state", () => {
   assert.match(primary, /this panel only manages the bridge/);
 });
 
+test("Full access can never look like an ordinary safe restart", () => {
+  const primary = functionSource("primaryModel");
+  assert.match(primary, /!online && currentState\.unsafeFullAccess/);
+  assert.match(primary, /Full machine access is configured/);
+  assert.match(primary, /Return to Project-folder access/);
+  assert.match(primary, /Start configured Full access/);
+  assert.match(primary, /variant: "danger"/);
+  assert.match(functionSource("renderFullAccessNotice"), /Full machine access is active/);
+  assert.match(functionSource("topStatus"), /Full access/);
+  assert.match(functionSource("advancedServerSection"), /!isOnline\(\) && !currentState\.unsafeFullAccess/);
+});
+
 test("advanced capabilities are progressively disclosed", () => {
   const advanced = functionSource("renderAdvanced");
   assert.match(advanced, /el\("details", "advanced"\)/);
@@ -70,6 +82,7 @@ test("advanced capabilities are progressively disclosed", () => {
   assert.match(access, /client\.grantTypes\.includes\("authorization_code"\)/);
   assert.match(access, /mcp:tools/);
   assert.match(access, /!eligible/);
+  assert.match(access, /Return to Project-folder access/);
 });
 
 test("optional local agents remain available without becoming the main UI", () => {
