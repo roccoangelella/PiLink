@@ -13,44 +13,39 @@ valid, and an OAuth client does not prove an MCP transport is active.
 | OAuth | Metadata is discoverable and one client is authorized | Wrong callback, expired consent, stale origin |
 | Plugin | PiLink is installed and enabled in ChatGPT Work | Looking in normal Chat or wrong catalog result |
 | MCP | Authenticated session and tool list | Stale token/session, scope mismatch |
-| Collaboration | Explicit agent messages/tasks appear | No `agent_chat_post` or `agent_task_*` calls yet |
+| Collaboration | Explicit agent messages/tasks appear | Collaboration disabled or no `agent_chat_post` / `agent_task_*` calls yet |
 
 ## Plugins or MCP are missing in normal Chat
 
-This is expected under the current official product model. On ChatGPT web:
+Under the current documented product model, use the Work surface for installed
+plugins and their MCP-backed tools:
 
-1. Use the top surface selector to switch from **Chat** to **Work**.
-2. Open **Plugins** in the left sidebar.
-3. Install or enable PiLink.
-4. Start a new Work task.
+1. switch from **Chat** to **Work**;
+2. open **Plugins**;
+3. install or enable the PiLink entry supplied for your deployment;
+4. start a Work task.
 
-ChatGPT Pro may increase included Work/Codex usage, but it does not add remote
-MCP tools to normal Chat. See [Usage, models, and costs](USAGE_AND_COSTS.md).
+Changing PiLink provider credentials does not make a missing ChatGPT plugin
+entitlement or workspace control appear.
 
 ## PiLink is not in the plugin catalog
 
 PiLink may be a private/personal or workspace plugin rather than a public
 catalog entry. Do not search for "MCP server" and install an unrelated vendor.
 
-Check:
+Check the plugin sources and creation/import controls available to your account
+or workspace. If the deployment's PiLink entry is absent, ask the plugin
+publisher or workspace administrator to make it available.
 
-1. **Work → Plugins → Installed** for an existing installation.
-2. The **Personal** or **Created by me** area when your account exposes it.
-3. Your workspace's plugin area when an administrator shared it.
-4. Workspace plugin policy with the administrator.
+## Developer Mode or an old custom-connector control is missing
 
-If you cannot create, import, share, or install the private plugin, the missing
-capability is account/workspace-side. Changing a PiLink provider or API key
-will not make that control appear.
-
-## Developer Mode or the old plus button is missing
-
-Developer Mode/custom-connector setup is a compatibility path from older
-ChatGPT interfaces, not the current primary PiLink workflow. Its location and
-availability can vary. Use ChatGPT Work and the current Plugins workflow.
+Older ChatGPT interfaces exposed different connector/developer controls. PiLink
+keeps compatibility code for builders that still require a manual client, but
+VSPiLink's normal path is **Connect ChatGPT** from the main dashboard followed
+by the current Work/Plugins flow.
 
 Do not weaken OAuth registration, accept arbitrary callbacks, or expose the
-bootstrap secret because a legacy UI control is absent.
+bootstrap secret because an old UI control is absent.
 
 ## I cannot find the callback or fallback URL
 
@@ -61,10 +56,10 @@ Only use the manual flow when the active plugin builder explicitly displays a
 Callback/Redirect URL and supports a user-defined client. In that case:
 
 1. copy the complete HTTPS callback exactly;
-2. paste it into PiLink's manual OAuth fallback;
+2. use PiLink's manual OAuth fallback under VSPiLink **Advanced**;
 3. copy the resulting Client ID, one-time secret, Authorization URL, and Token
    URL into the matching fields;
-4. use `client_secret_post` when requested.
+4. request only the scopes needed by the client.
 
 If those fields are not present, that surface does not support the fallback.
 
@@ -76,15 +71,15 @@ method error, stream, or blank-looking page can be correct.
 
 Validate instead:
 
-- local sidecar health in the VSPiLink dashboard;
-- the public `/health` aggregate response;
-- OAuth protected-resource and authorization-server metadata;
+- local PiLink status in the VSPiLink dashboard;
+- the public health endpoint;
+- OAuth protected-resource/authorization-server metadata;
 - a real plugin OAuth/MCP connection.
 
 Temporary `trycloudflare.com` or `nip.io` addresses shown by old setup/test
 flows may already be dead. Use the endpoint currently shown by the active
-configuration. For regular use, migrate to a Named Tunnel or existing stable
-domain.
+configuration. For regular use, migrate to a stable Named Tunnel/fixed domain
+or existing HTTPS origin.
 
 ## VS Code warns before opening several external links
 
@@ -93,10 +88,10 @@ only the documented ChatGPT pages, the configured PiLink origin, and official
 documentation. Do not approve an unfamiliar `nip.io`, Quick Tunnel, callback,
 or test-fixture hostname merely because it appeared during development.
 
-If the target does not match the active configured origin or an official
-`chatgpt.com`, `learn.chatgpt.com`, or `developers.openai.com` page, select
-**Cancel/Close** and inspect the VSPiLink output channel. External-link approval
-is not required to keep the local runtime alive.
+If the target does not match the active configured origin or a documented
+ChatGPT/OpenAI destination, cancel it and inspect the active PiLink
+configuration before continuing. External-link approval is not required to keep
+the local runtime alive.
 
 ## Approve works once, then reports missing, expired, or already used
 
@@ -106,7 +101,7 @@ The second click correctly fails after the first request was consumed.
 1. Do not click **Approve** again.
 2. Return to the ChatGPT Work/plugin tab that initiated OAuth.
 3. Wait for its redirect or completion state.
-4. If ChatGPT reports setup failure, start a fresh **Connect/Authenticate**
+4. If the client reports setup failure, start a fresh Connect/Authenticate
    action so PiLink creates a new consent request.
 5. Capture the first redirect/error and PiLink server log before retrying.
 
@@ -129,39 +124,58 @@ Check, in order:
 Do not paste tokens or secrets into a bug report. Redact query parameters from
 screenshots when they contain a code, state, or pairing value.
 
-## Connected, but the collaboration monitor is empty
+## VSPiLink says OAuth ready but not Connected
 
-The monitor does not mirror the ChatGPT transcript. It shows messages only
-after an agent calls `agent_chat_post`, and tasks only after `agent_task_*` is
-used. Tool activity is metadata-only.
+This is normal. **OAuth ready** means the durable authorization exists.
+**Connected** means an MCP transport is open right now. ChatGPT may create a
+transport only when it actually invokes a PiLink tool.
 
-Verify ordinary file/Git tools first. An empty chat/task board with successful
-MCP calls is healthy.
+Do not register another OAuth client just to turn the status from OAuth ready
+to Connected.
+
+## ChatGPT is working but Recent activity is empty
+
+The main dashboard is deliberately not a transcript viewer. Recent activity
+contains only bounded MCP metadata and appears only after PiLink receives tool
+calls.
+
+Ask the remote client to perform a simple read-only PiLink action and re-check
+the dashboard. A healthy OAuth connection does not imply every message will
+call PiLink.
+
+## The Agent & Task Monitor is empty
+
+The separate collaboration monitor does not mirror the ChatGPT transcript. It
+shows messages only after an agent calls `agent_chat_post`, and tasks only after
+`agent_task_*` is used.
+
+The monitor is an advanced collaboration feature. Ordinary single-agent file
+and Git operations can work perfectly while it remains empty.
 
 ## Collaboration tools are missing
 
 Check the effective server mode before changing scopes or Full access. Read
-`runtime_mode` from `/health` (or `/admin/status` from the local dashboard):
+`runtime_mode` from PiLink health/admin status:
 
-- `single` intentionally registers only the classic workspace harness;
-  `agent_chat_*`, `agent_task_*`, `agent_memory_*`, `agent_work_*`, and
-  supervised-agent controls are not part of that tool catalog;
-- `collaboration` registers those services, subject to the client's OAuth
-  scope, verified collaboration bootstrap, private data placement, and an
-  explicitly configured provider/model for supervised agents.
+- `single` intentionally registers the original workspace harness without
+  `agent_chat_*`, `agent_task_*`, `agent_memory_*`, `agent_work_*`, or remote
+  supervised-agent controls;
+- `collaboration` registers those services subject to OAuth scope, verified
+  collaboration identity, private data placement, and any provider/model
+  requirements.
 
-Choose **Public chat & orchestration** in the VS Code workflow selector or
-restart the CLI with `pilink start --mode collaboration`. A mode change takes
-effect only after restart, and existing MCP sessions must reconnect to obtain
-the new tool list. Do not enable Full access to repair a mode mismatch. See
+In VSPiLink open **Advanced -> Workflow -> Enable collaboration...**, or restart
+the CLI with `pilink start --mode collaboration`. A mode change takes effect
+after restart and existing MCP sessions must reconnect to obtain the new tool
+catalog. Do not enable Full access to repair a mode mismatch. See
 [Runtime mode selection](operations/mode-selection.md).
 
 ## Administrative endpoint returns HTTP 500
 
 Check private data placement. `PI_DATA_DIR` and any coordination data directory
 must be outside `PI_WORK_DIR`. For example, configuring both the workspace and
-private data under the same `/home/user` workspace can make collaboration state
-readable by workspace tools, so the service fails closed.
+private data under the same broad home-directory workspace can make private
+state reachable by workspace tools, so the service fails closed.
 
 Use a specific project as the safe workspace or place private state outside the
 authorized tree. Restart after correcting the configuration. Do not move
@@ -169,28 +183,43 @@ private state into the repository.
 
 ## PiLink uses the wrong folder
 
-1. In VS Code select **File → Open Folder…** and open the intended project.
-2. In a multi-root window, open the Command Palette and run **VSPiLink: Use the
-   Current Folder as the PiLink Workspace**, then select the exact folder.
-3. Review the canonical path shown before authorizing OAuth.
-4. Restart the managed runtime if the configuration changed.
+1. In VS Code select **File -> Open Folder...** and open the intended project.
+2. In a multi-root window, use the Explorer context action **Use This Folder for
+   PiLink** on the exact project, or run **VSPiLink: Use This Folder for PiLink**
+   from the Command Palette when available.
+3. Review the project shown in the PiLink header before authorizing remote use.
+4. Restart/reconfigure PiLink if the saved workspace changed.
 
-Using `/home/user` as a workspace intentionally authorizes every descendant in
-safe mode. It also prevents private state under that directory from satisfying
-the required separation. Use Full access only when broad machine authority is
-the actual intent and a specific OAuth client has been reviewed.
+Using a broad parent directory as a workspace intentionally authorizes every
+descendant in Project-folder mode. It can also conflict with the required
+separation of PiLink's private state. Use Full access only when machine-level
+authority is actually intended and a specific OAuth client has been reviewed.
+
+## Full machine access is configured after restart
+
+The redesigned dashboard does not show an ordinary **Start PiLink** primary
+action for a stopped Full-access configuration. It displays an access warning
+instead.
+
+- Choose **Return to Project-folder access** to re-run setup and reset the safe
+  workspace boundary.
+- Choose **Start configured Full access** only when you intentionally want to
+  restore the previously reviewed unrestricted configuration.
+
+While Full access is running, the dashboard keeps a visible warning and the
+Access status reads **Full machine**.
 
 ## Node version mismatch
 
 PiLink requires Node.js **24.18.0 exactly**.
 
-1. Open **File → Preferences → Settings**.
+1. Open **File -> Preferences -> Settings**.
 2. Search for **VSPiLink: Node Executable**.
 3. Enter the absolute path to the Node 24.18.0 binary.
 4. Run **Developer: Reload Window**.
 
-The VS Code extension-host Node version is independent from the sidecar
-version unless it happens to match exactly.
+The VS Code extension-host Node version is independent from the sidecar version
+unless it happens to match exactly.
 
 ## The `run` tool reports an error
 
@@ -208,8 +237,8 @@ version unless it happens to match exactly.
 Common failures have deliberate fixes:
 
 - **requires the `mcp:write` or `mcp:tools` scope** — the current OAuth client
-  is read-only. Reconnect PiLink with write access; changing the arguments
-  cannot expand an existing token.
+  is read-only. Reconnect PiLink with write access; changing arguments cannot
+  expand an existing token.
 - **executes code from the workspace and is disabled by default** — for a
   repository you trust, set `PI_ALLOW_WORKSPACE_EXECUTION=true` in PiLink's
   private configuration and restart. Alternatively, explicitly authorize Full
@@ -299,11 +328,14 @@ are remote. The VS Code UI and Integrated Browser are local. Install Node and
 configure paths on the remote host, but complete the ChatGPT login in the local
 browser tab.
 
-## Pi Local asks for a provider, OAuth, or API key
+## Optional local Pi agent asks for a provider, OAuth, or API key
 
-That is expected only in **Pi Local** mode. Switch back to **ChatGPT MCP** for
-the plugin workflow. Pi Local credentials do not authenticate ChatGPT's MCP
-client, and ChatGPT OAuth does not pay for a Pi Local provider.
+That is expected only when you deliberately configure **Advanced -> Optional
+local Pi agent**. Those provider credentials are independent from ChatGPT's MCP
+OAuth connection.
+
+If your goal is simply to use ChatGPT Work through PiLink, ignore the local
+provider section entirely.
 
 ## Collecting a safe diagnostic report
 
