@@ -34,7 +34,7 @@ The redesigned dashboard uses a different rule:
 > show only the next action needed for the ordinary PiLink lifecycle; put
 > optional capability switches under Advanced.
 
-A fresh installation therefore starts from **single-agent** automatically.
+Fresh ordinary graphical setup uses **single-agent** automatically.
 Collaboration remains supported, but it is an explicit advanced opt-in.
 
 ## The main screen
@@ -63,6 +63,10 @@ The large card changes with the lifecycle:
 This is intentionally much less flexible than the old top-level dashboard. The
 ordinary path should not require understanding the implementation architecture.
 
+A saved Full-access configuration is an exception: when it is stopped, the
+main card shows an explicit **Full machine access is configured** warning rather
+than the ordinary safe-looking Start PiLink state.
+
 ### 3. Three always-visible facts
 
 The bottom of the main card reports:
@@ -87,7 +91,7 @@ flow:
 
 1. Open the project folder in VS Code.
 2. Trust the folder.
-3. Open **VSPiLink** in the Secondary Side Bar.
+3. Open **PiLink** in the Secondary Side Bar.
 4. Select **Quick start for ChatGPT**.
 5. Wait for PiLink and the temporary HTTPS endpoint to become healthy.
 6. Select **Connect ChatGPT**.
@@ -116,8 +120,10 @@ support the more operational hosting cases without crowding the main screen:
 - local-only operation;
 - the legacy `nip.io` path.
 
-The safe permission choice is **Project folder only**. Choosing Full access in
-that advanced flow requires an explicit warning/confirmation.
+Because this is an advanced reconfiguration flow, it may also ask for the
+workflow or access boundary needed by an existing deployment. The safe
+permission choice is **Project folder only**. Choosing Full access requires an
+explicit warning/confirmation.
 
 ## Local-only use
 
@@ -158,7 +164,7 @@ separate from ChatGPT OAuth.
 ## Why collaboration moved to Advanced
 
 The original PiLink concept is a single-agent workspace bridge. That is now the
-automatic default.
+ordinary graphical default.
 
 Enable **Public chat & orchestration** only when you need PiLink's additional
 coordination layer:
@@ -189,22 +195,26 @@ the PiLink OS user.
 For that reason the redesigned dashboard:
 
 - never offers Full access as a first-run primary action;
-- keeps the control under Advanced;
-- does not enable the button until an eligible ChatGPT OAuth client with the
-  required tool scope exists;
-- keeps the Full-machine state visible in the main status row whenever it is
-  active.
+- keeps the capability under Advanced;
+- does not enable the Full-access control until an eligible OAuth client with
+  the required tool scope exists;
+- replaces the normal Start PiLink card with an explicit warning when a stopped
+  configuration would restore Full access;
+- keeps the Full-machine state visible while it is active.
 
 Re-running the normal hosting setup with Project-folder access resets the
 configuration back to the safe boundary.
 
 ## Recent activity
 
-The main dashboard keeps one lightweight monitor because it is useful for
-answering "is ChatGPT actually calling PiLink?"
+The dashboard keeps a small activity area when the current administrative
+projection supplies MCP audit metadata. It is useful for answering "is a remote
+client actually calling PiLink?" without turning VSPiLink into a transcript
+viewer.
 
-It shows at most a few recent MCP calls and only the metadata PiLink deliberately
-publishes: tool name, outcome, duration, and access mode.
+The activity projection contains only bounded operational metadata such as tool
+name, outcome, duration, and access mode. In server modes where that projection
+is not available, the section simply stays absent.
 
 It does not show:
 
@@ -252,31 +262,33 @@ PiLink.
 
 Quick Tunnel is the main exception because the public hostname is temporary.
 
-## What remains available from the Command Palette
+## Command Palette surface
 
-The extension still registers compatibility and recovery commands even though
-most are no longer promoted in the dashboard. This protects existing workflows
-while making the primary UI simpler.
+The extension contributes only the ordinary navigation, connection, stop,
+reconfiguration, config, refresh, workspace, and guide entries to the Command
+Palette.
 
-Examples include initialization, manual client registration, legacy hosting,
-reset/recovery, provider configuration, local-agent management, and the native
-VS Code MCP provider.
+State-sensitive or specialist commands still exist internally so the dashboard
+and compatibility code can use them, but they are deliberately not promoted as
+free-floating commands. In particular, starting a saved Full-access
+configuration stays behind the state-aware warning card instead of an ordinary
+**Start PiLink** palette entry.
 
 ## Implementation map
 
-The relevant extension pieces are now intentionally separated:
+The relevant extension pieces are intentionally separated:
 
 - `packages/vscode/media/app.js` — the focused dashboard state machine;
 - `packages/vscode/media/app.css` — the VS Code-themed responsive UI;
 - `packages/vscode/src/dashboard.ts` — webview lifecycle and CSP;
 - `packages/vscode/src/extension.ts` — process, OAuth, hosting, agent, and command
   implementation;
-- `packages/vscode/src/runtime-mode.ts` — automatic single-agent default plus
-  explicit collaboration opt-in;
+- `packages/vscode/src/runtime-mode.ts` — the single-agent default plus explicit
+  collaboration opt-in;
 - `packages/vscode/src/protocol.ts` — the narrow webview message/state contract.
 
-The previous `media/main.js` and `media/styles.css` implementation is no longer
-loaded or packaged by the extension.
+The previous `media/main.js` and `media/styles.css` dashboard implementation was
+removed so there is only one active UI implementation to maintain.
 
 For protocol/security boundaries see [Architecture](ARCHITECTURE.md) and
 [Security model](SECURITY_MODEL.md). For the remote authorization details see
