@@ -11,6 +11,7 @@ const manifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.me
     configuration?: { title?: string; properties?: Record<string, unknown> };
     viewsContainers?: { secondarySidebar?: Array<{ title?: string }> };
     views?: Record<string, Array<{ name?: string }>>;
+    mcpServerDefinitionProviders?: unknown[];
   };
 };
 
@@ -56,10 +57,11 @@ test("state-sensitive, dangerous and specialist commands are not promoted into t
   for (const command of hidden) assert.ok(!commandIds.includes(command), `${command} must stay out of the ordinary palette`);
 });
 
-test("specialist native-MCP scope is no longer a user-facing setting", () => {
+test("specialist native-MCP integration is no longer a user-facing product", () => {
   const properties = manifest.contributes?.configuration?.properties || {};
   assert.ok(!("vspilink.nativeMcpScope" in properties));
   assert.ok(!(manifest.capabilities?.untrustedWorkspaces?.restrictedConfigurations || []).includes("vspilink.nativeMcpScope"));
+  assert.equal(manifest.contributes?.mcpServerDefinitionProviders, undefined);
   assert.deepEqual(Object.keys(properties), [
     "vspilink.openOnStartup",
     "vspilink.configPath",
