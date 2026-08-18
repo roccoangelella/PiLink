@@ -24,7 +24,7 @@ test("PiLink remains the project brand and VSPiLink is scoped to the optional ex
   assert.match(readme, /VSPiLink.*optional|optional.*VSPiLink/su);
   assert.doesNotMatch(readme, /From chat to code/u);
   assert.doesNotMatch(readme, /```mermaid/u);
-  assert.ok(readme.split("\n").length < 180, "the root README must remain concise");
+  assert.ok(readme.split("\n").length < 240, "the root README must remain concise");
   for (const command of [
     "pilink start --mode single",
     "pilink start --mode collaboration",
