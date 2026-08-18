@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   InteractiveTerminalOutputFilter,
   filterInteractiveTerminalLine,
+  resolveNodeExecutable,
   shouldQuietInteractiveStart,
   terminalLogsAreVerbose,
 } from "../dist/terminal-launcher.js";
@@ -55,3 +56,10 @@ test("chunked runtime logs stay hidden while newline-free prompts remain visible
   assert.equal(promptFilter.push("> "), "> ");
   assert.equal(promptFilter.flush(), "");
 });
+
+test("resolveNodeExecutable finds matching node version or fallback path", () => {
+  const currentExec = process.execPath;
+  assert.equal(resolveNodeExecutable("24.18.0", currentExec), currentExec);
+  assert.equal(resolveNodeExecutable("v24.18.0", currentExec), currentExec);
+});
+

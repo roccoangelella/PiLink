@@ -1,13 +1,36 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import os from "node:os";
+
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isRequiredNodeVersion, REQUIRED_NODE_VERSION } from "./runtime.js";
 
 const modulePath = fileURLToPath(import.meta.url);
 const coreCliPath = path.join(path.dirname(modulePath), "cli.js");
 const QUIET_RUNTIME_PREFIXES = ["[HTTP]", "[MCP]"] as const;
 const BOX_DRAWING_PREFIXES = ["╔", "║", "╠", "╚"] as const;
+
+export function resolveNodeExecutable(
+  currentVersion = process.version,
+  currentExecPath = process.execPath,
+  home = os.homedir(),
+): string | undefined {
+  if (isRequiredNodeVersion(currentVersion)) {
+    return currentExecPath;
+  }
+  const nvmCandidate = path.join(home, ".nvm", "versions", "node", `v${REQUIRED_NODE_VERSION}`, "bin", "node");
+  if (fs.existsSync(nvmCandidate)) {
+    return nvmCandidate;
+  }
+  const altNvmCandidate = path.join(home, ".nvm", "versions", "node", REQUIRED_NODE_VERSION, "bin", "node");
+  if (fs.existsSync(altNvmCandidate)) {
+    return altNvmCandidate;
+  }
+  return undefined;
+}
 
 export function terminalLogsAreVerbose(value = process.env.PILINK_TERMINAL_LOGS): boolean {
   return /^(?:1|true|yes|on|verbose|debug)$/iu.test(value?.trim() ?? "");
@@ -71,9 +94,17 @@ function couldBeRuntimeNoisePrefix(value: string): boolean {
 }
 
 function runTerminalLauncher(): void {
+  const nodeExecutable = resolveNodeExecutable();
+  if (!nodeExecutable) {
+    console.error(`PiLink requires Node.js ${REQUIRED_NODE_VERSION} exactly; current runtime is ${process.version}.`);
+    console.error(`Please install or select Node.js ${REQUIRED_NODE_VERSION} (e.g. using 'nvm use ${REQUIRED_NODE_VERSION}').`);
+    process.exitCode = 1;
+    return;
+  }
+
   const argv = process.argv.slice(2);
   const quiet = shouldQuietInteractiveStart(argv);
-  const child = spawn(process.execPath, [coreCliPath, ...argv], {
+  const child = spawn(nodeExecutable, [coreCliPath, ...argv], {
     env: process.env,
     stdio: quiet ? ["inherit", "pipe", "pipe"] : "inherit",
   });
