@@ -9,8 +9,8 @@ harness. It gives authorized clients controlled access to a selected project.
 
 The core server and CLI do not require VS Code. The optional **PiLink VS Code
 extension** is a graphical launcher/status panel for choosing the project,
-starting/stopping PiLink, configuring remote reachability, connecting ChatGPT,
-and checking bridge status. It is not a second chat frontend.
+starting/stopping PiLink, configuring the endpoint, connecting ChatGPT, and
+checking bridge status. It is not a second chat frontend.
 
 ## Features
 
@@ -19,10 +19,9 @@ and checking bridge status. It is not a second chat frontend.
 - OAuth with PKCE, refresh, revocation, client controls, and bounded MCP
   sessions.
 - A default **Single-agent** tool catalog plus an optional collaboration catalog
-  with durable chat/tasks, memory/work-loop coordination, and supervised-agent
-  controls.
-- Quick Tunnel, fixed Cloudflare domain, existing-domain, local-only, and legacy
-  direct HTTPS hosting.
+  in the core server/CLI.
+- Stable Cloudflare fixed-domain hosting, existing HTTPS domains, Quick Tunnel,
+  local-only operation, and legacy CLI hosting paths.
 - Explicit opt-ins for repository execution and unrestricted machine access.
 - Optional VS Code launcher, Textual collaboration monitor, and local Codex
   plugin.
@@ -82,7 +81,7 @@ handoff into the optional graphical control surface and is never stored as
 | --- | --- |
 | **Single agent** | Original project-tool bridge without public collaboration services |
 | **Collaboration** | Adds verified chat/tasks, memory/work-loop coordination, and remote supervised-agent controls |
-| **VS Code graphical** | Opens the PiLink launcher; fresh ordinary graphical setups use Single agent automatically |
+| **VS Code graphical** | Opens the focused PiLink launcher; graphical setup always writes Single agent |
 
 For a local server behind an existing reverse proxy:
 
@@ -108,37 +107,33 @@ capability split.
 
 ## Start PiLink from VS Code
 
-The ordinary graphical path is intentionally simpler than the CLI surface:
+The graphical path intentionally fixes the security/workflow policy and asks
+only for the endpoint choice:
 
 1. open the project and trust the VS Code window;
 2. open **PiLink** in the Secondary Side Bar;
-3. select **Quick start for ChatGPT** or **Local only**;
-4. when the public endpoint is ready, select **Connect ChatGPT**;
-5. do the coding task in ChatGPT Work or another MCP client.
+3. choose **Set up stable endpoint** (recommended), **Temporary quick start**,
+   or **Local only**;
+4. every choice writes Single agent + Project-folder access;
+5. when a public endpoint is ready, select **Connect ChatGPT**;
+6. do the coding task in ChatGPT Work or another MCP client.
 
-The ordinary graphical path uses:
+**Set up stable endpoint** supports a Cloudflare fixed domain or an existing
+HTTPS reverse proxy. The Quick Tunnel option is intentionally secondary because
+its URL changes when recreated.
 
-- Single agent;
-- Project-folder access;
-- no unrestricted shell;
-- no collaboration, provider, or native-MCP setup choice.
-
-**Advanced setup...** deliberately retains the older hosting/setup path for
-stable domains and specialist configurations. That flow can expose additional
-workflow/access choices, so it is not the one-click happy path.
-
-Other specialist features — local provider-backed agents, native VS Code MCP,
-manual OAuth registration, collaboration operation, and Full-access launch —
-remain CLI/backend compatibility capabilities rather than parallel products in
-the main dashboard.
+The extension no longer exposes collaboration enablement, Full-access launch,
+provider-backed chat/agents, native VS Code MCP integration, or manual OAuth
+client registration as graphical products. Those specialist capabilities remain
+in the core CLI/backend where appropriate.
 
 See [PiLink VS Code extension](docs/VSCODE_EXTENSION.md) and
 [Connect ChatGPT Work](docs/CONNECT_CHATGPT.md).
 
 ## Full machine access
 
-Full access is intentionally unsafe and is not part of the normal graphical
-flow. From the CLI it must be enabled explicitly:
+Full access is intentionally unsafe and is not part of the VS Code workflow.
+From the CLI it must be enabled explicitly:
 
 ```bash
 pilink start --allow-unsafe-full-access
@@ -156,29 +151,26 @@ execution as the PiLink OS user. It does not grant root automatically, but it
 is remote code execution with that user's authority.
 
 If the VS Code launcher detects an existing Full-access configuration, it shows
-an explicit safety state instead of an ordinary Start button. Quick start and
-Local only never request Full access. Operators who actually need unrestricted
-operation should use the CLI or deliberately review the retained Advanced setup
-compatibility flow.
+a safety state and refuses to start/restart/connect it. **Reconfigure safely...**
+resets it to the fixed graphical policy. Deliberate unrestricted operation
+belongs to the CLI/operator workflow.
 
 Read [Security model](docs/SECURITY_MODEL.md) before enabling it.
 
 ## Hosting
 
-PiLink supports temporary and stable HTTPS arrangements:
+PiLink supports temporary and stable HTTPS arrangements. In the VS Code
+launcher:
 
-- Cloudflare Quick Tunnel for evaluation;
-- Cloudflare fixed/Named Tunnel for a durable endpoint;
-- an existing HTTPS reverse proxy/domain;
-- local-only operation;
-- legacy `nip.io` direct HTTPS.
+- **Cloudflare fixed domain** — stable, PiLink provisions tunnel/DNS from a
+  scoped one-use API token;
+- **Existing HTTPS domain** — stable, operator-managed reverse proxy;
+- **Cloudflare Quick Tunnel** — temporary evaluation URL;
+- **Local only** — same-machine clients.
 
-A remote ChatGPT client needs a reachable HTTPS origin. Recreating a Quick
-Tunnel changes that origin and therefore changes the MCP/OAuth URL clients use.
-
-The VS Code Quick start uses the temporary option because it is the shortest
-safe onboarding path. For a durable origin, enter **Advanced setup...** and
-review the extra hosting/workflow/access choices explicitly.
+The core CLI retains additional legacy hosting paths. A remote ChatGPT client
+needs a reachable HTTPS origin. Recreating a Quick Tunnel changes that origin
+and therefore changes the MCP/OAuth URL clients use.
 
 Hosting credentials must remain private. Automatic helper downloads are pinned
 and integrity-checked; controlled mirrors must provide both the download URL
@@ -191,9 +183,9 @@ See [Installation](docs/INSTALLATION.md) for provisioning details.
 - **ChatGPT Work / remote MCP clients:** connect to the OAuth-protected PiLink
   endpoint.
 - **PiLink VS Code extension:** optional graphical launcher/status panel for the
-  same server.
-- **Provider-backed local agents:** retained for operator/compatibility use with
-  provider credentials separate from MCP OAuth; not a normal launcher mode.
+  same server, with a fixed safe policy.
+- **Collaboration / provider-backed agents / unrestricted access:** explicit
+  core PiLink CLI/operator capabilities, not VS Code product modes.
 - **Codex:** the optional local plugin under `plugins/pilink` targets a loopback
   PiLink instance.
 
