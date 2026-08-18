@@ -19,22 +19,23 @@ test("the dashboard is a launcher and bridge monitor, not a second agent product
   assert.match(primary, /Start PiLink/);
   assert.match(primary, /Connect ChatGPT/);
   assert.match(primary, /Open ChatGPT Work/);
-  assert.match(primary, /VSPiLink only manages and monitors the bridge/);
+  assert.match(primary, /this panel only manages and monitors the bridge/);
   assert.doesNotMatch(script, /mode-switch|buildComposer|composerInput|renderConversation|renderTaskBoard/);
   assert.doesNotMatch(script, /Provider & model|Create local agent|Connect VS Code agents/);
 });
 
-test("first run recommends a stable safe single-agent endpoint", () => {
+test("first run keeps advanced choices out of the safe single-agent path", () => {
   const primary = functionSource("primaryModel");
-  assert.match(primary, /single-agent MCP toolset are the default/);
-  assert.match(primary, /Set up stable endpoint/);
-  assert.match(primary, /Temporary quick start/);
+  assert.match(primary, /single-agent MCP toolset are the normal graphical defaults/);
+  assert.match(primary, /Quick start for ChatGPT/);
   assert.match(primary, /hosting: \{ kind: "quick-tunnel" \}/);
   assert.match(primary, /accessMode: "workspace"/);
   assert.match(primary, /Local only/);
-  assert.match(primary, /stable endpoint is recommended for normal ChatGPT use/i);
-  assert.match(primary, /Quick Tunnel gets a different public URL/);
+  assert.match(primary, /Advanced setup…/);
+  assert.match(primary, /Quick start uses a temporary HTTPS address/);
   assert.doesNotMatch(primary, /accessMode: "full"/);
+  assert.match(primary, /Quick start for ChatGPT"[\s\S]{0,220}variant: "primary"/);
+  assert.doesNotMatch(primary, /Advanced setup…"[\s\S]{0,120}variant: "primary"/);
 });
 
 test("normal lifecycle has one dominant action per bridge state", () => {
@@ -42,7 +43,7 @@ test("normal lifecycle has one dominant action per bridge state", () => {
   assert.match(primary, /PiLink is stopped/);
   assert.match(primary, /Start PiLink", command: "start", variant: "primary"/);
   assert.match(primary, /PiLink is running locally/);
-  assert.match(primary, /Configure remote endpoint", command: "guidedSetup", variant: "primary"/);
+  assert.match(primary, /Advanced remote setup…", command: "guidedSetup", variant: "primary"/);
   assert.match(primary, /PiLink is online/);
   assert.match(primary, /Connect ChatGPT", command: "connectChatGpt", variant: "primary"/);
   assert.match(primary, /Finish connecting ChatGPT/);
@@ -60,11 +61,11 @@ test("Full access is detected but never offered as a normal graphical start", ()
   assert.match(primary, /Reconfigure safely/);
   assert.match(primary, /PiLink CLI/);
   assert.doesNotMatch(script, /Start with Full access|Start configured Full access|startUnsafe/);
-  assert.match(functionSource("renderFullAccessNotice"), /outside the normal VSPiLink workflow/);
+  assert.match(functionSource("renderFullAccessNotice"), /outside the normal graphical workflow/);
   assert.match(functionSource("topStatus"), /Full access/);
 });
 
-test("collaboration is migration state, not a promoted workflow choice", () => {
+test("collaboration is migration state, not a promoted main-screen workflow", () => {
   assert.doesNotMatch(script, /Enable collaboration/);
   const notice = functionSource("renderCollaborationNotice");
   assert.match(notice, /Advanced collaboration configuration detected/);
@@ -77,12 +78,13 @@ test("details and recovery contain bridge operations rather than specialist prod
   const advanced = functionSource("renderAdvanced");
   assert.match(advanced, /Details & recovery/);
   assert.match(advanced, /Endpoint, config, terminal/);
-  assert.match(advanced, /Reconfigure hosting/);
+  assert.match(advanced, /Advanced setup/);
   assert.match(advanced, /Copy MCP URL/);
   assert.match(advanced, /Open config/);
   assert.match(advanced, /Show terminal/);
   assert.match(advanced, /Open guide/);
-  assert.match(advanced, /Local model-provider chat, native VS Code MCP, manual OAuth registration/);
+  assert.match(advanced, /Advanced setup can expose legacy hosting, workflow, and access choices/);
+  assert.match(advanced, /Local model-provider chat, native VS Code MCP, and manual OAuth registration/);
   assert.doesNotMatch(script, /advancedLocalAgentSection|advancedIntegrationSection|advancedAccessSection/);
   assert.doesNotMatch(script, /registerClient|connectNativeMcp|configureAgents|spawnAgent|logoutAgent/);
 });
