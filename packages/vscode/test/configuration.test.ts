@@ -66,7 +66,7 @@ test("wizard provisioning creates paired private configuration and manages two c
   assert.equal(custom.SERVER_URL, "https://mcp.example.test");
   assert.equal(custom.PI_LANDING_HOSTNAME, "link.example.test");
   assert.equal(custom.PI_OAUTH_CONSENT_MODE, "paired");
-  assert.equal(custom.PI_RUNTIME_MODE, "collaboration");
+  assert.equal(custom.PI_RUNTIME_MODE, "single");
   assert.equal(custom.TOKEN_EXPIRY, "3600");
   assert.equal(custom.PI_REFRESH_TOKEN_EXPIRY, "2592000");
   assert.equal(custom.PI_UNSAFE_FULL_ACCESS, "false");
@@ -90,6 +90,7 @@ test("wizard provisioning creates paired private configuration and manages two c
   provisionWizardConfiguration({ configPath, workspace, hosting: { kind: "quick-tunnel" }, port: 4321 });
   const quick = parseEnv(fs.readFileSync(configPath, "utf8"));
   assert.equal(quick.PI_HOSTING_MODE, "quick-tunnel");
+  assert.equal(quick.PI_RUNTIME_MODE, "single");
   assert.equal(quick.SERVER_URL, undefined);
   assert.equal(quick.PI_LANDING_HOSTNAME, undefined);
   assert.equal(quick.TRUST_PROXY, "true");
