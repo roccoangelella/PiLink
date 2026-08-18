@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HostingSelection } from "./hosting-model.js";
 import type { PublicClientSummary } from "./protocol.js";
-import { isRuntimeMode, type RuntimeMode } from "./runtime-mode.js";
+import { DEFAULT_RUNTIME_MODE, isRuntimeMode, type RuntimeMode } from "./runtime-mode.js";
 
 export interface ConfigSnapshot {
   configPath: string;
@@ -136,7 +136,7 @@ export function provisionWizardConfiguration(options: {
       `PI_WORK_DIR=${serializeEnvValue(workspace)}`,
       `PI_DATA_DIR=${serializeEnvValue(path.dirname(options.configPath))}`,
       `PI_COORDINATION_DATA_DIR=${serializeEnvValue(defaultCoordinationDataDir(options.configPath))}`,
-      `PI_RUNTIME_MODE=${options.runtimeMode || "collaboration"}`,
+      `PI_RUNTIME_MODE=${options.runtimeMode || DEFAULT_RUNTIME_MODE}`,
       `PORT=${port}`,
       `JWT_SECRET=${privateSecret()}`,
       `PI_BOOTSTRAP_SECRET=${privateSecret()}`,
