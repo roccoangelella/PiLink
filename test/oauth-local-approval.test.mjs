@@ -21,10 +21,12 @@ function client(overrides = {}) {
   };
 }
 
-test("local approval accepts only the exact public ChatGPT callback client", () => {
+test("local approval accepts only the exact public ChatGPT DCR client", () => {
   const redirect = "https://chatgpt.com/connector/oauth/abcdef123456";
   assert.equal(isApprovedChatGptPublicClient(client(), redirect), true);
   assert.equal(isApprovedChatGptPublicClient(client({ token_endpoint_auth_method: "client_secret_post" }), redirect), false);
+  assert.equal(isApprovedChatGptPublicClient(client({ grant_types: ["authorization_code"] }), redirect), false);
+  assert.equal(isApprovedChatGptPublicClient(client({ scope: "mcp:tools" }), redirect), false);
   assert.equal(isApprovedChatGptPublicClient(client(), "https://attacker.example/callback"), false);
   assert.equal(isApprovedChatGptPublicClient(client({
     redirect_uris: ["https://chatgpt.com/connector/oauth/another123456"],
