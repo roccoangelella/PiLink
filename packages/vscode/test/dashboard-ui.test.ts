@@ -24,18 +24,19 @@ test("the dashboard is a launcher and bridge monitor, not a second agent product
   assert.doesNotMatch(script, /Provider & model|Create local agent|Connect VS Code agents/);
 });
 
-test("first run keeps advanced choices out of the safe single-agent path", () => {
+test("first run recommends stable hosting and fixes the safety policy", () => {
   const primary = functionSource("primaryModel");
-  assert.match(primary, /single-agent MCP toolset are the normal graphical defaults/);
-  assert.match(primary, /Quick start for ChatGPT/);
-  assert.match(primary, /hosting: \{ kind: "quick-tunnel" \}/);
-  assert.match(primary, /accessMode: "workspace"/);
-  assert.match(primary, /Local only/);
-  assert.match(primary, /Advanced setup…/);
-  assert.match(primary, /Quick start uses a temporary HTTPS address/);
-  assert.doesNotMatch(primary, /accessMode: "full"/);
-  assert.match(primary, /Quick start for ChatGPT"[\s\S]{0,220}variant: "primary"/);
-  assert.doesNotMatch(primary, /Advanced setup…"[\s\S]{0,120}variant: "primary"/);
+  assert.match(primary, /single-agent toolset/);
+  assert.match(primary, /Set up stable endpoint", command: "setupStable", variant: "primary"/);
+  assert.match(primary, /Temporary quick start", command: "setupQuick", variant: "secondary"/);
+  assert.match(primary, /Local only", command: "setupLocal", variant: "ghost"/);
+  assert.match(primary, /Stable hosting is recommended for ChatGPT/);
+  assert.doesNotMatch(primary, /accessMode|Full access.*command/);
+});
+
+test("the webview sends only the focused command protocol", () => {
+  assert.match(script, /vscode\.postMessage\(\{ type: "command", command: command \}\)/);
+  assert.doesNotMatch(script, /type: "wizard"|postWizard|wizardButton|configureAndStart/);
 });
 
 test("normal lifecycle has one dominant action per bridge state", () => {
@@ -43,7 +44,7 @@ test("normal lifecycle has one dominant action per bridge state", () => {
   assert.match(primary, /PiLink is stopped/);
   assert.match(primary, /Start PiLink", command: "start", variant: "primary"/);
   assert.match(primary, /PiLink is running locally/);
-  assert.match(primary, /Advanced remote setup…", command: "guidedSetup", variant: "primary"/);
+  assert.match(primary, /Configure remote endpoint", command: "setupStable", variant: "primary"/);
   assert.match(primary, /PiLink is online/);
   assert.match(primary, /Connect ChatGPT", command: "connectChatGpt", variant: "primary"/);
   assert.match(primary, /Finish connecting ChatGPT/);
@@ -53,39 +54,35 @@ test("normal lifecycle has one dominant action per bridge state", () => {
   assert.match(primary, /Open ChatGPT Work", command: "openChatGpt", variant: "primary"/);
 });
 
-test("Full access is detected but never offered as a normal graphical start", () => {
+test("Full access is detected but never offered as a graphical launch", () => {
   const primary = functionSource("primaryModel");
   assert.match(primary, /if \(currentState\.unsafeFullAccess\)/);
   assert.match(primary, /Full machine access is running/);
   assert.match(primary, /Full machine access is saved/);
   assert.match(primary, /Reconfigure safely/);
-  assert.match(primary, /PiLink CLI/);
-  assert.doesNotMatch(script, /Start with Full access|Start configured Full access|startUnsafe/);
-  assert.match(functionSource("renderFullAccessNotice"), /outside the normal graphical workflow/);
-  assert.match(functionSource("topStatus"), /Full access/);
+  assert.match(primary, /PiLink CLI\/operator workflow/);
+  assert.doesNotMatch(script, /Start with Full access|startUnsafe/);
+  assert.match(functionSource("renderFullAccessNotice"), /not part of the normal VS Code workflow/);
 });
 
-test("collaboration is migration state, not a promoted main-screen workflow", () => {
+test("collaboration is migration state, not a promoted workflow", () => {
   assert.doesNotMatch(script, /Enable collaboration/);
   const notice = functionSource("renderCollaborationNotice");
   assert.match(notice, /Advanced collaboration configuration detected/);
   assert.match(notice, /Switch to single-agent/);
-  assert.match(notice, /selectRuntimeMode/);
-  assert.match(notice, /"single"/);
+  assert.match(notice, /switchToSingle/);
 });
 
-test("details and recovery contain bridge operations rather than specialist products", () => {
+test("details and recovery contain bridge operations only", () => {
   const advanced = functionSource("renderAdvanced");
   assert.match(advanced, /Details & recovery/);
   assert.match(advanced, /Endpoint, config, terminal/);
-  assert.match(advanced, /Advanced setup/);
+  assert.match(advanced, /Reconfigure endpoint/);
   assert.match(advanced, /Copy MCP URL/);
   assert.match(advanced, /Open config/);
   assert.match(advanced, /Show terminal/);
   assert.match(advanced, /Open guide/);
-  assert.match(advanced, /Advanced setup can expose legacy hosting, workflow, and access choices/);
-  assert.match(advanced, /Local model-provider chat, native VS Code MCP, and manual OAuth registration/);
-  assert.doesNotMatch(script, /advancedLocalAgentSection|advancedIntegrationSection|advancedAccessSection/);
+  assert.match(advanced, /intentionally not part of the ordinary graphical workflow/);
   assert.doesNotMatch(script, /registerClient|connectNativeMcp|configureAgents|spawnAgent|logoutAgent/);
 });
 
@@ -125,7 +122,6 @@ test("polling preserves the only disclosure state", () => {
   assert.match(script, /vscode\.getState/);
   assert.match(script, /vscode\.setState\(uiState\)/);
   assert.match(script, /advancedOpen/);
-  assert.doesNotMatch(script, /localAgentOpen/);
 });
 
 test("webview content is built with textContent rather than HTML interpolation", () => {
@@ -153,5 +149,4 @@ test("the layout uses VS Code tokens and stays usable in a narrow sidebar", () =
   assert.match(styles, /@media \(max-width: 420px\)/);
   assert.match(styles, /grid-template-columns: 1fr/);
   assert.doesNotMatch(styles, /font-family:\s*(?:Arial|Helvetica|Roboto)/i);
-  assert.doesNotMatch(styles, /agent-row|nested-details/);
 });
