@@ -122,17 +122,9 @@ test("status separates server, endpoint and ChatGPT readiness", () => {
   assert.match(chatgpt, /activeSessions/);
 });
 
-test("recent activity stays metadata-only and bounded", () => {
-  const normalize = functionSource("normalizeActivity");
-  assert.match(normalize, /slice\(-8\)/);
-  assert.match(normalize, /tool:/);
-  assert.match(normalize, /outcome:/);
-  assert.match(normalize, /durationMs:/);
-  assert.doesNotMatch(normalize, /prompt|args|arguments|result|output|path/);
-  const render = functionSource("renderActivity");
-  assert.match(render, /slice\(-5\)\.reverse\(\)/);
-  assert.match(render, /Metadata only/);
-  assert.match(render, /Arguments, file paths, prompts, and results are intentionally not shown here/);
+test("the launcher intentionally has no activity feed or collaboration console", () => {
+  assert.doesNotMatch(script, /normalizeActivity|renderActivity|Recent MCP activity|Metadata only/);
+  assert.doesNotMatch(script, /collaboration\.activity|agent_chat_|agent_task_/);
 });
 
 test("polling preserves the only disclosure state", () => {
