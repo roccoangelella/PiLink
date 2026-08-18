@@ -75,7 +75,7 @@
       },
       {
         "command": "vspilink.guidedSetup",
-        "title": "Configure Hosting (Advanced)",
+        "title": "Reconfigure PiLink (Advanced)",
         "category": "VSPiLink",
         "icon": "$(settings-gear)"
       },
