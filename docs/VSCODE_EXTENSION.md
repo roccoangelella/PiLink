@@ -32,9 +32,9 @@ OAuth, access policy, local model providers, tasks, agents, and monitoring on
 one screen. That was technically expressive but difficult to reason about.
 
 The extension now follows one rule: **show the next action in the ordinary MCP
-bridge lifecycle and hide specialist mechanisms from the normal path.**
+bridge lifecycle and keep specialist mechanisms out of the happy path.**
 
-A fresh graphical setup therefore uses:
+A fresh ordinary graphical setup uses:
 
 - the **single-agent** PiLink toolset;
 - **project-folder** access;
@@ -54,22 +54,22 @@ Open and trust the project folder that PiLink may access. The extension will not
 perform privileged setup or start PiLink from a VS Code Restricted Mode
 workspace.
 
-### 2. Choose the endpoint
+### 2. Start the safe bridge
 
-For a new project the main card offers three choices:
+For a new project the main card offers two ordinary launch choices:
 
-**Set up stable endpoint** is the recommended normal path for ChatGPT Work. It
-uses the native hosting prompts for a persistent Cloudflare hostname or an
-existing HTTPS origin.
+**Quick start for ChatGPT** is the primary first-run action. It creates a
+single-agent, project-folder PiLink configuration and exposes it through a
+temporary Cloudflare Quick Tunnel.
 
-**Temporary quick start** starts the same safe single-agent bridge through a
-Cloudflare Quick Tunnel. This is convenient for evaluation, but the public URL
-changes when the tunnel is recreated.
+**Local only** starts the same safe bridge without a public endpoint. Use this
+when the MCP client is on the same machine.
 
-**Local only** starts PiLink without a public endpoint. This is useful when the
-MCP client is on the same machine.
+A third **Advanced setup...** action is deliberately secondary. It opens the
+older native setup flow for stable/legacy hosting and specialist workflow/access
+choices. It is not part of the normal first-run path.
 
-### 3. Start PiLink
+### 3. Start PiLink again later
 
 Once configured, the main action is simply **Start PiLink** whenever the bridge
 is stopped.
@@ -118,10 +118,10 @@ has to remain open.
 ## Details & recovery
 
 Normal use should not require the lower disclosure. **Details & recovery** keeps
-only the bridge operations useful for diagnosis or repair:
+the bridge operations useful for diagnosis or repair:
 
 - restart/stop;
-- hosting reconfiguration;
+- **Advanced setup...**;
 - MCP URL copy;
 - private configuration access;
 - PiLink terminal;
@@ -131,14 +131,25 @@ This section also shows the project, hosting type, server workflow, and MCP
 endpoint so an operator can verify what is actually running without navigating
 multiple product tabs.
 
-## What was deliberately removed from the graphical product
+### What Advanced setup means
+
+The `guidedSetup` implementation predates the launcher-only redesign. It is
+kept for compatibility because it knows how to collect the extra inputs needed
+for stable Cloudflare deployments, existing HTTPS origins, legacy hosting, and
+specialist access/workflow choices.
+
+For that reason it is explicitly labeled **Advanced setup...** in the UI and
+Command Palette. The ordinary Quick start and Local only buttons bypass those
+choices and always request project-folder access.
+
+## What was deliberately removed from the normal graphical product
 
 ### Local provider / Pi Local chat
 
 PiLink retains local-agent/provider implementation for compatibility and other
 entry points, but the VS Code dashboard no longer presents it as a second
 product. A user who installed the extension only to start MCP should never be
-asked to choose a model provider.
+asked to choose a model provider in the ordinary path.
 
 ### Native VS Code MCP setup
 
@@ -149,28 +160,36 @@ a second MCP integration during setup.
 
 ### Collaboration enablement
 
-The collaboration server mode remains supported by PiLink, but the graphical
+The collaboration server mode remains supported by PiLink, but the main
 launcher does not advertise it as a sibling of the single-agent workflow. If an
 existing project is already configured for collaboration, the dashboard detects
 that state and offers **Switch to single-agent** rather than silently changing
 it.
+
+The legacy Advanced setup path may still expose the workflow selector for an
+operator who deliberately enters that flow. For routine GUI use, single-agent
+is the default and no workflow decision is required.
 
 ### Full-access launch
 
 Full access removes the project boundary and allows general process execution as
 the PiLink OS user. It is remote code execution by design.
 
-The ordinary VS Code workflow therefore does not offer a Full-access launch
-button. If an existing configuration already contains Full access, the
-dashboard enters an explicit safety state instead of showing the normal Start
-button. Operators who deliberately need unrestricted access should use the
-PiLink CLI and its explicit security controls.
+Quick start and Local only never request Full access. If an existing
+configuration already contains Full access, the dashboard enters an explicit
+safety state instead of showing the normal Start button.
+
+Operators who deliberately need unrestricted access should prefer the PiLink
+CLI and its explicit security controls. The legacy Advanced setup path remains
+available for compatibility, but it is intentionally outside the normal GUI
+flow and requires its existing warning/confirmation.
 
 ## Recent activity
 
-The only monitoring retained on the main surface is a short metadata-only list
-of recent MCP calls. It is useful for answering “is the client using PiLink?”
-without turning the extension into an observability product.
+When the active administrative projection provides MCP audit metadata, the
+launcher can show a short metadata-only activity list. It is useful for
+answering “is the client using PiLink?” without turning the extension into an
+observability product.
 
 The list is bounded and contains operational metadata such as tool name,
 outcome, duration, and time. It intentionally excludes:
@@ -183,14 +202,19 @@ outcome, duration, and time. It intentionally excludes:
 - cookies or browser DOM;
 - model reasoning.
 
+In a server mode where that audit projection is unavailable, the activity
+section simply remains absent.
+
 ## Stable endpoint versus Quick Tunnel
 
-A stable origin is the recommended default because the remote MCP endpoint and
-OAuth identity are meant to survive ordinary restarts.
+Quick start is the simplest first-run path, but its Quick Tunnel hostname is
+transient. When it changes, the old remote connection still points at the
+previous origin.
 
-Quick Tunnel remains useful for evaluation, but its hostname is transient. When
-it changes, the old ChatGPT connection still points at the previous origin. For
-a durable installation, use the fixed-domain or existing-domain path.
+For a durable installation, enter **Advanced setup...** deliberately and choose
+a stable fixed-domain/Named-Tunnel or existing-domain path. Review every extra
+workflow/access prompt in that advanced flow rather than treating it as part of
+the one-click setup.
 
 ## Daily use
 
@@ -204,11 +228,14 @@ With stable hosting and OAuth already configured, daily use should be close to:
 If the dashboard says **OAuth ready**, do not repeat OAuth registration. ChatGPT
 will create an MCP transport when it needs the tools.
 
+Quick Tunnel is different because recreating it changes the public origin.
+
 ## Compatibility versus UX
 
-The extension backend still contains some older/specialist commands and state so
+The extension backend still contains older/specialist commands and state so
 existing installations are not unnecessarily broken. They are intentionally
-not promoted through the command palette or main dashboard.
+not promoted as parallel products through the main dashboard or normal settings
+surface.
 
 This separation is deliberate: retaining compatibility does not require
 retaining the old UX.
@@ -221,6 +248,9 @@ retaining the old UX.
 - `packages/vscode/src/extension.ts` — process, hosting, OAuth, and compatibility implementation;
 - `packages/vscode/src/runtime-mode.ts` — single-agent default and legacy workflow state;
 - `packages/vscode/src/protocol.ts` — webview command/state protocol.
+
+The old `media/main.js` and `media/styles.css` dashboard implementation was
+removed, so there is only one UI implementation to maintain.
 
 For protocol and trust boundaries see [Architecture](ARCHITECTURE.md) and
 [Security model](SECURITY_MODEL.md). For remote authorization details see
