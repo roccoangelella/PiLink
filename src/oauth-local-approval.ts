@@ -5,9 +5,10 @@ import {
   createAuthorizationCode,
   effectiveClientTokenVersion,
   findActiveClient,
+  setClientDisabled,
 } from "./auth.js";
 import { loadRuntimeConfig } from "./config.js";
-import { isOwnerRegistrationWindowOpen } from "./oauth-owner.js";
+import { closeOwnerRegistrationWindow, isOwnerRegistrationWindowOpen } from "./oauth-owner.js";
 import { recordOAuthActivity } from "./service-status.js";
 import type { OAuthClient } from "./types.js";
 
@@ -85,6 +86,7 @@ export async function tryHandleLocalChatGptAuthorization(req: Request, res: Resp
   };
   const approved = await requestLocalApproval(approvalRequest);
   if (!approved) {
+    await setClientDisabled(clientId, true);
     const denied = new URL(redirectUri);
     denied.searchParams.set("error", "access_denied");
     if (state) denied.searchParams.set("state", state);
@@ -110,8 +112,9 @@ export async function tryHandleLocalChatGptAuthorization(req: Request, res: Resp
   callback.searchParams.set("code", code);
   if (state) callback.searchParams.set("state", state);
 
+  closeOwnerRegistrationWindow();
   recordOAuthActivity(clientId, "authorized");
-  console.error(`[OAuth] Local owner approved ChatGPT client ${maskClientId(clientId)}.`);
+  console.error(`[OAuth] Local owner approved ChatGPT client ${maskClientId(clientId)}; DCR setup window closed.`);
   res.redirect(303, callback.toString());
   return true;
 }
