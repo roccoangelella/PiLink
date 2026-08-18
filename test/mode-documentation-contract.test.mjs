@@ -18,7 +18,7 @@ test("mode guide states the two server modes and graphical handoff contract", ()
   assert.match(guide, /vscode.*not a third server capability mode|Do not write `PI_RUNTIME_MODE=vscode`/s);
   assert.match(guide, /pilink start --mode single/);
   assert.match(guide, /pilink start --mode collaboration/);
-  assert.match(guide, /public collaboration chat\/tasks|public collaboration.*tasks.*work loop.*memory/s);
+  assert.match(guide, /public collaboration chat\/tasks/i);
   assert.match(guide, /fresh VSPiLink installation.*Single agent/s);
   assert.match(guide, /optional local Pi provider\/runtime.*separate/s);
   assert.match(guide, /PI_CHAT_CLI=off/);
