@@ -1,445 +1,283 @@
-# VSPiLink: how the VS Code extension works
+# VSPiLink: the VS Code control surface
 
-VSPiLink is PiLink's optional VS Code control surface. It is useful for setup,
-starting and stopping PiLink, choosing the server workflow, connecting remote
-MCP clients, configuring Pi Local, and monitoring activity.
+VSPiLink is the optional GUI for operating PiLink from VS Code. Its main job is
+simple: **start the PiLink MCP server for the open project, connect a remote
+client, and show whether the bridge is healthy.**
 
-The most important thing to understand is what VSPiLink **is not**:
-
-- it is not ChatGPT;
-- it is not a second ChatGPT conversation window;
-- it is not the PiLink server itself;
-- the **ChatGPT MCP / Pi Local** buttons do not select the server's security or
-  capability mode;
-- the collaboration feed does not mirror your ChatGPT transcript.
-
-If the interface feels like several unrelated controls were put on one screen,
-that is because VSPiLink is controlling several independent layers. The rest
-of this guide separates those layers.
-
-## The 60-second mental model
-
-For ChatGPT Work, the normal path is:
+It is not intended to become another chat application.
 
 ```text
-You
-  |
-  v
+You work here:
+
 ChatGPT Work
-  |
-  v
-private PiLink plugin
-  |
-  | HTTPS + OAuth + MCP
-  v
-PiLink server on your machine
-  |
-  v
-selected workspace
+    |
+    v
+PiLink plugin
+    |
+    | OAuth + MCP
+    v
+PiLink server --------> project folder
+    ^
+    |
+VSPiLink starts and manages this side
 ```
 
-VSPiLink sits beside that path as the local control panel:
+## What changed
 
-```text
-VS Code / VSPiLink
-  |
-  | loopback-only protected admin channel
-  v
-PiLink server
-```
+Older VSPiLink builds exposed several independent concepts at the same visual
+level: ChatGPT MCP vs Pi Local, single-agent vs collaboration, hosting, OAuth,
+agent chat, tasks, providers, and access policy. That made the dashboard look
+like a product switchboard rather than a start button for PiLink.
 
-For Pi Local, the model is different:
+The redesigned dashboard uses a different rule:
 
-```text
-VSPiLink local chat
-  |
-  v
-supervised Pi agent
-  |
-  +--> configured model provider
-  |
-  v
-selected workspace
-```
+> show only the next action needed for the ordinary PiLink lifecycle; put
+> optional capability switches under Advanced.
 
-So when you use **ChatGPT MCP**, you normally write your instructions in
-ChatGPT Work. When you use **Pi Local**, you can use the local chat controls in
-VSPiLink.
+A fresh installation therefore starts from **single-agent** automatically.
+Collaboration remains supported, but it is an explicit advanced opt-in.
 
-## The four decisions the UI mixes together
+## The main screen
 
-There are four independent choices. Changing one does not automatically change
-the others.
+The screen has four parts.
 
-### 1. Server workflow: Single-agent vs Public chat & orchestration
+### 1. PiLink status
 
-This is the PiLink server capability catalog for the workspace.
+The header shows the current workspace and one short state such as **Setup**,
+**Stopped**, **Online**, **Ready**, or **Connected**.
 
-**Single-agent** is the simpler default. It exposes the workspace harness but
-does not expose public collaboration chat, tasks, memory, work-loop, or remote
-agent-management tools. A locally configured Pi provider may still supervise
-one local agent through the protected VS Code administration path.
+### 2. One primary action
 
-**Public chat & orchestration** adds the collaboration services used by
-multiple or coordinated authenticated MCP agents: shared agent chat, tasks,
-work coordination, memory projections, and supervised-agent controls.
+The large card changes with the lifecycle:
 
-Changing this choice changes server policy and therefore requires a server
-restart. It is not just a visual tab switch.
-
-A useful rule:
-
-- choose **Single-agent** when you mainly want one remote or local coding agent
-  to work in the selected folder;
-- choose **Public chat & orchestration** when you specifically want shared
-  tasks, coordination messages, multiple observed agents, or remote
-  supervision features.
-
-### 2. Execution surface: ChatGPT MCP vs Pi Local
-
-The two large buttons at the top choose what the dashboard is showing. They do
-**not** change the server workflow above.
-
-**ChatGPT MCP** means: "I want an external ChatGPT Work plugin to reach this
-PiLink server over OAuth-protected MCP." This side of the UI is mostly setup,
-connection status, and monitoring. Your actual prompt belongs in ChatGPT Work.
-
-**Pi Local** means: "I want a supervised Pi agent that calls a model provider
-configured on this machine." Provider credentials, provider/model selection,
-and local chat are separate from ChatGPT OAuth and OpenAI Work usage.
-
-You can switch between these surfaces without changing the underlying
-Single-agent/Public-chat server policy.
-
-### 3. Access boundary: Open folder vs Full access
-
-This decides what an authorized agent can reach on the machine.
-
-**Open folder** is the normal mode. File tools are confined to the canonical
-selected workspace. There is no general-purpose shell. Some repository
-build/test profiles can still execute repository-controlled code, but they
-require their own explicit opt-in.
-
-**Full access** deliberately removes the workspace boundary for an explicitly
-authorized OAuth client and enables general command execution with the PiLink
-OS user's permissions. It is remote code execution by design. It does not grant
-root automatically, but it should be treated as machine-level access.
-
-The access boundary is independent from both the server workflow and the
-ChatGPT MCP/Pi Local surface selector.
-
-### 4. Hosting and OAuth: how a remote client reaches PiLink
-
-A remote ChatGPT Work plugin cannot connect to `127.0.0.1` on your machine. It
-needs a reachable HTTPS origin plus OAuth authorization.
-
-VSPiLink can work with several hosting arrangements, including:
-
-- **Cloudflare Named Tunnel**: stable managed hostname; best fit for a durable
-  remote connection;
-- **Existing/direct HTTPS domain**: use infrastructure you already operate;
-- **Quick Tunnel**: temporary public hostname; useful for evaluation, but the
-  hostname changes when recreated;
-- **Local only**: no public endpoint; appropriate for local clients and Pi
-  Local, not a remote ChatGPT Work plugin;
-- legacy `nip.io` support for the older direct setup path.
-
-Hosting only makes the server reachable. OAuth decides which client is allowed
-to use it and with which scopes.
-
-## What the main screen is actually showing
-
-### ChatGPT MCP / Pi Local header buttons
-
-These are **view/surface selectors**. Think of them as "show me the remote MCP
-controls" versus "show me the local Pi-agent controls."
-
-They are not equivalent to Single-agent/Public chat & orchestration.
-
-### PiLink workflow card
-
-This is the important server-mode selector. It controls the capability catalog
-served to MCP clients and the collaboration/runtime policy behind the
-workspace.
-
-If the server is already running, changing the workflow requires a restart so
-all clients see one coherent tool catalog.
-
-### Top status indicator
-
-The status text is a compressed summary. On the ChatGPT MCP surface, the common
-states mean:
-
-| Status | What it means |
+| Situation | What VSPiLink asks you to do |
 | --- | --- |
-| **Restricted** | VS Code does not trust the workspace. VSPiLink will not start/configure privileged operations. |
-| **Choose workflow** | Select Single-agent or Public chat & orchestration first. |
-| **Setup required** | PiLink does not yet have a usable local configuration for this workspace. |
-| **Server stopped** | Configuration exists, but the PiLink service is not currently healthy. |
-| **Not connected** | The server is running, but no ChatGPT OAuth client has been set up yet. |
-| **Client registered / Finish sign-in** | An OAuth client exists, but authorization in ChatGPT is not complete. Do not create another client just because there is no active MCP session yet. |
-| **OAuth ready / ChatGPT ready** | Authorization is stored. ChatGPT can create a new MCP transport session when needed. |
-| **MCP active** | One or more MCP connections are active right now. |
+| VS Code does not trust the folder | Manage Workspace Trust |
+| PiLink has never been configured | Start PiLink |
+| PiLink is configured but stopped | Start PiLink |
+| Public endpoint is online | Connect ChatGPT |
+| OAuth exists but is unfinished | Continue connection |
+| OAuth is ready | Open ChatGPT Work |
+| An MCP transport is active | Open ChatGPT Work |
 
-`MCP active` counts transport connections. It is not the same thing as the
-number of agents shown in the collaboration monitor.
+This is intentionally much less flexible than the old top-level dashboard. The
+ordinary path should not require understanding the implementation architecture.
 
-### Collaboration messages, tasks, activity, and observed agents
+### 3. Three always-visible facts
 
-These panels are an operational monitor, not a transcript viewer.
+The bottom of the main card reports:
 
-VSPiLink intentionally does not read the ChatGPT page, DOM, cookies, composer,
-private transcript, or hidden reasoning. A collaboration message appears only
-when an agent deliberately publishes through PiLink's collaboration tools, for
-example `agent_chat_post`. An observed agent identity can therefore remain
-empty even while an MCP connection is healthy.
+- **Server** — running or stopped;
+- **Remote** — local-only, authorization pending, OAuth ready, or active;
+- **Access** — Project folder or Full machine.
 
-Likewise, the task area contains tasks created through PiLink's task tools. It
-does not automatically convert every ChatGPT instruction into a visible task.
+These answer the questions that matter while debugging a connection without
+turning the screen into a monitoring console.
 
-## First-time recipe: use ChatGPT Work on a project
+### 4. Advanced
 
-This is the path to follow if your goal is simply: "I want ChatGPT Work to use
-PiLink tools on this folder."
+Hosting changes, collaboration, Full access, VS Code's native MCP provider,
+manual OAuth registration, the terminal, configuration, and the optional local
+Pi agent are grouped under one disclosure.
 
-1. **Open the project folder in VS Code and trust it.**
-   VSPiLink deliberately blocks setup, OAuth, service start, and file access in
-   Restricted Mode.
+## First run: the shortest path
 
-2. **Open the VSPiLink view.**
-   If the right sidebar is hidden, use **View -> Appearance -> Secondary Side
-   Bar** and select **VSPiLink**. You can also open the dashboard in an editor
-   panel.
+For the common goal — "let ChatGPT Work use PiLink on this project" — use this
+flow:
 
-3. **Choose the server workflow.**
-   Start with **Single-agent** unless you know you need PiLink's shared chat,
-   task, memory, or orchestration tools. You can move to **Public chat &
-   orchestration** later; doing so restarts the server.
+1. Open the project folder in VS Code.
+2. Trust the folder.
+3. Open **VSPiLink** in the Secondary Side Bar.
+4. Select **Quick start for ChatGPT**.
+5. Wait for PiLink and the temporary HTTPS endpoint to become healthy.
+6. Select **Connect ChatGPT**.
+7. Complete the owner verification/OAuth flow.
+8. Do the actual work in ChatGPT Work.
 
-4. **Select ChatGPT MCP at the top.**
-   This tells VSPiLink to show the remote-connection workflow. It does not
-   itself start ChatGPT or change the server's capability mode.
+Quick start deliberately uses:
 
-5. **Select Start setup / Connect ChatGPT via MCP.**
-   The extension chooses or confirms the workspace and prepares the PiLink
-   configuration.
+- **single-agent** workflow;
+- **Project folder** access;
+- no unrestricted shell;
+- a temporary Cloudflare Quick Tunnel.
 
-6. **Choose Open folder access for normal use.**
-   Select Full access only when you deliberately want the authorized remote
-   client to operate outside the workspace and run general commands.
+The temporary hostname changes when the tunnel is recreated. Once you know you
+want a durable installation, use **Stable endpoint...** instead.
 
-7. **Choose hosting.**
-   For a durable ChatGPT connection, prefer a stable HTTPS origin such as a
-   Cloudflare Named Tunnel or an existing domain. Quick Tunnel is convenient
-   for testing but its URL is transient.
+## Stable endpoint
 
-8. **Let VSPiLink provision and start PiLink.**
-   At this point there are two different health questions: is the local PiLink
-   service running, and is its public HTTPS endpoint reachable? Both need to be
-   healthy for remote use.
+**Stable endpoint...** opens the existing native VS Code setup prompts. They
+support the more operational hosting cases without crowding the main screen:
 
-9. **Connect the private PiLink plugin in ChatGPT Work.**
-   The public MCP URL ends in `/sse`. PiLink itself is not an unrelated public
-   marketplace result named "MCP server"; use the PiLink plugin supplied by
-   your personal/workspace plugin source or the creation/import controls
-   available to the deployment owner.
+- Cloudflare fixed domain / provisioned Named Tunnel;
+- managed Cloudflare Named Tunnel;
+- an existing HTTPS domain/reverse proxy;
+- Quick Tunnel;
+- local-only operation;
+- the legacy `nip.io` path.
 
-10. **Complete OAuth.**
-    Prefer automatic/Dynamic Client Registration when the active ChatGPT flow
-    supports it. VSPiLink uses a local-owner verification step: it creates a
-    short-lived pairing page and separately shows a local verification code.
-    Possession of the public pairing URL alone is not enough to authorize the
-    browser.
+The safe permission choice is **Project folder only**. Choosing Full access in
+that advanced flow requires an explicit warning/confirmation.
 
-    The manual callback/client-ID/client-secret flow remains a compatibility
-    fallback for a builder that explicitly requires user-defined OAuth client
-    values. Do not create a manual client just because the status says
-    `Client registered` or `Finish sign-in`.
+## Local-only use
 
-11. **Wait for OAuth ready / ChatGPT ready.**
-    This means the durable authorization exists. It does not require an MCP
-    transport to remain open continuously.
+Select **Local only** on first run when the PiLink server should stay on the
+machine. This is useful for local MCP clients and for the optional local Pi
+runtime. A remote ChatGPT Work plugin cannot reach a loopback-only endpoint.
 
-12. **Do the actual work in ChatGPT Work.**
-    Start a Work task and ask ChatGPT to inspect or modify the configured
-    workspace. When ChatGPT invokes PiLink, VSPiLink should move to `MCP active`.
+If you later want ChatGPT Work, use **Make it reachable from ChatGPT** or
+**Change hosting...**.
 
-A good first request is deliberately read-only:
+## OAuth states
 
-```text
-Use PiLink to inspect the configured workspace. Report the workspace root,
-Git status, package scripts, and the tests you would run. Do not modify files.
-```
+Connection status is deliberately split into three concepts:
 
-Verify that ChatGPT reports the expected folder before authorizing writes or
-execution.
+**Not connected** means no ChatGPT OAuth client has been prepared yet.
 
-## Returning the next day
+**Authorization pending** means the OAuth client already exists, but the user
+has not finished authorization. Continue the existing flow; do not create a
+second client merely because no MCP session is active.
 
-With a stable public origin, normal use should be much shorter:
+**OAuth ready** means authorization is durable. There does not have to be a
+permanent network connection. ChatGPT opens a transport when it invokes PiLink.
 
-1. open the project in VS Code;
-2. open VSPiLink if you want to inspect status;
-3. start/restart PiLink if the server is stopped;
-4. open ChatGPT Work and use the already-installed PiLink plugin.
+**Connected** means at least one MCP transport is active at that moment.
 
-If the status says **OAuth ready / ChatGPT ready**, you should not repeat the
-callback or client-registration process. ChatGPT will open a new MCP transport
-when it needs tools.
+## Why the dashboard no longer has ChatGPT MCP / Pi Local tabs
 
-Quick Tunnel is the exception: a recreated Quick Tunnel has a different public
-origin, so the old ChatGPT connection points at the old URL. For persistent use,
-move to a stable hostname.
+They represented two different execution surfaces, not two PiLink server modes,
+and looked too much like a product-level choice.
 
-## First-time recipe: use Pi Local instead of ChatGPT Work
+ChatGPT Work is now treated as the ordinary remote client. Its controls are
+part of the main server lifecycle.
 
-Use this path when you want the model call to come from a provider configured
-in PiLink rather than from ChatGPT Work.
+The optional local provider/agent runtime still exists, but it is under
+**Advanced -> Optional local Pi agent**. Provider credentials remain completely
+separate from ChatGPT OAuth.
 
-1. Open and trust the workspace.
-2. Choose the desired server workflow. **Single-agent** is the normal local
-   default; choose **Public chat & orchestration** only when you need those
-   coordination capabilities.
-3. Select **Pi Local** at the top of VSPiLink.
-4. Configure the agent provider, authentication method, and model.
-5. Start the PiLink runtime locally. Public hosting and ChatGPT OAuth are not
-   required merely to use Pi Local.
-6. Use the local chat controls, or create/supervise an agent from VSPiLink.
-7. Use agent output/follow-up/cancel/stop controls to manage the local runtime.
+## Why collaboration moved to Advanced
 
-Pi Local provider credentials do not authorize ChatGPT MCP, and ChatGPT OAuth
-does not sign you in to a Pi Local provider. They are intentionally separate.
+The original PiLink concept is a single-agent workspace bridge. That is now the
+automatic default.
 
-## When to choose Public chat & orchestration
+Enable **Public chat & orchestration** only when you need PiLink's additional
+coordination layer:
 
-Choose the collaboration workflow when the thing you want is not merely
-"ChatGPT can read/edit my folder" but rather "agents should coordinate through
-PiLink."
-
-That workflow adds the server-side collaboration layer used for:
-
-- explicit agent-to-agent coordination messages;
-- durable shared tasks and task ownership;
+- explicit agent-to-agent messages;
+- shared tasks and task ownership;
 - work-loop coordination;
 - governed memory projections;
-- supervised Pi-agent management exposed to appropriately authorized remote
-  clients.
+- remote supervised-agent controls.
 
-The dashboard can then monitor those published coordination objects. It still
-does not mirror arbitrary ChatGPT conversation content.
+Switching workflow restarts PiLink because the workflow changes the MCP tool
+catalog. It does not publish an endpoint, install a ChatGPT plugin, alter OAuth
+credentials, or grant Full access.
 
-## Button and command glossary
+When collaboration is enabled, VSPiLink displays a visible notice and exposes
+the existing **Agent & Task Monitor** action.
 
-The Command Palette exposes more actions than a normal first-time user needs.
-The important ones are:
+## Full access
 
-| UI/command | What it really does |
-| --- | --- |
-| **ChatGPT MCP** | Shows the remote ChatGPT/OAuth/MCP setup and monitor surface. |
-| **Pi Local** | Shows the locally configured Pi-provider/agent surface. |
-| **Choose VSPiLink Workflow** | Selects Single-agent or Public chat & orchestration; this changes server policy and may restart PiLink. |
-| **Connect ChatGPT via MCP / Start setup** | Runs or resumes the guided remote setup. It can configure the workspace, access mode, hosting, server start, and connection onboarding. |
-| **Open ChatGPT Work** | Opens the OpenAI-controlled Work UI. Opening it is navigation, not proof of an MCP connection. |
-| **Start Safely (Workspace Access)** | Starts PiLink with the selected workspace boundary. |
-| **Start with Full Access** | Starts the explicitly unsafe machine-level access mode for an authorized client. |
-| **Start Locally Only** | Starts PiLink without a public remote endpoint. |
-| **Stop / Restart** | Controls the PiLink service managed by the extension. |
-| **Copy MCP URL** | Copies the protocol endpoint, normally `https://.../sse`. It is not a human web page. |
-| **Register an OAuth Client** | Manual OAuth compatibility path. Normally unnecessary when automatic registration works. |
-| **Connect to VS Code Agents** | Authorizes VS Code's native MCP provider against the local PiLink service. This is separate from ChatGPT Work. |
-| **Open the Agent and Task Monitor** | Opens the operational collaboration monitor; it is not a ChatGPT transcript. |
-| **Configure the Agent Provider and Model** | Configures the provider/model used by Pi Local supervised agents. |
-| **Create an Agent** | Starts a supervised Pi agent when the local provider/runtime is ready. |
-| **Open Private Configuration** | Opens the private PiLink configuration selected by the extension. Treat it as sensitive. |
+**Project folder** is the normal security boundary. File operations are
+confined to the selected canonical workspace and a general-purpose shell is not
+available.
 
-Advanced reset, hosting, and manual OAuth commands exist for recovery and
-compatibility. They should not be part of the normal daily workflow.
+**Full machine** is remote code execution by design. It permits an explicitly
+authorized OAuth client to access files outside the project and run commands as
+the PiLink OS user.
 
-## Common confusing situations
+For that reason the redesigned dashboard:
 
-### "ChatGPT is working, but the collaboration feed is empty"
+- never offers Full access as a first-run primary action;
+- keeps the control under Advanced;
+- does not enable the button until an eligible ChatGPT OAuth client with the
+  required tool scope exists;
+- keeps the Full-machine state visible in the main status row whenever it is
+  active.
 
-That can be completely normal. The feed contains only messages deliberately
-published through PiLink's collaboration APIs. It is not a copy of the ChatGPT
-conversation.
+Re-running the normal hosting setup with Project-folder access resets the
+configuration back to the safe boundary.
 
-### "It says OAuth ready, but MCP is not active"
+## Recent activity
 
-`OAuth ready` means ChatGPT has durable authorization. `MCP active` means a
-transport connection is open right now. ChatGPT may open one only when it
-actually invokes PiLink tools.
+The main dashboard keeps one lightweight monitor because it is useful for
+answering "is ChatGPT actually calling PiLink?"
 
-### "It says Client registered / Finish sign-in"
+It shows at most a few recent MCP calls and only the metadata PiLink deliberately
+publishes: tool name, outcome, duration, and access mode.
 
-The local OAuth client already exists. Continue the authorization flow in
-ChatGPT. Do not register another client unless you are intentionally replacing
-or repairing the existing one.
+It does not show:
 
-### "I clicked ChatGPT MCP but nothing changed in the server"
+- prompts;
+- file paths;
+- tool arguments;
+- tool results;
+- ChatGPT transcript content;
+- cookies or browser storage;
+- model reasoning.
 
-Correct: that button changes the dashboard surface. Use the **PiLink workflow**
-selector to change Single-agent/Public chat & orchestration.
+The richer collaboration chat/task monitor remains separate and is only useful
+when the collaboration workflow is enabled.
 
-### "I selected Public chat & orchestration but ChatGPT still is not connected"
+## Optional local Pi agent
 
-Also expected. The workflow controls which tools/services the server exposes;
-it does not create public hosting, install a ChatGPT plugin, or grant OAuth.
-Those are separate steps.
+The provider/model and supervised-agent backend was useful enough to keep, but
+not important enough to define the dashboard.
 
-### "I opened the `/sse` URL in a browser and it looks broken"
+Under **Advanced -> Optional local Pi agent** you can still:
 
-`/sse` is an MCP transport endpoint, not a normal website. Validate it through
-PiLink/VSPiLink health and OAuth discovery rather than by expecting a human UI
-at that URL.
+- configure the provider and model;
+- authenticate to the provider;
+- create a supervised local agent;
+- inspect output;
+- stop an active agent;
+- sign out of the provider.
 
-### "I restarted VS Code. Do I need to register OAuth again?"
+This functionality is independent from ChatGPT MCP OAuth and can be ignored
+completely by users who only want VSPiLink as a graphical launcher for PiLink.
 
-Normally no. OAuth client information is persistent. With a stable public
-origin, restart the server and reuse the existing authorization. A transient
-Quick Tunnel URL is the main exception.
+## Daily use
 
-### "Why does changing workflow restart the server?"
+With a stable HTTPS endpoint and OAuth already authorized, daily use should be
+approximately:
 
-The workflow determines the tool catalog and security/collaboration policy for
-the process lifetime. Restarting prevents old and new MCP connections from
-seeing inconsistent capabilities.
+1. open the project;
+2. start PiLink if it is stopped;
+3. open ChatGPT Work;
+4. work.
 
-### "Why can't VSPiLink just show my ChatGPT conversation?"
+If VSPiLink says **OAuth ready**, do not repeat client registration or callback
+setup. A new MCP transport will appear when the remote client actually needs
+PiLink.
 
-Because it is intentionally not connected to the ChatGPT DOM, cookies,
-composer, transcript, or reasoning. The extension communicates with the PiLink
-server through its local protected administration interface and only displays
-PiLink-owned operational data.
+Quick Tunnel is the main exception because the public hostname is temporary.
 
-## Security boundaries worth remembering
+## What remains available from the Command Palette
 
-- **Workspace Trust** is the first local gate. Restricted workspaces cannot
-  start/configure privileged VSPiLink operations.
-- **OAuth scopes** decide which MCP tools a client may request.
-- **Open folder vs Full access** is a separate filesystem/process boundary.
-- **Repository execution approval** is separate again; even inside a confined
-  workspace, running a repository's build/test code can execute arbitrary code
-  as the PiLink OS user.
-- Public MCP clients never receive the loopback administration bootstrap
-  secret used by VSPiLink.
-- Secrets and persistent PiLink control state should remain outside the
-  workspace exposed to agents.
+The extension still registers compatibility and recovery commands even though
+most are no longer promoted in the dashboard. This protects existing workflows
+while making the primary UI simpler.
 
-## Where the pieces live
+Examples include initialization, manual client registration, legacy hosting,
+reset/recovery, provider configuration, local-agent management, and the native
+VS Code MCP provider.
 
-The extension is only the graphical layer. Relevant implementation areas are:
+## Implementation map
 
-- `packages/vscode/src/extension.ts` — command wiring, server/process control,
-  OAuth/admin integration, dashboard state;
-- `packages/vscode/src/dashboard.ts` — VS Code webview lifecycle;
-- `packages/vscode/media/main.js` — visible dashboard state machine and UI;
-- `packages/vscode/src/wizard-controller.ts` — guided setup phases;
-- `packages/vscode/src/oauth-client.ts` — local/native OAuth client handling;
-- `packages/vscode/src/process-supervisor.ts` — extension-managed processes;
-- PiLink's core server and protocol packages — the actual MCP/tool/security
-  implementation.
+The relevant extension pieces are now intentionally separated:
 
-For the deeper trust-boundary and server model, see [Architecture](ARCHITECTURE.md).
-For the exact ChatGPT connection procedure and OAuth compatibility paths, see
-[Connect ChatGPT Work](CONNECT_CHATGPT.md). For installation and Remote SSH
-behavior, see [Installation](INSTALLATION.md).
+- `packages/vscode/media/app.js` — the focused dashboard state machine;
+- `packages/vscode/media/app.css` — the VS Code-themed responsive UI;
+- `packages/vscode/src/dashboard.ts` — webview lifecycle and CSP;
+- `packages/vscode/src/extension.ts` — process, OAuth, hosting, agent, and command
+  implementation;
+- `packages/vscode/src/runtime-mode.ts` — automatic single-agent default plus
+  explicit collaboration opt-in;
+- `packages/vscode/src/protocol.ts` — the narrow webview message/state contract.
+
+The previous `media/main.js` and `media/styles.css` implementation is no longer
+loaded or packaged by the extension.
+
+For protocol/security boundaries see [Architecture](ARCHITECTURE.md) and
+[Security model](SECURITY_MODEL.md). For the remote authorization details see
+[Connect ChatGPT Work](CONNECT_CHATGPT.md).
