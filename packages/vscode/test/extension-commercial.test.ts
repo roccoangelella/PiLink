@@ -154,12 +154,8 @@ test("the extension refuses to manage processes it did not start", () => {
   assert.match(switchMode, /process\.env\.PI_RUNTIME_MODE/);
 });
 
-test("activity monitoring remains metadata-only", () => {
+test("launcher state excludes collaboration and activity payloads", () => {
   const state = methodSource("dashboardState");
-  assert.match(state, /readAdminCollaboration/);
-  assert.match(state, /activity = collaboration\.activity\.slice\(-8\)/);
-  assert.match(state, /tool: item\.tool/);
-  assert.match(state, /durationMs: item\.durationMs/);
-  assert.match(state, /outcome: item\.outcome/);
-  assert.doesNotMatch(state, /item\.arguments|item\.result|item\.prompt|item\.path/);
+  assert.doesNotMatch(state, /readAdminCollaboration|collaboration|activity/);
+  assert.doesNotMatch(source, /readAdminCollaboration|agent_chat_|agent_task_/);
 });
