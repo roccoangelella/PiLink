@@ -1,7 +1,3 @@
-import type { CredentialField } from "./credential-vault.js";
-import type { ChatGptDestination } from "./chatgpt-links.js";
-import type { CloudflareAuthKind, HostingSelection } from "./hosting-model.js";
-import type { WizardAccessMode } from "./wizard-state.js";
 import type { RuntimeMode } from "./runtime-mode.js";
 
 /** Commands accepted from the focused launcher webview. */
@@ -90,40 +86,3 @@ export interface DashboardState {
   nodeVersion: string;
   error?: string;
 }
-
-/*
- * Compatibility-only wizard types. The launcher no longer routes wizard
- * messages, but the dormant legacy controller modules still compile against
- * these exports so older code can be removed independently.
- */
-export const WIZARD_ACTIONS = [
-  "open",
-  "acceptWorkspace",
-  "chooseWorkspace",
-  "chooseCloudflareCredential",
-  "configureAndStart",
-  "openChatGpt",
-  "confirmDeveloperMode",
-  "submitCallback",
-  "copyCredential",
-  "finish",
-  "dismiss",
-  "retry",
-] as const;
-
-export type WizardAction = (typeof WIZARD_ACTIONS)[number];
-export type WizardCopyField = CredentialField | "authorizationUrl" | "tokenUrl" | "mcpUrl";
-
-interface WizardMessageBase {
-  type: "wizard";
-  action: WizardAction;
-  requestId: string;
-}
-
-export type WizardWebviewMessage =
-  | (WizardMessageBase & { action: "open" | "acceptWorkspace" | "chooseWorkspace" | "confirmDeveloperMode" | "finish" | "dismiss" | "retry" })
-  | (WizardMessageBase & { action: "chooseCloudflareCredential"; credentialKind: CloudflareAuthKind })
-  | (WizardMessageBase & { action: "configureAndStart"; hosting: HostingSelection; accessMode: WizardAccessMode })
-  | (WizardMessageBase & { action: "openChatGpt"; destination: ChatGptDestination })
-  | (WizardMessageBase & { action: "submitCallback"; callbackUrl: string })
-  | (WizardMessageBase & { action: "copyCredential"; field: WizardCopyField });
