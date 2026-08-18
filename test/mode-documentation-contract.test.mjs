@@ -7,7 +7,7 @@ import test from "node:test";
 const root = process.cwd();
 const guidePath = path.join(root, "docs", "operations", "mode-selection.md");
 
-test("mode guide states the three-entry contract and capability split", () => {
+test("mode guide states the two server modes and graphical handoff contract", () => {
   const guide = fs.readFileSync(guidePath, "utf8");
   const envExample = fs.readFileSync(path.join(root, ".env.example"), "utf8");
 
@@ -15,13 +15,14 @@ test("mode guide states the three-entry contract and capability split", () => {
     assert.match(guide, new RegExp(`\\b${value}\\b`), `mode guide must name ${value}`);
   }
   assert.match(guide, /PI_RUNTIME_MODE.*single.*collaboration/s);
-  assert.match(guide, /vscode.*(?:not|should not).*PI_RUNTIME_MODE|PI_RUNTIME_MODE.*vscode/s);
+  assert.match(guide, /vscode.*not a third server capability mode|Do not write `PI_RUNTIME_MODE=vscode`/s);
   assert.match(guide, /pilink start --mode single/);
   assert.match(guide, /pilink start --mode collaboration/);
-  assert.match(guide, /public chat.*tasks.*memory.*work-loop/s);
-  assert.match(guide, /ChatGPT MCP.*Pi Local/s);
+  assert.match(guide, /public collaboration chat\/tasks|public collaboration.*tasks.*work loop.*memory/s);
+  assert.match(guide, /fresh VSPiLink installation.*Single agent/s);
+  assert.match(guide, /optional local Pi provider\/runtime.*separate/s);
   assert.match(guide, /PI_CHAT_CLI=off/);
-  assert.match(guide, /Migration from the pre-mode release/);
+  assert.match(guide, /## Migration/);
   assert.match(envExample, /^PI_RUNTIME_MODE=(?:single|collaboration)$/m);
 });
 
