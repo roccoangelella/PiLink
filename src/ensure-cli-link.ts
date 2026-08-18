@@ -75,10 +75,17 @@ export function selectCliBinDirectory(options: {
   const key = (value: string) => options.platform === "win32" ? value.toLowerCase() : value;
   const pathKeys = new Set(pathEntries.map(key));
   const preferred = [
-    path.dirname(options.nodeExecutable),
     path.join(options.homeDirectory, ".local", "bin"),
     path.join(options.homeDirectory, "bin"),
+    path.dirname(options.nodeExecutable),
   ].filter((candidate) => pathKeys.has(key(path.resolve(candidate))));
+
+  let realHome: string;
+  try {
+    realHome = fs.realpathSync(options.homeDirectory);
+  } catch {
+    return undefined;
+  }
 
   const seen = new Set<string>();
   for (const candidate of [...preferred, ...pathEntries]) {
@@ -89,6 +96,8 @@ export function selectCliBinDirectory(options: {
     if (!isWithinHome(resolved, options.homeDirectory, options.platform)) continue;
     try {
       if (!fs.statSync(resolved).isDirectory()) continue;
+      const realCandidate = fs.realpathSync(resolved);
+      if (!isWithinHome(realCandidate, realHome, options.platform)) continue;
       fs.accessSync(resolved, fs.constants.W_OK);
       return resolved;
     } catch {
