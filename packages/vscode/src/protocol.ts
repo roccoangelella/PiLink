@@ -67,6 +67,7 @@ export interface DashboardState {
   workspace: string;
   configPath: string;
   process: ProcessViewState;
+  operation: string;
   hostingMode: string;
   runtimeMode: RuntimeMode;
   unsafeFullAccess: boolean;
