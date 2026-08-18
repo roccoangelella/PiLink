@@ -74,7 +74,7 @@
       },
       {
         "command": "vspilink.guidedSetup",
-        "title": "Advanced PiLink Setup…",
+        "title": "Reconfigure PiLink",
         "category": "PiLink",
         "icon": "$(settings-gear)"
       },
@@ -169,13 +169,7 @@
           "group": "vspilink@1"
         }
       ]
-    },
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "vspilink.mcp",
-        "label": "PiLink"
-      }
-    ]
+    }
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
