@@ -8,13 +8,77 @@ the workspace, not the laptop displaying the VS Code window.
 
 ## Requirements
 
-- VS Code 1.106 or newer.
-- a PiLink-managed or existing **Node.js 24.18.0 exactly**. Other Node
-  releases are intentionally rejected by the sidecar;
-- Git, Node.js 24.18.0, and npm 11.16.0 exactly for a source/developer build;
-- A trusted project folder.
-- For ChatGPT Work: a public HTTPS URL, a supported ChatGPT plan, and plugin
+For the standalone CLI from source:
+
+- Git;
+- Node.js **24.18.0 exactly**;
+- npm **11.16.0 exactly**;
+- a trusted project folder.
+
+For VSPiLink additionally:
+
+- VS Code 1.106 or newer;
+- a PiLink-managed or existing **Node.js 24.18.0 exactly** for the sidecar;
+- for ChatGPT Work, a public HTTPS URL, a supported ChatGPT plan, and plugin
   permission from the relevant personal or organization workspace.
+
+## Standalone CLI from source
+
+Use this path when you want the PiLink CLI/server without installing VSPiLink:
+
+```bash
+git clone https://github.com/roccoangelella/PiLink.git
+cd PiLink
+node --version   # v24.18.0
+npm --version    # 11.16.0
+npm ci
+npm run build
+```
+
+A normal `npm run build` compiles `dist/` and then tries to make `pilink`
+available from an existing user-writable PATH directory inside your home. It
+never uses `sudo`, edits a shell profile, or overwrites an unrelated command.
+
+On Linux/macOS, source builds now use a small generated launcher with the
+PiLink ownership marker `PILINK_GENERATED_SOURCE_LAUNCHER_V1` instead of a
+fragile symlink into `dist/`. A later build can therefore safely rewrite the
+launcher after the checkout is moved or re-cloned. Builds also migrate an old
+PiLink symlink only when its target can be proven to be this checkout's
+`dist/cli.js` or `dist/terminal-launcher.js`; arbitrary symlinks are left
+untouched. On Windows, the equivalent generated `.cmd` shim remains
+PiLink-marked and repairable.
+
+Typical launcher locations are:
+
+| Platform | Source checkout | User launcher | Private configuration/data |
+| --- | --- | --- | --- |
+| Linux | e.g. `~/Projects/PiLink` | commonly `~/.local/bin/pilink` when that directory already exists on `PATH` | `$XDG_CONFIG_HOME/pilink` or `~/.config/pilink` |
+| Windows | e.g. `C:\Users\Alice\Projects\PiLink` | a safe writable user PATH directory containing `pilink.cmd` | `%USERPROFILE%\.config\pilink` by default |
+
+If no eligible PATH directory exists, the build still succeeds and prints a
+fallback. Run the built CLI directly from the checkout with, for example:
+
+```bash
+npm run cli -- start
+npm run cli -- start --setup
+npm run cli -- start --allow-unsafe-full-access
+```
+
+If you later add a user-owned bin directory to `PATH`, rerun `npm run build` to
+create the persistent command. `PILINK_SKIP_CLI_LINK=1 npm run build` performs
+a build without touching any user launcher.
+
+Development commands deliberately do not have the same side effects:
+
+```bash
+npm run dev          # TypeScript compile/watch only; does not start PiLink
+npm run dev:server   # explicitly run the raw src/index.ts development server
+```
+
+Use `pilink start` (or `npm run cli -- start`) for the normal guided runtime.
+Use `npm run dev:server` only when you intentionally want the raw development
+server. Run `npm run build` when you need to refresh/repair the `pilink`
+launcher after updating or moving a source checkout.
 
 ## Recommended release installer
 
@@ -95,10 +159,10 @@ should be signed and published through a documented release channel; the
 current repository does not claim that a Marketplace listing is already
 available.
 
-## Build and install from source
+## Build and install VSPiLink from source
 
-This is the developer path, not the elementary release installation. Verify
-both pinned versions:
+This is the developer path for the optional extension. Verify both pinned
+versions:
 
 ```bash
 node --version   # v24.18.0
@@ -115,7 +179,9 @@ npm run vscode:install
 ```
 
 `npm run vscode:install` builds the core and extension, creates the VSIX, and
-installs it into the profile reached by the `code` command.
+installs it into the profile reached by the `code` command. Core/VSIX build
+paths use `build:core`, so packaging does not create or modify a user-level CLI
+launcher as a side effect.
 
 The source-tree installer paths are `./install/install.sh` and
 `.\install\install.ps1`. They expect a complete staged release under
@@ -239,7 +305,8 @@ Before upgrading:
 2. Back up the private configuration and data directory with their file modes
    preserved.
 3. Install the new VSIX or update the source checkout.
-4. Run the complete build and tests when upgrading from source.
+4. Run `npm ci && npm run build && npm run test:all` when upgrading from a
+   source checkout; the build also refreshes/repairs the user CLI launcher.
 5. Start once and verify local health, the public endpoint, OAuth discovery,
    and a read-only MCP action before allowing writes.
 
