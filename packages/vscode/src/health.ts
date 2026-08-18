@@ -251,6 +251,15 @@ export async function readAdminActivity(
   return parseToolActivity(payload.tool_activity).slice(-100);
 }
 
+/** @deprecated Internal bridge alias while the controller migration settles. */
+export async function readAdminCollaboration(
+  port: number,
+  bootstrapSecret: string,
+  timeoutMs = 2_000,
+): Promise<{ activity: AdminToolActivity[] }> {
+  return { activity: await readAdminActivity(port, bootstrapSecret, timeoutMs) };
+}
+
 async function requireLocalPiLinkIdentity(port: number, bootstrapSecret: string, timeoutMs: number): Promise<void> {
   const identity = await readAuthenticatedHealth(port, bootstrapSecret, timeoutMs);
   if (!identity.online) {
