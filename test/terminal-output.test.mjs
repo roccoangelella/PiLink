@@ -7,7 +7,13 @@ import {
   resolveNodeExecutable,
   shouldQuietInteractiveStart,
   terminalLogsAreVerbose,
+  terminalProxyEnvironment,
 } from "../dist/terminal-launcher.js";
+import {
+  PROXY_STDERR_TTY,
+  PROXY_STDOUT_TTY,
+  restoreProxiedTtyFlag,
+} from "../dist/terminal-child.js";
 
 test("interactive pilink start is quiet by default only in a TTY", () => {
   assert.equal(shouldQuietInteractiveStart(["start"], true, {}), true);
@@ -17,6 +23,25 @@ test("interactive pilink start is quiet by default only in a TTY", () => {
   assert.equal(shouldQuietInteractiveStart(["start"], true, { PILINK_TERMINAL_LOGS: "verbose" }), false);
   assert.equal(terminalLogsAreVerbose("debug"), true);
   assert.equal(terminalLogsAreVerbose("quiet"), false);
+});
+
+test("quiet launcher preserves effective terminal state for the child CLI", () => {
+  const env = terminalProxyEnvironment({
+    EXISTING: "yes",
+    [PROXY_STDOUT_TTY]: "spoofed",
+    [PROXY_STDERR_TTY]: "spoofed",
+  }, false, true);
+  assert.equal(env.EXISTING, "yes");
+  assert.equal(env[PROXY_STDOUT_TTY], undefined);
+  assert.equal(env[PROXY_STDERR_TTY], "1");
+
+  const proxied = {};
+  restoreProxiedTtyFlag(proxied, env[PROXY_STDERR_TTY]);
+  assert.equal(proxied.isTTY, true);
+
+  const nonInteractive = {};
+  restoreProxiedTtyFlag(nonInteractive, undefined);
+  assert.equal(nonInteractive.isTTY, undefined);
 });
 
 test("quiet terminal output removes routine runtime chatter", () => {
