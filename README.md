@@ -38,7 +38,7 @@ npm ci
 npm run build
 ```
 
-A source build safely exposes `pilink` through an existing user-writable PATH directory under your home; it never uses `sudo` or overwrites another command, and prints the `npm exec`/`npm link` fallback if no safe directory exists (`PILINK_SKIP_CLI_LINK=1` disables it).
+A source build safely exposes `pilink` through an existing user-writable PATH directory under your home; it never uses `sudo` or overwrites another command, and prints the `npm exec`/`npm link` fallback if no safe directory exists (`PILINK_SKIP_CLI_LINK=1` disables it). The fallback `npm link` only creates a launcher pointing back to this checkout (`npm prefix -g` shows its prefix); it does not move the source. PiLink private configuration/data stays outside the checkout/workspace under `$XDG_CONFIG_HOME/pilink` or `~/.config/pilink` on Linux and `%USERPROFILE%\.config\pilink` by default on Windows, while VSPiLink may separately install its pinned Node runtime in per-user application data; see the installation guide for overrides and exact paths.
 
 Verified PiLink 2.2.0 npm and VSIX artifacts are also available under
 `release/`; see the [installation guide](docs/INSTALLATION.md).
