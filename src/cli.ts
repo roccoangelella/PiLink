@@ -510,8 +510,6 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
     throw new Error("PI_RUNTIME_MODE must be 'single' or 'collaboration'. Choose a mode with 'pilink start --mode <single|collaboration|vscode>'.");
   }
   if (!process.stdin.isTTY || !process.stderr.isTTY || process.env.CI === "true") {
-    // Headless and existing automation keep the integrated runtime's default
-    // (collaboration) and never block waiting for a terminal answer.
     return configured as "single" | "collaboration" | undefined;
   }
 
@@ -634,8 +632,6 @@ async function start(options: LaunchOptions): Promise<void> {
   }
   const mode = await selectLaunchMode(options.mode);
   if (mode === "vscode") {
-    // The graphical handoff does not need a server configuration yet; let the
-    // VS Code wizard create or select one so it can own the first-run choices.
     launchVscodeExperience();
     return;
   }
@@ -1073,21 +1069,22 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean, allowAd
 
     if (runtimeConfig.oauthConsentMode === "paired" && runtimeConfig.publicChatGptDcr) {
       const externallyManagedPairing = process.env.PILINK_OAUTH_SETUP_DRIVER === "vscode";
-      const ownerPairing = externallyManagedPairing
-        ? undefined
-        : await requestOwnerPairing(
-            runtimeConfig.port,
-            runtimeConfig.bootstrapSecret,
-            serverUrl,
-          );
+      if (!externallyManagedPairing) {
+        // This loopback-only request opens the short DCR registration window.
+        // The returned browser pairing URL/code are intentionally not shown or
+        // opened: the exact OAuth request must instead be approved locally in
+        // the terminal by oauth-local-approval.ts.
+        await requestOwnerPairing(
+          runtimeConfig.port,
+          runtimeConfig.bootstrapSecret,
+          serverUrl,
+        );
+      }
       printChatGptDcrSetupInstructions(serverUrl);
-      if (ownerPairing) {
-        openOwnerPairing(ownerPairing);
-        console.error("Back in ChatGPT, save/connect the MCP URL and choose Dynamic Client Registration (DCR) if prompted.");
-        console.error("PiLink accepts that secretless PKCE registration only during this short owner-opened setup window.");
-        console.error("After verifying this computer in the browser, complete the PiLink OAuth approval in ChatGPT.\n");
+      if (externallyManagedPairing) {
+        console.error("VSPiLink will handle its local-owner verification flow.\n");
       } else {
-        console.error("VSPiLink will open the local-owner verification step and the short DCR registration window.\n");
+        console.error("Waiting for ChatGPT. PiLink will ask here before granting access.\n");
       }
       return;
     }
@@ -1241,13 +1238,11 @@ function shouldOpenBrowser(): boolean {
 }
 
 function printChatGptDcrSetupInstructions(serverUrl: string): void {
-  console.error("\n=== First-time ChatGPT setup (safe DCR) ===");
-  console.error("1. In ChatGPT, open Settings → Apps/Connectors (or your MCP connections page) → Add connection.");
-  console.error(`2. Set the connection/MCP server URL to: ${serverUrl}/sse`);
+  console.error("\n=== Connect ChatGPT ===");
+  console.error("1. In ChatGPT, add an MCP connection.");
+  console.error(`2. Set the MCP server URL to: ${serverUrl}/sse`);
   console.error("3. Select Authentication: OAuth.");
-  console.error("4. Select Dynamic Client Registration (DCR) if ChatGPT asks for a registration method.");
-  console.error("5. Do not copy a callback URL, client ID, or client secret. ChatGPT registers a secretless PKCE client automatically.");
-  console.error("6. PiLink will now open a local-owner verification step for this computer.");
+  console.error("4. Select Dynamic Client Registration (DCR) if asked.");
 }
 
 function printChatGptSetupInstructions(serverUrl: string): void {
