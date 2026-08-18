@@ -198,7 +198,7 @@
       return {
         eyebrow: "PILINK",
         title: currentState.process.status === "stopping" ? "Stopping PiLink…" : "Starting PiLink…",
-        description: "VSPiLink is applying the project configuration and checking the bridge.",
+        description: "PiLink is applying the project configuration and checking the bridge.",
         tone: "progress",
         badge: { label: "Working", tone: "progress" },
         actions: [],
@@ -219,14 +219,14 @@
       return {
         eyebrow: "FIRST RUN",
         title: "Start PiLink for this project",
-        description: "Project-folder access and the single-agent MCP toolset are the default. Choose how remote clients should reach the bridge.",
+        description: "Project-folder access and the single-agent MCP toolset are the normal graphical defaults.",
         badge: { label: "Safe default", tone: "success" },
         actions: [
-          { label: "Set up stable endpoint", command: "guidedSetup", variant: "primary" },
-          { label: "Temporary quick start", wizard: { action: "configureAndStart", hosting: { kind: "quick-tunnel" }, accessMode: "workspace" }, variant: "secondary" },
-          { label: "Local only", wizard: { action: "configureAndStart", hosting: { kind: "local" }, accessMode: "workspace" }, variant: "ghost" },
+          { label: "Quick start for ChatGPT", wizard: { action: "configureAndStart", hosting: { kind: "quick-tunnel" }, accessMode: "workspace" }, variant: "primary" },
+          { label: "Local only", wizard: { action: "configureAndStart", hosting: { kind: "local" }, accessMode: "workspace" }, variant: "secondary" },
+          { label: "Advanced setup…", command: "guidedSetup", variant: "ghost" },
         ],
-        note: "A stable endpoint is recommended for normal ChatGPT use. A Quick Tunnel gets a different public URL when it is recreated.",
+        note: "Quick start uses a temporary HTTPS address. Use Advanced setup only when you need a stable domain or other specialist configuration.",
       };
     }
 
@@ -236,8 +236,8 @@
         eyebrow: "SAFETY CHECK",
         title: online ? "Full machine access is running" : "Full machine access is saved",
         description: online
-          ? "This configuration is outside VSPiLink's normal safe workflow. Stop it or reconfigure PiLink for project-folder access."
-          : "VSPiLink will not present an ordinary Start button for a saved Full-access configuration. Reconfigure it for project-folder access before normal use.",
+          ? "This configuration is outside the normal graphical workflow. Stop it or reconfigure PiLink for project-folder access."
+          : "PiLink will not present an ordinary Start button for a saved Full-access configuration. Reconfigure it for project-folder access before normal use.",
         tone: "warning",
         badge: { label: "Full access", tone: "danger" },
         actions: online
@@ -270,10 +270,10 @@
       return {
         eyebrow: "MCP BRIDGE",
         title: "PiLink is running locally",
-        description: "The bridge is healthy on this machine. Configure a public HTTPS endpoint only if a remote client such as ChatGPT Work needs to reach it.",
+        description: "The bridge is healthy on this machine. A remote client such as ChatGPT Work needs a public HTTPS endpoint.",
         badge: { label: "Local", tone: "success" },
         actions: [
-          { label: "Configure remote endpoint", command: "guidedSetup", variant: "primary" },
+          { label: "Advanced remote setup…", command: "guidedSetup", variant: "primary" },
           { label: "Stop", command: "stop", variant: "secondary" },
         ],
       };
@@ -311,7 +311,7 @@
       return {
         eyebrow: "REMOTE MCP",
         title: "ChatGPT is connected",
-        description: "An authenticated MCP session is active. Keep working in ChatGPT Work; VSPiLink only manages and monitors the bridge.",
+        description: "An authenticated MCP session is active. Keep working in ChatGPT Work; this panel only manages and monitors the bridge.",
         badge: { label: sessions ? sessions + " active" : "Connected", tone: "success" },
         actions: [
           { label: "Open ChatGPT Work", command: "openChatGpt", variant: "primary" },
@@ -354,8 +354,8 @@
   function renderFullAccessNotice() {
     const notice = el("section", "notice notice--error");
     const body = el("div", "notice__body");
-    body.appendChild(el("strong", "notice__title", "Full access is outside the normal VSPiLink workflow"));
-    body.appendChild(el("p", "notice__copy", "Full access removes the project boundary and permits general process execution as the PiLink OS user. VSPiLink does not offer it as a normal graphical launch option."));
+    body.appendChild(el("strong", "notice__title", "Full access is outside the normal graphical workflow"));
+    body.appendChild(el("p", "notice__copy", "Full access removes the project boundary and permits general process execution as the PiLink OS user. It is never part of Quick start or Local only."));
     notice.appendChild(body);
     return notice;
   }
@@ -364,7 +364,7 @@
     const notice = el("section", "notice notice--info");
     const body = el("div", "notice__body");
     body.appendChild(el("strong", "notice__title", "Advanced collaboration configuration detected"));
-    body.appendChild(el("p", "notice__copy", "This project is using PiLink's collaboration tool catalog. VSPiLink now defaults to the simpler single-agent bridge and no longer promotes collaboration from the main UI."));
+    body.appendChild(el("p", "notice__copy", "This project is using PiLink's collaboration tool catalog. The VS Code launcher now defaults to the simpler single-agent bridge and no longer promotes collaboration from the main UI."));
     notice.appendChild(body);
     notice.appendChild(commandButton("Switch to single-agent", "selectRuntimeMode", "secondary", "single"));
     return notice;
@@ -415,21 +415,21 @@
     const actions = el("div", "button-row");
     if (isOnline()) actions.appendChild(commandButton("Restart", "restart", "secondary"));
     if (isOnline()) actions.appendChild(commandButton("Stop", "stop", "secondary"));
-    actions.appendChild(commandButton("Reconfigure hosting…", "guidedSetup", "secondary"));
+    actions.appendChild(commandButton("Advanced setup…", "guidedSetup", "secondary"));
     if (currentState.mcpUrl) actions.appendChild(commandButton("Copy MCP URL", "copyMcpUrl", "ghost"));
     actions.appendChild(commandButton("Open config", "openConfig", "ghost"));
     actions.appendChild(commandButton("Show terminal", "openTerminal", "ghost"));
     actions.appendChild(commandButton("Open guide", "openDocs", "ghost"));
     body.appendChild(actions);
 
-    body.appendChild(el("p", "advanced-section__hint", "Local model-provider chat, native VS Code MCP, manual OAuth registration, collaboration enablement, and Full-access launch remain operator/compatibility features rather than part of the normal graphical workflow."));
+    body.appendChild(el("p", "advanced-section__hint", "Advanced setup can expose legacy hosting, workflow, and access choices. Local model-provider chat, native VS Code MCP, and manual OAuth registration remain compatibility/operator features rather than part of the normal graphical workflow."));
     details.appendChild(body);
     return details;
   }
 
   function renderFooter() {
     const footer = el("footer", "footer");
-    footer.appendChild(el("span", "", currentState.version ? "VSPiLink " + currentState.version : "VSPiLink"));
+    footer.appendChild(el("span", "", currentState.version ? "PiLink VS Code " + currentState.version : "PiLink VS Code"));
     if (currentState.nodeVersion) footer.appendChild(el("span", "", "Node " + currentState.nodeVersion));
     return footer;
   }
