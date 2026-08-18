@@ -118,9 +118,16 @@ function ensurePosixLink(
   const linkPath = path.join(binDirectory, "pilink");
   if (fs.existsSync(linkPath) || isDanglingSymlink(linkPath)) {
     try {
-      if (fs.realpathSync(linkPath) === fs.realpathSync(cliTarget)) {
+      const currentTarget = fs.realpathSync(linkPath);
+      if (currentTarget === fs.realpathSync(cliTarget)) {
         info(`[PiLink] CLI already available: ${linkPath}`);
         return { status: "already-linked", linkPath };
+      }
+      if (isMigratablePreviousPiLinkSymlink(linkPath, currentTarget, cliTarget)) {
+        fs.unlinkSync(linkPath);
+        fs.symlinkSync(cliTarget, linkPath, "file");
+        info(`[PiLink] CLI launcher updated: ${linkPath}`);
+        return { status: "linked", linkPath };
       }
     } catch {
       // Fall through to the conflict warning for stale or unreadable links.
@@ -132,6 +139,17 @@ function ensurePosixLink(
   fs.symlinkSync(cliTarget, linkPath, "file");
   info(`[PiLink] CLI available as \`pilink\` via ${linkPath}`);
   return { status: "linked", linkPath };
+}
+
+function isMigratablePreviousPiLinkSymlink(linkPath: string, currentTarget: string, cliTarget: string): boolean {
+  if (path.basename(cliTarget) !== "terminal-launcher.js") return false;
+  try {
+    if (!fs.lstatSync(linkPath).isSymbolicLink()) return false;
+    const previousTarget = path.join(path.dirname(cliTarget), "cli.js");
+    return fs.existsSync(previousTarget) && currentTarget === fs.realpathSync(previousTarget);
+  } catch {
+    return false;
+  }
 }
 
 function ensureWindowsShim(
