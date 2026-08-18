@@ -1,8 +1,8 @@
 # Installation
 
-PiLink can run from the CLI without VS Code. **VSPiLink** is the optional VS
-Code control surface that starts and manages the same PiLink server for the
-project open in the editor.
+PiLink can run from the CLI without VS Code. The optional PiLink VS Code
+extension starts and manages the same PiLink server for the project open in the
+editor.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ For a source checkout:
 - npm **11.16.0 exactly**;
 - a project folder you are willing to trust.
 
-For VSPiLink additionally:
+For the VS Code extension additionally:
 
 - VS Code 1.106 or newer;
 - the PiLink sidecar running with Node.js **24.18.0 exactly**;
@@ -61,7 +61,7 @@ npm run dev:server   # run the raw development server
 
 For ordinary use, prefer `pilink start` or `npm run cli -- start`.
 
-## Recommended VSPiLink release install
+## Recommended VS Code release install
 
 Use the installer shipped in a release bundle. It verifies the release
 integrity metadata, installs the VSIX, and provisions the exact sidecar Node.js
@@ -100,7 +100,7 @@ installation:
   `~/.local/share/vspilink/node-v24.18.0`;
 - Windows: `%LOCALAPPDATA%\VSPiLink\node-v24.18.0`.
 
-## Build and install VSPiLink from source
+## Build and install the VS Code extension from source
 
 From the repository root, with the exact Node/npm versions:
 
@@ -133,35 +133,37 @@ If you deliberately install a VSIX without the release installer:
 5. open the project PiLink should access;
 6. open the **PiLink** view in the Secondary Side Bar.
 
-If several Node installations exist, set **VSPiLink: Node Executable** to the
+If several Node installations exist, set **PiLink: Node Executable** to the
 exact 24.18.0 binary.
 
 Do not install a VSIX from an untrusted mirror.
 
 ## First launch
 
-The redesigned VSPiLink first run does not ask you to understand PiLink's
-internal workflow modes before starting the bridge.
+The redesigned first run does not ask you to understand PiLink's internal
+workflow modes before starting the bridge.
 
 1. Open the actual project folder, not a broad parent directory unless that
    broader access is intentional.
 2. Review VS Code Workspace Trust.
 3. Open **PiLink**.
-4. Select one setup action:
+4. Choose an ordinary safe launch action:
    - **Quick start for ChatGPT** — Single agent, Project-folder access, and a
      temporary Cloudflare HTTPS endpoint;
    - **Local only** — Single agent and Project-folder access without a public
-     endpoint;
-   - **Stable endpoint...** — advanced hosting setup for a durable domain or
-     managed tunnel.
+     endpoint.
 5. When a public endpoint is ready, select **Connect ChatGPT** and follow
    [Connect ChatGPT Work](CONNECT_CHATGPT.md).
 
-Fresh graphical configurations use **Single agent** automatically. The
-collaboration workflow is available later under **Advanced -> Workflow**.
+Fresh ordinary graphical configurations use **Single agent** and
+**Project-folder** access automatically. Full access, collaboration, and model
+provider setup are not normal first-run choices.
 
-Full access is not part of first run. The normal boundary is the selected
-project folder with no unrestricted shell.
+For a durable domain or other specialist configuration, deliberately enter
+**Advanced setup...**. That retained compatibility flow supports stable and
+legacy hosting and can expose additional workflow/access choices. Review those
+choices explicitly and keep **Project folder only** unless broader authority is
+actually intended.
 
 ## Hosting choices
 
@@ -173,9 +175,10 @@ project folder with no unrestricted shell.
 | Local only | Same-machine clients | Not reachable by ChatGPT web |
 | `nip.io` direct HTTPS | Legacy IPv4/router deployment | Environment-dependent |
 
-Prefer a stable endpoint for regular remote use. Recreating a Quick Tunnel
-changes the public origin, so clients configured with the old URL must be
-updated.
+Quick start uses the temporary option because it is the shortest safe setup.
+For regular use, enter Advanced setup deliberately and choose a stable endpoint.
+Recreating a Quick Tunnel changes the public origin, so clients configured with
+the old URL must be updated.
 
 Cloudflare credentials are provisioning inputs. Keep them out of the
 repository, prompts, logs, screenshots, and extension package.
@@ -203,13 +206,13 @@ to the reviewed executable.
 
 ## Remote SSH
 
-VSPiLink is a workspace extension. In Remote SSH, the workspace and PiLink
-sidecar belong on the remote host even though the VS Code UI is displayed on
-your local computer.
+The PiLink extension is a workspace extension. In Remote SSH, the workspace and
+PiLink sidecar belong on the remote host even though the VS Code UI is displayed
+on your local computer.
 
 1. connect with VS Code Remote SSH;
 2. open the remote project;
-3. install/enable VSPiLink on the SSH host;
+3. install/enable the PiLink extension on the SSH host;
 4. ensure the remote sidecar has Node.js 24.18.0 exactly;
 5. configure hosting on that host;
 6. complete browser/OAuth steps in the browser presented by the local VS Code
@@ -218,13 +221,16 @@ your local computer.
 Do not run a CLI-owned PiLink process and an extension-owned process against
 the same configuration/port at the same time.
 
-## Optional local Pi agent
+## Specialist compatibility features
 
-No Python or model-provider credential is required merely to use VSPiLink as a
-graphical PiLink launcher.
+No Python or model-provider credential is required merely to use the extension
+as a graphical PiLink launcher.
 
-The provider-backed local Pi agent is optional and lives under **Advanced**.
-Its provider credentials are separate from ChatGPT OAuth.
+The backend still retains local provider/agent support, collaboration services,
+native VS Code MCP compatibility, and manual OAuth paths for existing/operator
+workflows, but the normal dashboard does not promote them as separate products.
+Use the relevant CLI or deliberately enter a compatibility flow only when you
+need that capability.
 
 The optional `pilink chat` terminal monitor is for the collaboration workflow
 and requires its own Python/Textual environment when you deliberately use it.
@@ -261,7 +267,7 @@ state. For complete offboarding:
 2. disable or delete its local OAuth client;
 3. stop the PiLink runtime and tunnel;
 4. disable only service units owned by PiLink;
-5. uninstall VSPiLink;
+5. uninstall the PiLink VS Code extension;
 6. remove private PiLink state only after any required backup.
 
 Never treat project/workspace files as disposable PiLink generated state.
