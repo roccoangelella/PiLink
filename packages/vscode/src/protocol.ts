@@ -76,12 +76,6 @@ export interface DashboardState {
     connected: boolean;
     activeSessions: number;
   };
-  activity: Array<{
-    tool: string;
-    startedAt: string;
-    durationMs: number;
-    outcome: "success" | "error";
-  }>;
   version: string;
   nodeVersion: string;
   error?: string;
