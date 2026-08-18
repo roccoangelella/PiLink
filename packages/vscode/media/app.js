@@ -16,7 +16,7 @@
     const message = event.data;
     if (!message || message.type !== "state") return;
     currentState = normalizeState(message.state);
-    const signature = visibleSignature(currentState);
+    const signature = JSON.stringify(currentState);
     if (signature === lastSignature) return;
     lastSignature = signature;
     render();
@@ -28,7 +28,7 @@
       if (!target || target.hasAttribute("disabled")) return;
       const command = target.getAttribute("data-command");
       if (!command) return;
-      postCommand(command, target.getAttribute("data-value") || undefined);
+      vscode.postMessage({ type: "command", command: command });
     });
     root.addEventListener("toggle", function (event) {
       const details = event.target;
@@ -41,10 +41,7 @@
   function normalizeState(value) {
     const source = record(value);
     const process = record(source.process);
-    const runtimeMode = record(source.runtimeMode);
     const externalMcp = record(source.externalMcp);
-    const collaboration = record(source.collaboration);
-    const wizard = record(source.wizard);
     return {
       trusted: source.trusted === true,
       trustKnown: typeof source.trusted === "boolean",
@@ -55,26 +52,22 @@
         status: text(process.status, 40).toLowerCase() || "stopped",
         mode: text(process.mode, 120),
       },
-      runtimeMode: runtimeMode.mode === "collaboration" ? "collaboration" : "single",
+      runtimeMode: source.runtimeMode === "collaboration" ? "collaboration" : "single",
       hostingMode: text(source.hostingMode, 80).toLowerCase(),
       unsafeFullAccess: source.unsafeFullAccess === true,
       mcpUrl: text(source.mcpUrl, 4096),
       publicUrl: text(source.publicUrl, 4096),
-      version: text(source.version, 80),
-      nodeVersion: text(source.nodeVersion, 80),
-      error: text(source.error, 1200),
       externalMcp: {
         configured: externalMcp.configured === true,
+        authorized: externalMcp.authorized === true,
         connected: externalMcp.connected === true,
         active: externalMcp.active === true,
         activeSessions: integer(externalMcp.activeSessions),
       },
-      activity: normalizeActivity(collaboration.activity),
-      wizard: {
-        phase: text(wizard.phase, 40).toLowerCase() || "idle",
-        workspace: text(wizard.workspace, 8192),
-        error: normalizeWizardError(wizard.error),
-      },
+      activity: normalizeActivity(source.activity),
+      version: text(source.version, 80),
+      nodeVersion: text(source.nodeVersion, 80),
+      error: text(source.error, 1200),
     };
   }
 
@@ -93,17 +86,6 @@
     });
   }
 
-  function normalizeWizardError(value) {
-    const source = record(value);
-    const message = text(source.message, 1000);
-    if (!message) return null;
-    return { message: message, retryable: source.retryable === true };
-  }
-
-  function visibleSignature(state) {
-    return JSON.stringify(state);
-  }
-
   function render() {
     if (!root) return;
     const shell = el("main", "shell");
@@ -115,8 +97,7 @@
       shell.appendChild(renderTrustGate());
     } else {
       shell.appendChild(renderPrimaryCard());
-      const error = currentState.wizard.error || (currentState.error ? { message: currentState.error, retryable: false } : null);
-      if (error) shell.appendChild(renderError(error));
+      if (currentState.error) shell.appendChild(renderError(currentState.error));
       if (currentState.unsafeFullAccess) shell.appendChild(renderFullAccessNotice());
       if (currentState.runtimeMode === "collaboration") shell.appendChild(renderCollaborationNotice());
       if (currentState.activity.length) shell.appendChild(renderActivity());
@@ -157,7 +138,7 @@
   function renderTrustGate() {
     const card = el("section", "primary-card primary-card--warning");
     card.appendChild(el("div", "eyebrow", "WORKSPACE TRUST"));
-    card.appendChild(el("h2", "primary-card__title", "Trust this folder to use PiLink"));
+    card.appendChild(el("h2", "primary-card__title", "Trust this project to use PiLink"));
     card.appendChild(el("p", "primary-card__description", "VS Code Restricted Mode blocks PiLink setup, startup, OAuth, and project access."));
     const actions = el("div", "actions");
     actions.appendChild(commandButton("Manage Workspace Trust", "manageTrust", "primary"));
@@ -180,9 +161,7 @@
     if (model.actions.length) {
       const actions = el("div", "actions");
       model.actions.forEach(function (action) {
-        actions.appendChild(action.wizard
-          ? wizardButton(action.label, action.wizard, action.variant)
-          : commandButton(action.label, action.command, action.variant, action.value));
+        actions.appendChild(commandButton(action.label, action.command, action.variant));
       });
       card.appendChild(actions);
     }
@@ -192,13 +171,12 @@
   }
 
   function primaryModel() {
-    const setupBusy = currentState.wizard.phase === "provisioning" || currentState.wizard.phase === "starting";
     const transition = currentState.process.status === "starting" || currentState.process.status === "stopping";
-    if (setupBusy || transition) {
+    if (transition) {
       return {
         eyebrow: "PILINK",
         title: currentState.process.status === "stopping" ? "Stopping PiLink…" : "Starting PiLink…",
-        description: "PiLink is applying the project configuration and checking the bridge.",
+        description: "Applying the project configuration and checking the bridge.",
         tone: "progress",
         badge: { label: "Working", tone: "progress" },
         actions: [],
@@ -206,27 +184,26 @@
     }
 
     if (!currentState.configured) {
-      const hasWorkspace = Boolean(currentState.wizard.workspace || currentState.workspace);
-      if (!hasWorkspace) {
+      if (!currentState.workspace) {
         return {
           eyebrow: "FIRST RUN",
           title: "Choose the project PiLink may access",
-          description: "Pick the folder you want to expose through MCP. PiLink will keep its private credentials and state outside that project.",
+          description: "Pick the folder to expose through MCP. PiLink keeps private credentials and runtime state outside that project.",
           badge: { label: "Not configured", tone: "neutral" },
-          actions: [{ label: "Choose project folder", wizard: { action: "chooseWorkspace" }, variant: "primary" }],
+          actions: [{ label: "Choose project folder", command: "chooseWorkspace", variant: "primary" }],
         };
       }
       return {
         eyebrow: "FIRST RUN",
         title: "Start PiLink for this project",
-        description: "Project-folder access and the single-agent MCP toolset are the normal graphical defaults.",
+        description: "The graphical path always uses the single-agent toolset and confines file access to this project.",
         badge: { label: "Safe default", tone: "success" },
         actions: [
-          { label: "Quick start for ChatGPT", wizard: { action: "configureAndStart", hosting: { kind: "quick-tunnel" }, accessMode: "workspace" }, variant: "primary" },
-          { label: "Local only", wizard: { action: "configureAndStart", hosting: { kind: "local" }, accessMode: "workspace" }, variant: "secondary" },
-          { label: "Advanced setup…", command: "guidedSetup", variant: "ghost" },
+          { label: "Set up stable endpoint", command: "setupStable", variant: "primary" },
+          { label: "Temporary quick start", command: "setupQuick", variant: "secondary" },
+          { label: "Local only", command: "setupLocal", variant: "ghost" },
         ],
-        note: "Quick start uses a temporary HTTPS address. Use Advanced setup only when you need a stable domain or other specialist configuration.",
+        note: "Stable hosting is recommended for ChatGPT. Quick Tunnel is temporary and gets a new URL when recreated.",
       };
     }
 
@@ -237,19 +214,19 @@
         title: online ? "Full machine access is running" : "Full machine access is saved",
         description: online
           ? "This configuration is outside the normal graphical workflow. Stop it or reconfigure PiLink for project-folder access."
-          : "PiLink will not present an ordinary Start button for a saved Full-access configuration. Reconfigure it for project-folder access before normal use.",
+          : "PiLink will not start a saved Full-access configuration from the graphical workflow.",
         tone: "warning",
         badge: { label: "Full access", tone: "danger" },
         actions: online
           ? [
               { label: "Stop PiLink", command: "stop", variant: "primary" },
-              { label: "Reconfigure safely…", command: "guidedSetup", variant: "secondary" },
+              { label: "Reconfigure safely…", command: "reconfigure", variant: "secondary" },
             ]
           : [
-              { label: "Reconfigure safely…", command: "guidedSetup", variant: "primary" },
+              { label: "Reconfigure safely…", command: "reconfigure", variant: "primary" },
               { label: "Open config", command: "openConfig", variant: "ghost" },
             ],
-        note: "Deliberate Full-access operation remains available from the PiLink CLI for operators who explicitly need it.",
+        note: "Unrestricted machine access remains an explicit PiLink CLI/operator workflow.",
       };
     }
 
@@ -257,11 +234,11 @@
       return {
         eyebrow: "MCP BRIDGE",
         title: "PiLink is stopped",
-        description: "This project is already configured. Start the bridge to make its MCP endpoint available again.",
+        description: "This project is configured. Start the bridge to make its MCP endpoint available again.",
         badge: { label: "Stopped", tone: "neutral" },
         actions: [
           { label: "Start PiLink", command: "start", variant: "primary" },
-          { label: "Reconfigure…", command: "guidedSetup", variant: "secondary" },
+          { label: "Reconfigure…", command: "reconfigure", variant: "secondary" },
         ],
       };
     }
@@ -270,10 +247,10 @@
       return {
         eyebrow: "MCP BRIDGE",
         title: "PiLink is running locally",
-        description: "The bridge is healthy on this machine. A remote client such as ChatGPT Work needs a public HTTPS endpoint.",
+        description: "The bridge is healthy on this machine. ChatGPT Work needs a public HTTPS endpoint to reach it.",
         badge: { label: "Local", tone: "success" },
         actions: [
-          { label: "Advanced remote setup…", command: "guidedSetup", variant: "primary" },
+          { label: "Configure remote endpoint", command: "setupStable", variant: "primary" },
           { label: "Stop", command: "stop", variant: "secondary" },
         ],
       };
@@ -283,7 +260,7 @@
       return {
         eyebrow: "REMOTE MCP",
         title: "PiLink is online",
-        description: "The HTTPS MCP endpoint is reachable. Connect ChatGPT Work when you want it to use this project.",
+        description: "The HTTPS MCP endpoint is reachable. Connect ChatGPT when you want it to use this project.",
         badge: { label: "Endpoint ready", tone: "success" },
         actions: [
           { label: "Connect ChatGPT", command: "connectChatGpt", variant: "primary" },
@@ -297,7 +274,7 @@
       return {
         eyebrow: "REMOTE MCP",
         title: "Finish connecting ChatGPT",
-        description: "The OAuth client already exists. Continue that authorization instead of registering another client.",
+        description: "A ChatGPT OAuth client exists, but authorization is unfinished. Continue the existing connection instead of creating another one.",
         badge: { label: "Authorization pending", tone: "warning" },
         actions: [
           { label: "Continue connection", command: "connectChatGpt", variant: "primary" },
@@ -323,7 +300,7 @@
     return {
       eyebrow: "REMOTE MCP",
       title: "PiLink is ready",
-      description: "OAuth is authorized and saved. ChatGPT will open an MCP session when it needs PiLink tools.",
+      description: "OAuth is authorized and saved. ChatGPT will open an MCP session when it actually needs PiLink tools.",
       badge: { label: "OAuth ready", tone: "success" },
       actions: [
         { label: "Open ChatGPT Work", command: "openChatGpt", variant: "primary" },
@@ -341,21 +318,21 @@
     return grid;
   }
 
-  function renderError(error) {
+  function renderError(message) {
     const notice = el("section", "notice notice--error");
     const body = el("div", "notice__body");
     body.appendChild(el("strong", "notice__title", "PiLink needs attention"));
-    body.appendChild(el("p", "notice__copy", error.message));
+    body.appendChild(el("p", "notice__copy", message));
     notice.appendChild(body);
-    if (error.retryable) notice.appendChild(wizardButton("Retry", { action: "retry" }, "secondary"));
+    notice.appendChild(commandButton("Refresh", "refresh", "secondary"));
     return notice;
   }
 
   function renderFullAccessNotice() {
     const notice = el("section", "notice notice--error");
     const body = el("div", "notice__body");
-    body.appendChild(el("strong", "notice__title", "Full access is outside the normal graphical workflow"));
-    body.appendChild(el("p", "notice__copy", "Full access removes the project boundary and permits general process execution as the PiLink OS user. It is never part of Quick start or Local only."));
+    body.appendChild(el("strong", "notice__title", "Full access is not part of the normal VS Code workflow"));
+    body.appendChild(el("p", "notice__copy", "Full access removes the project boundary and permits general process execution as the PiLink OS user."));
     notice.appendChild(body);
     return notice;
   }
@@ -364,9 +341,9 @@
     const notice = el("section", "notice notice--info");
     const body = el("div", "notice__body");
     body.appendChild(el("strong", "notice__title", "Advanced collaboration configuration detected"));
-    body.appendChild(el("p", "notice__copy", "This project is using PiLink's collaboration tool catalog. The VS Code launcher now defaults to the simpler single-agent bridge and no longer promotes collaboration from the main UI."));
+    body.appendChild(el("p", "notice__copy", "This project uses PiLink's collaboration tool catalog. The VS Code launcher now defaults to the simpler single-agent bridge."));
     notice.appendChild(body);
-    notice.appendChild(commandButton("Switch to single-agent", "selectRuntimeMode", "secondary", "single"));
+    notice.appendChild(commandButton("Switch to single-agent", "switchToSingle", "secondary"));
     return notice;
   }
 
@@ -379,6 +356,7 @@
     header.appendChild(copy);
     header.appendChild(chip("Metadata only", "neutral"));
     section.appendChild(header);
+
     const list = el("div", "activity-list");
     currentState.activity.slice(-5).reverse().forEach(function (item) {
       const row = el("div", "activity-row");
@@ -415,21 +393,20 @@
     const actions = el("div", "button-row");
     if (isOnline()) actions.appendChild(commandButton("Restart", "restart", "secondary"));
     if (isOnline()) actions.appendChild(commandButton("Stop", "stop", "secondary"));
-    actions.appendChild(commandButton("Advanced setup…", "guidedSetup", "secondary"));
+    actions.appendChild(commandButton("Reconfigure endpoint…", "reconfigure", "secondary"));
     if (currentState.mcpUrl) actions.appendChild(commandButton("Copy MCP URL", "copyMcpUrl", "ghost"));
     actions.appendChild(commandButton("Open config", "openConfig", "ghost"));
     actions.appendChild(commandButton("Show terminal", "openTerminal", "ghost"));
     actions.appendChild(commandButton("Open guide", "openDocs", "ghost"));
     body.appendChild(actions);
-
-    body.appendChild(el("p", "advanced-section__hint", "Advanced setup can expose legacy hosting, workflow, and access choices. Local model-provider chat, native VS Code MCP, and manual OAuth registration remain compatibility/operator features rather than part of the normal graphical workflow."));
+    body.appendChild(el("p", "advanced-section__hint", "Local model-provider chat, native VS Code MCP, manual OAuth clients, collaboration enablement, and Full-access launch are intentionally not part of the ordinary graphical workflow."));
     details.appendChild(body);
     return details;
   }
 
   function renderFooter() {
     const footer = el("footer", "footer");
-    footer.appendChild(el("span", "", currentState.version ? "PiLink VS Code " + currentState.version : "PiLink VS Code"));
+    footer.appendChild(el("span", "", currentState.version ? "PiLink " + currentState.version : "PiLink"));
     if (currentState.nodeVersion) footer.appendChild(el("span", "", "Node " + currentState.nodeVersion));
     return footer;
   }
@@ -500,40 +477,13 @@
     list.appendChild(item);
   }
 
-  function commandButton(label, command, variant, value) {
+  function commandButton(label, command, variant) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "button button--" + (variant || "secondary");
     button.textContent = label;
     button.dataset.command = command;
-    if (value !== undefined) button.dataset.value = String(value);
     return button;
-  }
-
-  function wizardButton(label, descriptor, variant) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "button button--" + (variant || "secondary");
-    button.textContent = label;
-    button.addEventListener("click", function () {
-      postWizard(descriptor.action, descriptor);
-    });
-    return button;
-  }
-
-  function postCommand(command, value) {
-    vscode.postMessage({ type: "command", command: command, ...(value !== undefined ? { value: value } : {}) });
-  }
-
-  function postWizard(action, descriptor) {
-    const message = {
-      type: "wizard",
-      action: action,
-      requestId: "ui-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
-    };
-    if (descriptor && descriptor.hosting) message.hosting = descriptor.hosting;
-    if (descriptor && descriptor.accessMode) message.accessMode = descriptor.accessMode;
-    vscode.postMessage(message);
   }
 
   function isOnline() {
@@ -556,22 +506,21 @@
   }
 
   function workspaceLabel() {
-    const workspace = currentState.workspace || currentState.wizard.workspace;
-    if (!workspace) return "VS Code launcher";
-    const parts = workspace.replace(/\\/g, "/").split("/").filter(Boolean);
-    return parts[parts.length - 1] || workspace;
+    if (!currentState.workspace) return "VS Code MCP launcher";
+    const parts = currentState.workspace.replace(/\\/g, "/").split("/").filter(Boolean);
+    return parts[parts.length - 1] || currentState.workspace;
   }
 
   function hostingLabel(kind) {
     const labels = {
       "quick-tunnel": "Quick Tunnel (temporary)",
       "cloudflare-fixed": "Cloudflare fixed domain",
-      "cloudflare-named": "Cloudflare Named Tunnel",
+      "cloudflare-named": "Legacy managed Named Tunnel",
+      "external": "Existing HTTPS domain",
       "custom-domain": "Existing HTTPS domain",
       "nip-io": "Legacy nip.io",
       "local": "Local only",
-      "serve": "Local only",
-      "none": "Local only",
+      "not configured": "Not configured",
     };
     return labels[kind] || (kind || "Not configured");
   }
