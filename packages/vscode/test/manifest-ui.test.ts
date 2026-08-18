@@ -20,12 +20,11 @@ test("the extension describes itself as a PiLink bridge control surface", () => 
   assert.equal(manifest.contributes?.views?.vspilinkSecondaryViewContainer?.[0]?.name, "PiLink");
 });
 
-test("the command palette exposes only ordinary lifecycle and recovery entry points", () => {
+test("the command palette exposes only ordinary recovery and navigation entry points", () => {
   assert.deepEqual(commandIds, [
     "vspilink.openSidebar",
     "vspilink.openPanel",
     "vspilink.connectChatGpt",
-    "vspilink.start",
     "vspilink.stop",
     "vspilink.guidedSetup",
     "vspilink.openConfig",
@@ -35,8 +34,9 @@ test("the command palette exposes only ordinary lifecycle and recovery entry poi
   ]);
 });
 
-test("dangerous and specialist commands are not promoted into the palette", () => {
+test("state-sensitive, dangerous and specialist commands are not promoted into the palette", () => {
   const hidden = [
+    "vspilink.start",
     "vspilink.startUnsafe",
     "vspilink.selectRuntimeMode",
     "vspilink.registerClient",
@@ -47,5 +47,5 @@ test("dangerous and specialist commands are not promoted into the palette", () =
     "vspilink.reset",
     "vspilink.legacySetup",
   ];
-  for (const command of hidden) assert.ok(!commandIds.includes(command), `${command} must stay behind the dashboard's Advanced UI`);
+  for (const command of hidden) assert.ok(!commandIds.includes(command), `${command} must stay behind the dashboard's state-aware UI`);
 });
