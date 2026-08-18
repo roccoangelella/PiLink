@@ -31,12 +31,21 @@ test("first run recommends stable hosting and fixes the safety policy", () => {
   assert.match(primary, /Temporary quick start", command: "setupQuick", variant: "secondary"/);
   assert.match(primary, /Local only", command: "setupLocal", variant: "ghost"/);
   assert.match(primary, /Stable hosting is recommended for ChatGPT/);
-  assert.doesNotMatch(primary, /accessMode|Full access.*command/);
+  assert.doesNotMatch(primary, /accessMode|Start with Full access|startUnsafe/);
 });
 
 test("the webview sends only the focused command protocol", () => {
   assert.match(script, /vscode\.postMessage\(\{ type: "command", command: command \}\)/);
   assert.doesNotMatch(script, /type: "wizard"|postWizard|wizardButton|configureAndStart/);
+});
+
+test("state-changing operations become an explicit single busy state", () => {
+  assert.match(functionSource("normalizeState"), /operation: text\(source\.operation/);
+  const primary = functionSource("primaryModel");
+  assert.match(primary, /if \(currentState\.operation\)/);
+  assert.match(primary, /PiLink disables other state-changing actions/);
+  assert.match(functionSource("commandButton"), /if \(currentState\.operation\) button\.disabled = true/);
+  assert.match(script, /currentState\.operation\) return/);
 });
 
 test("normal lifecycle has one dominant action per bridge state", () => {
@@ -71,6 +80,19 @@ test("collaboration is migration state, not a promoted workflow", () => {
   assert.match(notice, /Advanced collaboration configuration detected/);
   assert.match(notice, /Switch to single-agent/);
   assert.match(notice, /switchToSingle/);
+  assert.match(notice, /!isExternalRuntime\(\)/);
+});
+
+test("process ownership is visible and external services are never given stop/restart controls", () => {
+  const external = functionSource("isExternalRuntime");
+  assert.match(external, /detected service/);
+  const notice = functionSource("renderExternalRuntimeNotice");
+  assert.match(notice, /started outside VS Code/);
+  assert.match(notice, /will not stop, restart, or reconfigure/);
+  const advanced = functionSource("renderAdvanced");
+  assert.match(advanced, /isOnline\(\) && !isExternalRuntime\(\)/);
+  assert.match(advanced, /if \(!isExternalRuntime\(\)\) actions\.appendChild\(commandButton\("Reconfigure endpoint/);
+  assert.match(functionSource("serverStatus"), /Running · external/);
 });
 
 test("details and recovery contain bridge operations only", () => {
@@ -91,11 +113,8 @@ test("status separates server, endpoint and ChatGPT readiness", () => {
   assert.match(grid, /Server/);
   assert.match(grid, /Endpoint/);
   assert.match(grid, /ChatGPT/);
-
-  const endpoint = functionSource("endpointStatus");
-  assert.match(endpoint, /Public HTTPS/);
-  assert.match(endpoint, /Local only/);
-
+  assert.match(functionSource("endpointStatus"), /Public HTTPS/);
+  assert.match(functionSource("endpointStatus"), /Local only/);
   const chatgpt = functionSource("chatGptStatus");
   assert.match(chatgpt, /OAuth ready/);
   assert.match(chatgpt, /Authorize/);
@@ -110,7 +129,6 @@ test("recent activity stays metadata-only and bounded", () => {
   assert.match(normalize, /outcome:/);
   assert.match(normalize, /durationMs:/);
   assert.doesNotMatch(normalize, /prompt|args|arguments|result|output|path/);
-
   const render = functionSource("renderActivity");
   assert.match(render, /slice\(-5\)\.reverse\(\)/);
   assert.match(render, /Metadata only/);
