@@ -19,7 +19,14 @@ function fixture() {
   return { home, bin, previousCli, launcher };
 }
 
-test("source build migrates the previous PiLink cli symlink to the terminal launcher", {
+function assertGeneratedPosixLauncher(linkPath, launcher) {
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), false);
+  const content = fs.readFileSync(linkPath, "utf8");
+  assert.match(content, /^#!\/bin\/sh\n# PILINK_GENERATED_SOURCE_LAUNCHER_V1\n/u);
+  assert.match(content, new RegExp(launcher.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+}
+
+test("source build migrates the previous PiLink cli symlink to a repairable launcher", {
   skip: process.platform === "win32",
 }, () => {
   const { home, bin, previousCli, launcher } = fixture();
@@ -36,7 +43,59 @@ test("source build migrates the previous PiLink cli symlink to the terminal laun
       warn: () => {},
     });
     assert.equal(result.status, "linked");
-    assert.equal(fs.realpathSync(linkPath), fs.realpathSync(launcher));
+    assertGeneratedPosixLauncher(linkPath, launcher);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("source build repairs a dangling previous PiLink cli symlink", {
+  skip: process.platform === "win32",
+}, () => {
+  const { home, bin, previousCli, launcher } = fixture();
+  const linkPath = path.join(bin, "pilink");
+  fs.symlinkSync(previousCli, linkPath, "file");
+  fs.unlinkSync(previousCli);
+  try {
+    const result = ensureCliLink({
+      cliTarget: launcher,
+      homeDirectory: home,
+      pathValue: bin,
+      platform: process.platform,
+      env: {},
+      info: () => {},
+      warn: () => {},
+    });
+    assert.equal(result.status, "linked");
+    assertGeneratedPosixLauncher(linkPath, launcher);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("source build rewrites a generated launcher after the checkout path changes", {
+  skip: process.platform === "win32",
+}, () => {
+  const { home, bin, launcher } = fixture();
+  const linkPath = path.join(bin, "pilink");
+  fs.writeFileSync(
+    linkPath,
+    "#!/bin/sh\n# PILINK_GENERATED_SOURCE_LAUNCHER_V1\nexec '/old/PiLink/dist/terminal-launcher.js' \"$@\"\n",
+    { mode: 0o700 },
+  );
+  try {
+    const result = ensureCliLink({
+      cliTarget: launcher,
+      homeDirectory: home,
+      pathValue: bin,
+      platform: process.platform,
+      env: {},
+      info: () => {},
+      warn: () => {},
+    });
+    assert.equal(result.status, "linked");
+    assertGeneratedPosixLauncher(linkPath, launcher);
+    assert.doesNotMatch(fs.readFileSync(linkPath, "utf8"), /\/old\/PiLink/u);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
