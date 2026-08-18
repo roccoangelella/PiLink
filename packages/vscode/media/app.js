@@ -206,6 +206,7 @@
       shell.appendChild(renderPrimaryCard());
       const error = currentState.wizard.error || (currentState.error ? { message: currentState.error, retryable: false } : null);
       if (error) shell.appendChild(renderError(error));
+      if (currentState.unsafeFullAccess && isOnline()) shell.appendChild(renderFullAccessNotice());
       if (currentState.activity.length) shell.appendChild(renderActivity());
       if (currentState.runtimeMode.mode === "collaboration") shell.appendChild(renderCollaborationNotice());
       shell.appendChild(renderAdvanced());
@@ -351,6 +352,21 @@
     }
 
     const online = isOnline();
+    if (!online && currentState.unsafeFullAccess) {
+      return {
+        eyebrow: "ACCESS WARNING",
+        title: "Full machine access is configured",
+        description: "Starting the saved configuration will restore unrestricted filesystem and process access for its approved OAuth client. Return to Project-folder access unless you still need that authority.",
+        tone: "warning",
+        badge: { label: "Full machine", tone: "danger" },
+        actions: [
+          { label: "Return to Project-folder access", command: "guidedSetup", variant: "primary" },
+          { label: "Start configured Full access", command: "start", variant: "danger" },
+        ],
+        note: "The Full-access start is deliberately not presented as the normal Start PiLink action.",
+      };
+    }
+
     if (!online) {
       return {
         eyebrow: "MCP SERVER",
@@ -452,6 +468,20 @@
     return card;
   }
 
+  function renderFullAccessNotice() {
+    const notice = el("section", "notice notice--error");
+    const body = el("div", "notice__body");
+    body.appendChild(el("strong", "notice__title", "Full machine access is active"));
+    body.appendChild(el(
+      "p",
+      "notice__copy",
+      "An approved OAuth client can use PiLink outside the project boundary and run processes as the PiLink OS user.",
+    ));
+    notice.appendChild(body);
+    notice.appendChild(commandButton("Return to Project-folder access", "guidedSetup", "secondary"));
+    return notice;
+  }
+
   function renderActivity() {
     const section = el("section", "section-card");
     const header = el("div", "section-card__header");
@@ -522,7 +552,7 @@
     );
     const actions = el("div", "button-row");
     if (isOnline()) actions.appendChild(commandButton("Restart", "restart", "secondary"));
-    if (!isOnline()) actions.appendChild(commandButton("Start", "start", "secondary"));
+    if (!isOnline() && !currentState.unsafeFullAccess) actions.appendChild(commandButton("Start", "start", "secondary"));
     if (isOnline()) actions.appendChild(commandButton("Stop", "stop", "secondary"));
     actions.appendChild(commandButton("Change hosting…", "guidedSetup", "secondary"));
     if (currentState.mcpUrl) actions.appendChild(commandButton("Copy MCP URL", "copyMcpUrl", "ghost"));
@@ -574,6 +604,8 @@
           "Full access becomes available only after a ChatGPT OAuth client with mcp:tools exists.",
         ));
       }
+    } else {
+      section.appendChild(commandButton("Return to Project-folder access", "guidedSetup", "secondary"));
     }
     return section;
   }
@@ -656,7 +688,10 @@
     if (!currentState.trustKnown) return { label: "Loading", tone: "neutral" };
     if (!currentState.trusted) return { label: "Restricted", tone: "warning" };
     if (!currentState.configured) return { label: "Setup", tone: "neutral" };
-    if (!isOnline()) return { label: "Stopped", tone: "neutral" };
+    if (!isOnline()) return currentState.unsafeFullAccess
+      ? { label: "Full access", tone: "warning" }
+      : { label: "Stopped", tone: "neutral" };
+    if (currentState.unsafeFullAccess) return { label: "Full access", tone: "warning" };
     if (currentState.externalMcp.active) return { label: "Connected", tone: "success" };
     if (currentState.externalMcp.connected) return { label: "Ready", tone: "success" };
     if (isPublicEndpoint()) return { label: "Online", tone: "success" };
