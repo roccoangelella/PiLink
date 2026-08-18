@@ -68,12 +68,6 @@
         "icon": "$(plug)"
       },
       {
-        "command": "vspilink.start",
-        "title": "Start PiLink",
-        "category": "VSPiLink",
-        "icon": "$(play)"
-      },
-      {
         "command": "vspilink.stop",
         "title": "Stop PiLink",
         "category": "VSPiLink",
