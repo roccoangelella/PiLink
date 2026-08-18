@@ -4,7 +4,7 @@
   "description": "OAuth-protected MCP bridge with single-agent, public-chat orchestration, and optional VS Code workflows",
   "main": "dist/index.js",
   "bin": {
-    "pilink": "dist/terminal-launcher.js"
+    "pilink": "dist/cli.js"
   },
   "type": "module",
   "files": [
