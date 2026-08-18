@@ -40,8 +40,8 @@ Every graphical setup/reconfiguration writes:
 - the endpoint/hosting settings selected by the user.
 
 There is no graphical workflow selector, Full-access launch, provider/model
-setup, native VS Code MCP product, manual OAuth-client product, or collaboration
-console.
+setup, native VS Code MCP product, manual OAuth-client product, collaboration
+console, transcript, task board, or activity feed.
 
 ## Main lifecycle
 
@@ -100,8 +100,8 @@ Do the actual coding task in ChatGPT Work. When ChatGPT invokes a PiLink tool,
 an MCP session becomes active and the launcher reports **Connected** / the
 active-session count.
 
-The extension never needs to mirror the ChatGPT transcript to prove the bridge
-is working.
+The extension does not need to mirror the ChatGPT transcript or tool activity to
+prove the bridge is working.
 
 ## Status model
 
@@ -115,6 +115,10 @@ The dashboard keeps three facts visible:
 
 `OAuth ready` without an active transport is normal. A remote client can create
 an MCP transport only when it actually needs PiLink tools.
+
+The dashboard deliberately avoids a generic “everything is connected” status.
+Server health, endpoint reachability, and OAuth/MCP state are separate facts and
+are displayed separately.
 
 ## Reconfigure endpoint
 
@@ -142,9 +146,9 @@ The collapsed section contains bridge operations only:
 - show the extension-owned PiLink terminal/output;
 - open this guide.
 
-It also shows the selected project, hosting type, current workflow, and MCP
-endpoint so an operator can verify the actual state without navigating several
-product modes.
+It also shows the selected project, hosting type, current workflow, process
+ownership, and MCP endpoint so an operator can verify actual state without
+navigating several product modes.
 
 ## Existing advanced configurations
 
@@ -165,7 +169,7 @@ the PiLink OS user. It is remote code execution by design.
 
 The current extension does not offer a Full-access start. If an existing
 configuration has `PI_UNSAFE_FULL_ACCESS=true`, the main card enters a safety
-state, blocks start/restart/connect operations, and offers **Reconfigure
+state, blocks ordinary start/restart/connect actions, and offers **Reconfigure
 safely...**. Reconfiguration clears Full access and restores the fixed graphical
 policy.
 
@@ -191,23 +195,11 @@ The normal VS Code product no longer exposes:
 - manual OAuth-client registration controls;
 - collaboration enablement/monitoring controls;
 - Full-access launch controls;
-- the old multi-step wizard protocol.
+- the old multi-step wizard protocol;
+- transcript/task/activity monitoring surfaces.
 
 The core PiLink server/CLI may still support specialist capabilities where they
 make sense. They are no longer separate VS Code products.
-
-## Recent activity
-
-When PiLink's collaboration/admin audit projection is available, the launcher
-shows a small bounded list of recent MCP calls. It contains only operational
-metadata such as tool name, outcome, duration, and time.
-
-In Single-agent mode that collaboration projection may not be available, so the
-activity section can legitimately be absent. The primary health signals are the
-Server, Endpoint, and ChatGPT states.
-
-The webview never receives prompts, file paths, tool arguments, tool results,
-OAuth token hashes, ChatGPT transcript content, cookies, or model reasoning.
 
 ## Process ownership
 
@@ -261,5 +253,5 @@ The old `media/main.js` and `media/styles.css` dashboard implementation was
 removed, and the release verifier rejects packages containing them.
 
 For trust boundaries see [Architecture](ARCHITECTURE.md) and
-[Security model](SECURITY_MODEL.md). For the remote authorization details see
+[Security model](SECURITY_MODEL.md). For remote authorization details see
 [Connect ChatGPT Work](CONNECT_CHATGPT.md).
