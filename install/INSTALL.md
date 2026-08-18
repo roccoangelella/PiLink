@@ -1,4 +1,4 @@
-# Install PiLink's optional VSPiLink extension bundle
+# Install PiLink's optional VS Code extension bundle
 
 Keep every downloaded file in this directory. In particular, do not separate
 the installer, `vspilink-*.vsix`, and `SHA256SUMS`: the installer refuses to
@@ -44,20 +44,24 @@ private per-user PiLink data directory.
 5. Open the **PiLink** view.
 6. Open the project PiLink should access and review Workspace Trust.
 7. Use the main PiLink card:
-   - **Quick start for ChatGPT** for the simplest remote setup;
-   - **Local only** when no public endpoint is needed;
-   - **Stable endpoint...** for a durable hostname.
-8. When the public endpoint is ready, select **Connect ChatGPT** in the PiLink
-   dashboard and complete the remote OAuth flow.
+   - **Quick start for ChatGPT** for the simplest safe remote setup;
+   - **Local only** when no public endpoint is needed.
+8. When the public endpoint is ready, select **Connect ChatGPT** and complete
+   the remote OAuth flow.
 
-Fresh graphical setups use Single agent and Project-folder access by default.
-Collaboration, Full access, manual OAuth registration, and the optional local
-provider-backed Pi agent are available under **Advanced**.
+Fresh ordinary graphical setups use Single agent and Project-folder access by
+default. If you deliberately need a stable domain, legacy hosting, or another
+specialist configuration, use **Advanced setup...** and review the additional
+workflow/access choices it may expose.
+
+Collaboration, Full access, local model-provider execution, native VS Code MCP
+compatibility, and manual OAuth registration are not presented as parallel
+products in the normal launcher UI.
 
 For Remote SSH, run this installer in the remote VS Code integrated terminal.
-After the reload, open Extensions and verify that VSPiLink says **Installed on
-SSH: _host_**. If it is installed only under Local, use the extension gear menu
-and select **Install in SSH: _host_**.
+After the reload, open Extensions and verify that the extension says **Installed
+on SSH: _host_**. If it is installed only under Local, use the extension gear
+menu and select **Install in SSH: _host_**.
 
 ## Development-only checksum override
 
