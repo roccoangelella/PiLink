@@ -54,12 +54,13 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:core && node dist/ensure-cli-link.js",
+    "build:core": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build:core && node --test test/*.test.mjs",
     "vscode:typecheck": "tsc -p packages/vscode/tsconfig.json --noEmit",
-    "vscode:build": "npm run build && node packages/vscode/scripts/build.mjs",
+    "vscode:build": "npm run build:core && node packages/vscode/scripts/build.mjs",
     "vscode:test": "tsx --test packages/vscode/test/*.test.ts",
     "vscode:package": "node packages/vscode/scripts/package.mjs",
     "vscode:install": "npm run vscode:package && node packages/vscode/scripts/install.mjs",
@@ -70,7 +71,7 @@
     "release:stage": "node scripts/stage-release.mjs",
     "release:verify": "node scripts/verify-release.mjs",
     "release:check": "npm run release:stage && npm run release:verify",
-    "prepack": "npm run build"
+    "prepack": "npm run build:core"
   },
   "dependencies": {
     "@achingbrain/nat-port-mapper": "^4.0.5",
