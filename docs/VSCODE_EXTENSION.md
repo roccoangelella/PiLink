@@ -1,13 +1,13 @@
 # PiLink VS Code extension
 
 The PiLink VS Code extension is the graphical launcher for the PiLink MCP
-bridge. The design target is deliberately small:
+bridge. Its product contract is deliberately small:
 
-> open a project, start PiLink safely, make the MCP endpoint reachable when
-> needed, connect ChatGPT, and see whether the bridge is healthy.
+> choose a project, start PiLink with a safe fixed policy, configure the MCP
+> endpoint, connect ChatGPT, and show whether the bridge is healthy.
 
-The extension is not a second ChatGPT interface and it is not intended to expose
-every PiLink subsystem as a peer in the main UI.
+It is not a second ChatGPT interface and it is not a general control panel for
+every PiLink subsystem.
 
 ```text
 You work here:
@@ -27,67 +27,80 @@ VS Code starts and monitors this side
 
 ## Product rule
 
-The previous dashboard mixed execution surfaces, server workflows, hosting,
-OAuth, access policy, local model providers, tasks, agents, and monitoring on
-one screen. That was technically expressive but difficult to reason about.
+Older builds mixed execution surfaces, workflows, hosting, OAuth, access policy,
+local model providers, tasks, agents, and monitoring on one screen. The current
+extension follows one rule: **the normal graphical workflow is the single-agent
+MCP bridge, with project-folder access.**
 
-The extension now follows one rule: **show the next action in the ordinary MCP
-bridge lifecycle and keep specialist mechanisms out of the happy path.**
+Every graphical setup/reconfiguration writes:
 
-A fresh ordinary graphical setup uses:
+- `PI_RUNTIME_MODE=single`;
+- Project-folder access / `PI_UNSAFE_FULL_ACCESS=false`;
+- paired OAuth consent;
+- the endpoint/hosting settings selected by the user.
 
-- the **single-agent** PiLink toolset;
-- **project-folder** access;
-- no unrestricted shell;
-- no local model-provider setup;
-- no collaboration workflow choice;
-- no native VS Code MCP setup choice.
-
-Those other PiLink capabilities can continue to exist for compatibility or
-operator use without defining the graphical product.
+There is no graphical workflow selector, Full-access launch, provider/model
+setup, native VS Code MCP product, manual OAuth-client product, or collaboration
+console.
 
 ## Main lifecycle
 
 ### 1. Choose the project
 
-Open and trust the project folder that PiLink may access. The extension will not
-perform privileged setup or start PiLink from a VS Code Restricted Mode
-workspace.
+Open and trust the project folder PiLink may access. The extension blocks setup,
+startup, OAuth, and project changes in VS Code Restricted Mode.
 
-### 2. Start the safe bridge
+In a multi-root workspace, choose the exact project. Changing a configured
+project requires a local confirmation and keeps OAuth/hosting state separate
+from the workspace boundary.
 
-For a new project the main card offers two ordinary launch choices:
+### 2. Configure an endpoint
 
-**Quick start for ChatGPT** is the primary first-run action. It creates a
-single-agent, project-folder PiLink configuration and exposes it through a
-temporary Cloudflare Quick Tunnel.
+For a new project, the main card offers three choices.
 
-**Local only** starts the same safe bridge without a public endpoint. Use this
-when the MCP client is on the same machine.
+**Set up stable endpoint** is the primary/recommended path for ChatGPT. It lets
+you choose either:
 
-A third **Advanced setup...** action is deliberately secondary. It opens the
-older native setup flow for stable/legacy hosting and specialist workflow/access
-choices. It is not part of the normal first-run path.
+- **Cloudflare fixed domain** — PiLink provisions the tunnel and DNS from a
+  scoped API token, uses that token once, and stores only the generated tunnel
+  token file; or
+- **Existing HTTPS domain** — use a reverse proxy/HTTPS origin you already
+  operate.
+
+**Temporary quick start** creates a Cloudflare Quick Tunnel. It is convenient
+for evaluation but the public URL changes when the tunnel is recreated.
+
+**Local only** starts PiLink without a public endpoint for same-machine clients.
+
+All three paths use the same Single-agent / Project-folder security policy.
 
 ### 3. Start PiLink again later
 
-Once configured, the main action is simply **Start PiLink** whenever the bridge
-is stopped.
+Once configured, the main action is **Start PiLink** whenever the extension-owned
+bridge is stopped.
+
+The launcher refuses to start a saved Full-access configuration. It also refuses
+to take ownership of a process already running outside this VS Code session.
 
 ### 4. Connect ChatGPT
 
-When the public HTTPS endpoint is healthy, select **Connect ChatGPT** and
-complete the owner verification/OAuth flow. If the OAuth client already exists,
-the UI says **Continue connection** instead of encouraging duplicate client
-registration.
+When a public HTTPS endpoint is healthy, select **Connect ChatGPT**. The
+extension copies the MCP URL, creates a short-lived local-owner pairing request,
+and opens the PiLink pairing page before handing off to ChatGPT Work.
+
+If the OAuth client already exists but authorization is unfinished, the UI says
+**Continue connection** rather than encouraging duplicate registration.
+
+If OAuth is already durable, the UI says **OAuth ready** and opens ChatGPT Work
+without repeating setup.
 
 ### 5. Work in ChatGPT
 
-After authorization, the extension says **OAuth ready**. Open ChatGPT Work and
-work there. When ChatGPT actually invokes a PiLink tool, an MCP session becomes
-active and the extension reports **Connected**.
+Do the actual coding task in ChatGPT Work. When ChatGPT invokes a PiLink tool,
+an MCP session becomes active and the launcher reports **Connected** / the
+active-session count.
 
-The extension never needs to mirror the ChatGPT transcript to prove that PiLink
+The extension never needs to mirror the ChatGPT transcript to prove the bridge
 is working.
 
 ## Status model
@@ -100,158 +113,153 @@ The dashboard keeps three facts visible:
 | **Endpoint** | Is PiLink local-only or exposed through public HTTPS? |
 | **ChatGPT** | Is ChatGPT unconfigured, awaiting OAuth, authorized, or actively connected? |
 
-This avoids overloading one “connected” indicator with several independent
-states.
+`OAuth ready` without an active transport is normal. A remote client can create
+an MCP transport only when it actually needs PiLink tools.
 
-Common ChatGPT states are:
+## Reconfigure endpoint
 
-**Not connected** — no ChatGPT OAuth client is prepared yet.
+**Details & recovery -> Reconfigure endpoint...** and the Command Palette action
+**PiLink: Reconfigure PiLink** use a dedicated safe reconfiguration flow. The
+available endpoint types are:
 
-**Authorize** — the client already exists but OAuth is unfinished. Continue the
-existing flow.
+- Cloudflare fixed domain;
+- existing HTTPS domain;
+- Cloudflare Quick Tunnel;
+- local only.
 
-**OAuth ready** — authorization is stored and reusable. No permanent transport
-has to remain open.
-
-**Connected** / **N active** — one or more MCP transports are active now.
+Reconfiguration always resets the graphical policy to Single agent and
+Project-folder access. It does not expose the old collaboration or Full-access
+selectors.
 
 ## Details & recovery
 
-Normal use should not require the lower disclosure. **Details & recovery** keeps
-the bridge operations useful for diagnosis or repair:
+The collapsed section contains bridge operations only:
 
 - restart/stop;
-- **Advanced setup...**;
-- MCP URL copy;
-- private configuration access;
-- PiLink terminal;
-- documentation.
+- reconfigure endpoint;
+- copy MCP URL;
+- open the private configuration;
+- show the extension-owned PiLink terminal/output;
+- open this guide.
 
-This section also shows the project, hosting type, server workflow, and MCP
-endpoint so an operator can verify what is actually running without navigating
-multiple product tabs.
+It also shows the selected project, hosting type, current workflow, and MCP
+endpoint so an operator can verify the actual state without navigating several
+product modes.
 
-### What Advanced setup means
+## Existing advanced configurations
 
-The `guidedSetup` implementation predates the launcher-only redesign. It is
-kept for compatibility because it knows how to collect the extra inputs needed
-for stable Cloudflare deployments, existing HTTPS origins, legacy hosting, and
-specialist access/workflow choices.
+### Collaboration
 
-For that reason it is explicitly labeled **Advanced setup...** in the UI and
-Command Palette. The ordinary Quick start and Local only buttons bypass those
-choices and always request project-folder access.
+PiLink core still supports `PI_RUNTIME_MODE=collaboration`, but the launcher does
+not enable it. If an existing project is already configured for collaboration,
+the dashboard labels it **Collaboration (advanced)** and offers **Switch to
+single-agent**.
 
-## What was deliberately removed from the normal graphical product
+Use the PiLink CLI/operator workflow if collaboration is truly required. The
+normal graphical product remains single-agent.
 
-### Local provider / Pi Local chat
-
-PiLink retains local-agent/provider implementation for compatibility and other
-entry points, but the VS Code dashboard no longer presents it as a second
-product. A user who installed the extension only to start MCP should never be
-asked to choose a model provider in the ordinary path.
-
-### Native VS Code MCP setup
-
-The compatibility implementation can remain in the extension, but its scope and
-connection controls are no longer normal user-facing settings or dashboard
-actions. The extension itself is the PiLink launcher; it does not need to teach
-a second MCP integration during setup.
-
-### Collaboration enablement
-
-The collaboration server mode remains supported by PiLink, but the main
-launcher does not advertise it as a sibling of the single-agent workflow. If an
-existing project is already configured for collaboration, the dashboard detects
-that state and offers **Switch to single-agent** rather than silently changing
-it.
-
-The legacy Advanced setup path may still expose the workflow selector for an
-operator who deliberately enters that flow. For routine GUI use, single-agent
-is the default and no workflow decision is required.
-
-### Full-access launch
+### Full access
 
 Full access removes the project boundary and allows general process execution as
 the PiLink OS user. It is remote code execution by design.
 
-Quick start and Local only never request Full access. If an existing
-configuration already contains Full access, the dashboard enters an explicit
-safety state instead of showing the normal Start button.
+The current extension does not offer a Full-access start. If an existing
+configuration has `PI_UNSAFE_FULL_ACCESS=true`, the main card enters a safety
+state, blocks start/restart/connect operations, and offers **Reconfigure
+safely...**. Reconfiguration clears Full access and restores the fixed graphical
+policy.
 
-Operators who deliberately need unrestricted access should prefer the PiLink
-CLI and its explicit security controls. The legacy Advanced setup path remains
-available for compatibility, but it is intentionally outside the normal GUI
-flow and requires its existing warning/confirmation.
+Deliberate unrestricted operation belongs to the PiLink CLI/operator workflow.
+
+### Legacy managed Named Tunnel
+
+The simplified extension no longer owns the legacy `cloudflare-named` managed
+service mode. If an existing configuration uses it, normal start is refused.
+Reconfigure to Cloudflare fixed domain, an existing HTTPS domain, Quick Tunnel,
+or local-only; otherwise manage the legacy service through the CLI/service
+manager.
+
+## Removed product surfaces
+
+The extension controller and webview protocol were narrowed, not merely hidden.
+The normal VS Code product no longer exposes:
+
+- Pi Local/provider-backed chat;
+- provider/model authentication controls;
+- agent spawning/output controls;
+- native VS Code MCP server-definition integration;
+- manual OAuth-client registration controls;
+- collaboration enablement/monitoring controls;
+- Full-access launch controls;
+- the old multi-step wizard protocol.
+
+The core PiLink server/CLI may still support specialist capabilities where they
+make sense. They are no longer separate VS Code products.
 
 ## Recent activity
 
-When the active administrative projection provides MCP audit metadata, the
-launcher can show a short metadata-only activity list. It is useful for
-answering “is the client using PiLink?” without turning the extension into an
-observability product.
+When PiLink's collaboration/admin audit projection is available, the launcher
+shows a small bounded list of recent MCP calls. It contains only operational
+metadata such as tool name, outcome, duration, and time.
 
-The list is bounded and contains operational metadata such as tool name,
-outcome, duration, and time. It intentionally excludes:
+In Single-agent mode that collaboration projection may not be available, so the
+activity section can legitimately be absent. The primary health signals are the
+Server, Endpoint, and ChatGPT states.
 
-- prompts;
-- file paths;
-- tool arguments;
-- tool results;
-- ChatGPT transcript content;
-- cookies or browser DOM;
-- model reasoning.
+The webview never receives prompts, file paths, tool arguments, tool results,
+OAuth token hashes, ChatGPT transcript content, cookies, or model reasoning.
 
-In a server mode where that audit projection is unavailable, the activity
-section simply remains absent.
+## Process ownership
 
-## Stable endpoint versus Quick Tunnel
+The extension will not silently compete with another PiLink owner.
 
-Quick start is the simplest first-run path, but its Quick Tunnel hostname is
-transient. When it changes, the old remote connection still points at the
-previous origin.
+- If the extension owns the process, it can stop/restart it.
+- If the configured port already belongs to a PiLink process outside the current
+  VS Code session, reconfiguration/start ownership is refused and the user is
+  told to stop/manage that process with the CLI or service manager.
+- Changing the project while an external PiLink is running is refused.
 
-For a durable installation, enter **Advanced setup...** deliberately and choose
-a stable fixed-domain/Named-Tunnel or existing-domain path. Review every extra
-workflow/access prompt in that advanced flow rather than treating it as part of
-the one-click setup.
+This keeps one configuration/port under one active owner.
+
+## OAuth browser behavior
+
+PiLink owner verification requires persistent browser storage. If VS Code's
+integrated browser uses ephemeral storage, the extension refuses the flow and
+offers the relevant setting instead of pretending OAuth can persist.
+
+The extension prefers VS Code's integrated browser. It falls back to the system
+browser only after an explicit warning/choice, which matters in Remote SSH where
+the UI and PiLink host can be different machines.
 
 ## Daily use
 
-With stable hosting and OAuth already configured, daily use should be close to:
+With a stable endpoint and OAuth already authorized, daily use should be close
+to:
 
 1. open the project;
 2. start PiLink if it is stopped;
 3. open ChatGPT Work;
 4. work.
 
-If the dashboard says **OAuth ready**, do not repeat OAuth registration. ChatGPT
-will create an MCP transport when it needs the tools.
+If the dashboard says **OAuth ready**, do not repeat client registration. A new
+MCP transport will appear when ChatGPT actually invokes PiLink.
 
-Quick Tunnel is different because recreating it changes the public origin.
-
-## Compatibility versus UX
-
-The extension backend still contains older/specialist commands and state so
-existing installations are not unnecessarily broken. They are intentionally
-not promoted as parallel products through the main dashboard or normal settings
-surface.
-
-This separation is deliberate: retaining compatibility does not require
-retaining the old UX.
+Quick Tunnel is the exception because recreating it changes the public origin.
 
 ## Implementation map
 
-- `packages/vscode/media/app.js` — state-driven launcher UI;
+- `packages/vscode/media/app.js` — command-only, state-driven launcher UI;
 - `packages/vscode/media/app.css` — VS Code-themed responsive styling;
 - `packages/vscode/src/dashboard.ts` — webview lifecycle and CSP;
-- `packages/vscode/src/extension.ts` — process, hosting, OAuth, and compatibility implementation;
-- `packages/vscode/src/runtime-mode.ts` — single-agent default and legacy workflow state;
-- `packages/vscode/src/protocol.ts` — webview command/state protocol.
+- `packages/vscode/src/extension.ts` — focused launcher controller, hosting,
+  process ownership, OAuth pairing, and safe reconfiguration;
+- `packages/vscode/src/protocol.ts` — narrow launcher command/state contract;
+- `packages/vscode/src/configuration.ts` — private configuration generation and
+  public dashboard-safe client summaries.
 
 The old `media/main.js` and `media/styles.css` dashboard implementation was
-removed, so there is only one UI implementation to maintain.
+removed, and the release verifier rejects packages containing them.
 
-For protocol and trust boundaries see [Architecture](ARCHITECTURE.md) and
-[Security model](SECURITY_MODEL.md). For remote authorization details see
+For trust boundaries see [Architecture](ARCHITECTURE.md) and
+[Security model](SECURITY_MODEL.md). For the remote authorization details see
 [Connect ChatGPT Work](CONNECT_CHATGPT.md).
