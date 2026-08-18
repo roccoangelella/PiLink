@@ -32,7 +32,7 @@ test("first run defaults to the safe single-agent path", () => {
   assert.match(primary, /Local only/);
   assert.match(primary, /Stable endpoint…/);
   assert.match(primary, /temporary HTTPS address/);
-  assert.doesNotMatch(primary, /Full access.*variant: "primary"/s);
+  assert.doesNotMatch(primary, /action: "configureAndStart"[\s\S]{0,180}accessMode: "full"/);
 });
 
 test("normal lifecycle exposes one obvious action for each state", () => {
@@ -143,10 +143,12 @@ test("webview content is built with textContent rather than HTML interpolation",
   assert.match(script, /replace\(\/\\0\/g, ""\)/);
 });
 
-test("the new assets are the only dashboard entry point", () => {
+test("the new assets are the only dashboard implementation", () => {
   assert.match(dashboard, /media", "app\.css"/);
   assert.match(dashboard, /media", "app\.js"/);
   assert.doesNotMatch(dashboard, /styles\.css|main\.js/);
+  assert.equal(fs.existsSync(new URL("../media/main.js", import.meta.url)), false);
+  assert.equal(fs.existsSync(new URL("../media/styles.css", import.meta.url)), false);
   assert.match(dashboard, /Content-Security-Policy/);
   assert.match(dashboard, /script-src 'nonce-\$\{nonce\}'/);
 });
