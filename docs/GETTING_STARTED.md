@@ -6,28 +6,28 @@ Code onboarding flow is intentionally short:
 1. Follow [Installation](INSTALLATION.md).
 2. Open the project you want PiLink to access and trust that VS Code window.
 3. Open the **PiLink** view in the Secondary Side Bar.
-4. Select **Quick start for ChatGPT** for the simplest remote setup, or **Local
-   only** when no public endpoint is needed.
-5. When the dashboard says the public endpoint is ready, select **Connect
+4. Choose **Set up stable endpoint** for regular ChatGPT use, **Temporary quick
+   start** for evaluation, or **Local only** for same-machine clients.
+5. Every graphical setup uses **Single agent** and **Project-folder** access.
+6. When the dashboard says the public endpoint is ready, select **Connect
    ChatGPT** and follow [Connect ChatGPT Work](CONNECT_CHATGPT.md).
-6. Begin with the read-only first task in that guide.
-7. Read [Security model](SECURITY_MODEL.md) before enabling repository
-   execution, collaboration, or Full access from another operator surface.
+7. Begin with the read-only first task in that guide.
+8. Read [Security model](SECURITY_MODEL.md) before enabling repository execution,
+   collaboration, or Full access from the PiLink CLI/operator workflow.
 
-Fresh ordinary graphical setups use **Single agent** and **Project-folder**
-access automatically. You do not need to choose a server workflow, model
-provider, or machine-wide permission before starting PiLink.
+**Set up stable endpoint** supports a Cloudflare fixed domain or an existing
+HTTPS reverse proxy. PiLink recommends this path because a Quick Tunnel receives
+a different public URL when it is recreated.
 
-Use **Advanced setup...** only when you deliberately need a stable/legacy
-hosting arrangement or another specialist configuration. That compatibility
-flow can expose additional workflow/access choices, so review them explicitly
-rather than treating it as the normal first-run path.
+The graphical reconfiguration flow is also fixed to Single agent and
+Project-folder access. It does not ask for a collaboration mode, model provider,
+or machine-wide permission.
 
-The provider-backed local Pi runtime, native VS Code MCP compatibility,
-collaboration enablement, manual OAuth registration, and Full-access launch are
-not promoted as parallel products in the main dashboard. They remain available
-through their appropriate CLI/backend compatibility paths for operators who
-actually need them.
+Provider-backed local agents, native VS Code MCP integration, collaboration
+enablement, manual OAuth registration, legacy managed services, and Full-access
+launch are not parallel products in the current VS Code launcher. Use the core
+PiLink CLI/operator paths only when you explicitly need those specialist
+capabilities.
 
 When Dynamic Client Registration is available, the normal OAuth path does not
 require manually copying a callback URL, client ID, or client secret. Keep the
