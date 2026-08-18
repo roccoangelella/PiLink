@@ -23,17 +23,16 @@ ChatGPT Work -> PiLink plugin -> HTTPS OAuth/MCP -> PiLink -> project folder
 
 1. Open the project folder in VS Code and trust it.
 2. Open **PiLink** in the Secondary Side Bar.
-3. Choose how the MCP bridge should be reached:
-   - **Set up stable endpoint** — recommended for normal ChatGPT use;
-   - **Temporary quick start** — creates a temporary Cloudflare Quick Tunnel;
-   - **Local only** — keeps the bridge on this machine.
-4. PiLink starts with the **single-agent** toolset and **project-folder** access.
-5. When a public endpoint is ready, select **Connect ChatGPT**.
-6. Complete OAuth once, then do the actual work in ChatGPT Work.
+3. Use one of the ordinary launch actions:
+   - **Quick start for ChatGPT** — single-agent, project-folder access, temporary
+     Cloudflare HTTPS endpoint;
+   - **Local only** — the same safe bridge without a public endpoint.
+4. When a public endpoint is ready, select **Connect ChatGPT**.
+5. Complete OAuth once, then do the actual work in ChatGPT Work.
 
-A Quick Tunnel gets a different public URL when it is recreated. Use a stable
-endpoint when you want OAuth and the remote connection to survive normal
-restarts without reconfiguration.
+Quick start is deliberately the shortest safe path. Its public URL changes when
+the Quick Tunnel is recreated. If you need a durable domain, use **Advanced
+setup...** and review the additional hosting/workflow/access choices there.
 
 ## What the screen shows
 
@@ -43,9 +42,9 @@ than every capability PiLink supports.
 | State | Main action |
 | --- | --- |
 | Restricted workspace | **Manage Workspace Trust** |
-| New project | **Set up stable endpoint** |
+| New project | **Quick start for ChatGPT** |
 | Configured but stopped | **Start PiLink** |
-| Local bridge only | **Configure remote endpoint** |
+| Local bridge only | **Advanced remote setup...** |
 | Public endpoint ready | **Connect ChatGPT** |
 | OAuth unfinished | **Continue connection** |
 | OAuth ready | **Open ChatGPT Work** |
@@ -64,17 +63,19 @@ The collapsed **Details & recovery** section contains the operational controls
 that are useful when something needs inspection or repair:
 
 - restart or stop PiLink;
-- reconfigure hosting;
+- enter **Advanced setup...**;
 - copy the MCP URL;
 - open the private PiLink configuration;
 - show the PiLink terminal;
 - open the guide.
 
-The extension still preserves compatibility code for older/specialist PiLink
-features, but it no longer promotes them as parallel products in the graphical
-workflow. Local model-provider chat, native VS Code MCP integration, manual
-OAuth registration, collaboration enablement, and Full-access launch are
-operator/compatibility concerns rather than ordinary dashboard choices.
+Advanced setup is intentionally not the happy path. It retains the older native
+setup flow for stable/legacy hosting and specialist workflow/access choices.
+
+The extension also preserves compatibility code for older PiLink features, but
+it no longer promotes local model-provider chat, native VS Code MCP integration,
+manual OAuth registration, collaboration enablement, or Full-access launch as
+parallel products in the main dashboard.
 
 ## Existing advanced configurations
 
@@ -85,15 +86,17 @@ shows that as an advanced configuration and offers a clear return to the
 single-agent workflow.
 
 If **Full access** is already configured, PiLink shows a safety state instead of
-an ordinary Start button. The graphical workflow does not offer Full access as
-a normal launch mode. Operators who deliberately need unrestricted machine
-access can continue to use the PiLink CLI and its explicit security controls.
+an ordinary Start button. Quick start and Local only never request Full access.
+Operators who deliberately need unrestricted machine access can continue to use
+the PiLink CLI and its explicit security controls, or review the legacy advanced
+setup path deliberately.
 
 ## Recent activity
 
-A small activity list answers one useful question: “is the remote client
-actually calling PiLink?” It shows only bounded operational metadata such as
-tool name, outcome, and duration.
+When the current administrative projection supplies audit metadata, a small
+activity list answers one useful question: “is the remote client actually
+calling PiLink?” It shows only bounded operational metadata such as tool name,
+outcome, and duration.
 
 It intentionally does not display prompts, file paths, tool arguments, tool
 results, ChatGPT transcript content, cookies, DOM data, or model reasoning.
