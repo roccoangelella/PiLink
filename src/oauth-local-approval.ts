@@ -15,6 +15,7 @@ import type { OAuthClient } from "./types.js";
 const LOCAL_APPROVAL_TIMEOUT_MS = 90_000;
 const CLIENT_ID_PATTERN = /^pi_[a-f0-9]{16}$/iu;
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/u;
+const CHATGPT_DCR_SCOPE = "mcp:tools offline_access";
 const UNSAFE_TERMINAL_TEXT = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 const UNSAFE_TERMINAL_TEXT_GLOBAL = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
 
@@ -121,7 +122,10 @@ export async function tryHandleLocalChatGptAuthorization(req: Request, res: Resp
 
 export function isApprovedChatGptPublicClient(client: OAuthClient, redirectUri: string): boolean {
   return client.token_endpoint_auth_method === "none" &&
+    client.grant_types.length === 2 &&
     client.grant_types.includes("authorization_code") &&
+    client.grant_types.includes("refresh_token") &&
+    client.scope === CHATGPT_DCR_SCOPE &&
     client.redirect_uris.length === 1 &&
     client.redirect_uris[0] === redirectUri &&
     isChatGptConnectorRedirect(redirectUri);
