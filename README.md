@@ -36,8 +36,16 @@ git clone https://github.com/roccoangelella/PiLink.git
 cd PiLink
 npm ci
 npm run build
-npm link
 ```
+
+For a source checkout, `npm run build` also tries to expose the freshly built
+CLI as `pilink`. It only writes a symlink (or Windows command shim) into an
+existing user-writable directory already on `PATH` and inside the current
+user's home directory. It never uses `sudo`, edits shell startup files, or
+overwrites an unrelated existing `pilink` command. Set
+`PILINK_SKIP_CLI_LINK=1` to disable this developer convenience. If no safe PATH
+directory is available, the build still succeeds and prints the `npm exec` or
+one-time `npm link` fallback.
 
 Verified PiLink 2.2.0 npm and VSIX artifacts are also available under
 `release/`; see the [installation guide](docs/INSTALLATION.md).
