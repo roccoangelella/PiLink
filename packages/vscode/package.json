@@ -1,7 +1,7 @@
 {
   "name": "vspilink",
-  "displayName": "VSPiLink — PiLink for VS Code",
-  "description": "Start, connect, and manage the PiLink MCP bridge for the project open in VS Code.",
+  "displayName": "PiLink — MCP Bridge",
+  "description": "Start, connect, and monitor the PiLink MCP bridge for the project open in VS Code.",
   "version": "2.2.0",
   "publisher": "0xfunboy",
   "license": "MIT",
@@ -39,11 +39,10 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode, VSPiLink shows PiLink status and documentation while setup, OAuth, service start, and project access remain blocked.",
+      "description": "In Restricted Mode, PiLink shows bridge status and documentation while setup, OAuth, service start, and project access remain blocked.",
       "restrictedConfigurations": [
         "vspilink.configPath",
-        "vspilink.nodeExecutable",
-        "vspilink.nativeMcpScope"
+        "vspilink.nodeExecutable"
       ]
     }
   },
@@ -52,64 +51,64 @@
       {
         "command": "vspilink.openSidebar",
         "title": "Open PiLink",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "vspilink.openPanel",
         "title": "Open PiLink in Editor",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(open-preview)"
       },
       {
         "command": "vspilink.connectChatGpt",
         "title": "Connect ChatGPT",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(plug)"
       },
       {
         "command": "vspilink.stop",
         "title": "Stop PiLink",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(debug-stop)"
       },
       {
         "command": "vspilink.guidedSetup",
-        "title": "Reconfigure PiLink (Advanced)",
-        "category": "VSPiLink",
+        "title": "Reconfigure PiLink",
+        "category": "PiLink",
         "icon": "$(settings-gear)"
       },
       {
         "command": "vspilink.openConfig",
         "title": "Open PiLink Configuration",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(settings-gear)"
       },
       {
         "command": "vspilink.refresh",
         "title": "Refresh PiLink Status",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(refresh)"
       },
       {
         "command": "vspilink.useWorkspace",
         "title": "Use This Folder for PiLink",
-        "category": "VSPiLink"
+        "category": "PiLink"
       },
       {
         "command": "vspilink.openDocs",
         "title": "Open PiLink Guide",
-        "category": "VSPiLink",
+        "category": "PiLink",
         "icon": "$(book)"
       }
     ],
     "configuration": {
-      "title": "VSPiLink",
+      "title": "PiLink",
       "properties": {
         "vspilink.openOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "Open the optional PiLink sidebar after VS Code finishes starting."
+          "description": "Open the PiLink sidebar after VS Code finishes starting."
         },
         "vspilink.configPath": {
           "type": "string",
@@ -117,23 +116,6 @@
           "scope": "resource",
           "restricted": true,
           "description": "Optional path to the PiLink .env file. Supports ~ and ${workspaceFolder}. When empty, the extension uses PILINK_CONFIG or ~/.config/pilink/.env."
-        },
-        "vspilink.nativeMcpScope": {
-          "type": "string",
-          "enum": [
-            "mcp:read",
-            "mcp:write",
-            "mcp:tools"
-          ],
-          "enumDescriptions": [
-            "Read-only access: list, search, and read.",
-            "Mutation tools only; bash still follows the server access mode.",
-            "All tools allowed by the server access mode."
-          ],
-          "default": "mcp:read",
-          "scope": "application",
-          "restricted": true,
-          "description": "OAuth scope used by the optional native VS Code MCP provider."
         },
         "vspilink.nodeExecutable": {
           "type": "string",
