@@ -97,6 +97,24 @@ test("CLI linker rejects a home PATH symlink that escapes outside the home", { s
   }
 });
 
+test("CLI linker ignores npm's transient node_modules bin injection", () => {
+  const { home } = fixture();
+  const npmBin = path.join(home, "Projects", "PiLink", "node_modules", ".bin");
+  const localBin = path.join(home, ".local", "bin");
+  fs.mkdirSync(npmBin, { recursive: true });
+  fs.mkdirSync(localBin, { recursive: true });
+  try {
+    assert.equal(selectCliBinDirectory({
+      pathValue: [npmBin, localBin].join(path.delimiter),
+      homeDirectory: home,
+      nodeExecutable: process.execPath,
+      platform: process.platform,
+    }), localBin);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("CLI linker prefers a stable user bin over a version-specific Node bin", () => {
   const { home } = fixture();
   const localBin = path.join(home, ".local", "bin");
