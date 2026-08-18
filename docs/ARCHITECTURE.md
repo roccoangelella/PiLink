@@ -1,243 +1,284 @@
 # Architecture
 
-PiLink is a local execution bridge, not a hosted model and not a replacement
-ChatGPT frontend. It combines four independently authenticated surfaces:
+PiLink is a local execution bridge. It exposes a selected project through an
+OAuth-protected MCP server and lets a remote client such as ChatGPT Work invoke
+that server's tools.
 
-1. ChatGPT Work and its installed plugin;
-2. the public OAuth/MCP server;
-3. the loopback-only VS Code administration channel;
-4. the optional Pi Local provider/runtime.
-
-Keeping those identities separate prevents a model-provider login, an OAuth
-client, or the VS Code host from being mistaken for one another.
-
-## Runtime model
+VSPiLink is the optional VS Code control surface for that bridge. It starts and
+stops PiLink, manages hosting and OAuth setup, and shows bounded operational
+status. It is not a second chat frontend.
 
 ```mermaid
 flowchart LR
-    Developer[Developer]
-    Work[ChatGPT Work]
-    Plugin[PiLink plugin]
-    Public[Stable HTTPS origin]
-    Tunnel[Named tunnel or reverse proxy]
-    Server[PiLink OAuth/MCP server]
-    Harness[Pi coding-tool harness]
-    Workspace[Selected workspace]
-    Collaboration[Chat, tasks, work loop, memory]
-    AgentRuntime[Supervised Pi agent runtime]
-    Provider[Optional Pi model provider]
-    Extension[VS Code extension]
-    Dashboard[PiLink dashboard]
+    User[Developer]
+    Client[ChatGPT Work or another MCP client]
+    Public[HTTPS PiLink origin]
+    Server[PiLink OAuth / MCP server]
+    Harness[PiLink tool harness]
+    Workspace[Selected project]
+    VSCode[VSPiLink]
+    Admin[Loopback admin API]
+    Provider[Optional local model provider]
+    LocalAgent[Optional supervised local Pi agent]
 
-    Developer --> Work
-    Work --> Plugin
-    Plugin -->|OAuth + MCP| Public
-    Public --> Tunnel
-    Tunnel -->|loopback origin| Server
+    User --> Client
+    Client -->|OAuth + MCP| Public
+    Public --> Server
     Server --> Harness
     Harness --> Workspace
-    Server --> Collaboration
-    Server --> AgentRuntime
-    AgentRuntime --> Workspace
-    AgentRuntime -->|Pi Local only| Provider
-    Developer --> Extension
-    Extension --> Dashboard
-    Extension -->|protected local admin API| Server
+    User --> VSCode
+    VSCode -->|local authenticated control| Admin
+    Admin --> Server
+    VSCode --> LocalAgent
+    LocalAgent --> Workspace
+    LocalAgent --> Provider
 ```
 
-The ChatGPT page is opened in VS Code's Integrated Browser when available. It
-is not loaded into the PiLink webview. PiLink therefore does not read its
-DOM, cookies, composer, reasoning, or transcript.
+## Core server modes
 
-## Product runtime modes
+The PiLink server has two capability modes:
 
-The core server has two capability modes, selected by the local operator with
-`PI_RUNTIME_MODE` or the CLI's `--mode` option:
+- **Single agent** (`PI_RUNTIME_MODE=single`) is the normal/default bridge. It
+  exposes the workspace harness and OAuth/MCP transport without the shared
+  collaboration toolset.
+- **Collaboration** (`PI_RUNTIME_MODE=collaboration`) adds durable agent chat,
+  tasks, memory/work-loop coordination, and remote supervised-agent controls.
 
-- **Single agent** (`single`) constructs the classic remote workspace harness
-  and transport without public chat, task, memory, work-loop, or remote
-  agent-management tools. When a Pi provider is configured, the loopback-only
-  VS Code administration surface may supervise exactly one local agent without
-  coordination permissions.
-- **Collaborative public chat** (`collaboration`) adds the verified durable
-  collaboration services and the optional supervised Pi runtime. The extra
-  services still require their own OAuth scopes, provider configuration, and
-  private-state checks.
+`pilink start --mode vscode` is only a graphical handoff into VSPiLink. It is
+not a third server capability mode and must not be stored as
+`PI_RUNTIME_MODE=vscode`.
 
-The **VS Code graphical** entry (`--mode vscode`) is a handoff/presentation
-surface, not a third core mode. Its dashboard contains controls for both core
-modes and separately exposes **ChatGPT MCP** and **Pi Local**. The former is a
-remote OAuth/MCP client; the latter uses a configured Pi provider. Neither
-surface changes the core security policy by itself.
+VSPiLink defaults new graphical setups to **Single agent**. Collaboration is an
+explicit advanced opt-in because it changes the public MCP capability catalog.
+Changing the mode restarts the server so existing and new MCP transports cannot
+observe different catalogs from the same process.
 
-Mode selection is an operator action and is latched for the process lifetime.
-Changing it requires a restart so every MCP connection receives one coherent
-tool catalog. A model-visible prompt, public chat message, task artifact, or
-workspace file cannot select or elevate the mode.
+See [Runtime mode selection](operations/mode-selection.md).
+
+## VSPiLink's role
+
+The extension owns presentation and local orchestration, not the server's
+security policy.
+
+Its ordinary lifecycle is:
+
+```text
+choose project -> start PiLink -> obtain HTTPS endpoint -> connect OAuth client
+      -> use PiLink from ChatGPT Work -> stop/reconfigure when needed
+```
+
+The main dashboard intentionally exposes only the next useful action and three
+high-value facts: server state, remote/OAuth state, and the current access
+boundary.
+
+Optional capabilities such as collaboration, Full access, manual OAuth client
+registration, VS Code's native MCP provider, and the local provider-backed Pi
+agent live under **Advanced**.
+
+The dashboard webview never needs the ChatGPT DOM, cookies, transcript,
+composer, or model reasoning. ChatGPT remains in its own client surface.
 
 ## Trust boundaries
 
 ```mermaid
 flowchart TB
-    subgraph OpenAI[OpenAI-controlled boundary]
-        Work[ChatGPT Work]
-        Plugin[Installed PiLink plugin]
+    subgraph Remote[Remote client boundary]
+        Client[MCP client]
+        Token[OAuth token]
     end
 
-    subgraph Internet[Public network boundary]
-        HTTPS[HTTPS endpoint]
-        OAuth[Public OAuth routes]
-        MCP[Authenticated MCP transport]
+    subgraph Network[Public network boundary]
+        HTTPS[Configured HTTPS origin]
+        OAuth[OAuth routes]
+        MCP[MCP transport]
     end
 
     subgraph Host[Developer host]
-        Proxy[Tunnel or reverse proxy]
-        subgraph Loopback[Loopback-only administration]
-            Admin[Admin API]
-            Extension[VS Code extension host]
-        end
+        Proxy[Tunnel / reverse proxy]
         Server[PiLink server]
-        subgraph Private[Private data directory]
-            Clients[OAuth clients and refresh state]
-            Coordination[Chat, tasks, memory, audit]
-            Hosting[Hosting references and generated state]
+        Admin[Loopback admin API]
+        Extension[VSPiLink extension host]
+
+        subgraph Private[Private PiLink state]
+            Config[Private configuration]
+            Clients[OAuth clients / refresh state]
+            Audit[Audit / coordination state]
+            Hosting[Hosting credentials or references]
         end
-        subgraph WorkspaceBoundary[Workspace boundary]
-            Files[Project files and Git repository]
+
+        subgraph Project[Selected project boundary]
+            Workspace[Project files and Git repository]
         end
+
         Machine[Other user files and processes]
     end
 
-    Work --> Plugin --> HTTPS
+    Client --> Token --> HTTPS
     HTTPS --> OAuth
     HTTPS --> MCP
     HTTPS --> Proxy --> Server
     Extension --> Admin --> Server
+    Server --> Config
     Server --> Clients
-    Server --> Coordination
+    Server --> Audit
     Server --> Hosting
-    Server -->|safe mode| Files
-    Server -.->|full access only| Machine
+    Server -->|Project-folder access| Workspace
+    Server -.->|Full access only| Machine
 ```
 
-Public clients never receive the local administration bootstrap secret. The
-dashboard reaches administrative projections through loopback checks and a
-private host credential. Public health information is aggregate and must not
-contain secrets, prompts, paths, or tool results.
+The important separations are:
 
-## Identity and session model
+- public MCP clients never receive the local bootstrap/admin credential;
+- provider credentials for the optional local agent do not authorize MCP;
+- MCP OAuth does not sign into a model provider;
+- collaboration mode does not imply Full access;
+- Full access does not imply root privileges, but it does give the authorized
+  client the PiLink OS user's filesystem/process authority;
+- private PiLink state must stay outside the project capability root.
 
-```mermaid
-flowchart LR
-    Principal[Human or workspace authority]
-    Client[OAuth client registration]
-    Grant[Authorized scopes and client generation]
-    Token[Access or refresh token]
-    Agent[Durable agent identity]
-    ConnA[MCP connection A]
-    ConnB[MCP connection B]
-    InstanceA[Agent instance A]
-    InstanceB[Agent instance B]
-    Session[Verified collaboration session]
-    Tasks[Owned task leases]
+For the complete threat model see [Security model](SECURITY_MODEL.md).
 
-    Principal --> Client --> Grant --> Token --> Agent
-    Agent --> ConnA --> InstanceA --> Session
-    Agent --> ConnB --> InstanceB --> Session
-    Session --> Tasks
+## Project-folder access
+
+Project-folder access is the normal boundary. Workspace tools resolve paths
+against the selected canonical project and a general shell is not exposed.
+Repository execution is controlled separately by PiLink's execution policy.
+
+The graphical first-run path always chooses this boundary.
+
+## Full access
+
+Full access is an explicit exception for a reviewed OAuth client. It enables
+machine-wide file access and process execution as the PiLink OS user.
+
+Because it is qualitatively different from the normal bridge, VSPiLink keeps
+it behind Advanced and does not present a saved Full-access configuration as an
+ordinary safe start. The dashboard visibly labels the state while it is
+configured or active.
+
+Full access is client-specific. It must not be implemented as a wildcard grant
+for every registered OAuth client.
+
+## OAuth and connection state
+
+PiLink treats registration, durable authorization, and a live MCP transport as
+separate lifecycle states.
+
+```text
+registered -> authorized -> token/refresh state -> MCP transport active
 ```
 
-One OAuth client represents one durable remote identity. Multiple concurrent
-MCP connections can share that identity but receive distinct server-minted
-instance IDs. Collaboration roles and sessions are verified server-side;
-caller-supplied names do not grant authority.
+A client can therefore be **OAuth ready** while no MCP transport is open. That
+is healthy: the remote client may create a transport only when it invokes a
+PiLink tool.
 
-Transport sessions are pinned to the OAuth client, credential generation, and
-scope set that created them. A later narrower token must not reuse a more
-privileged session. Disabling or rotating a client invalidates its previous
-tokens and active transports.
+VSPiLink's main status reflects this distinction so users do not re-register
+OAuth merely because the transport is idle.
 
-## MCP and OAuth
+## Local administration
 
-The public server supports:
+The extension reads operational state through loopback-only admin endpoints
+protected by the PiLink bootstrap credential. Before sending privileged admin
+requests it verifies the local server identity with the authenticated health
+challenge.
 
-- Streamable HTTP with `POST`, `GET`, and `DELETE /sse`;
-- legacy SSE with `GET /sse` and `POST /messages`;
-- OAuth Authorization Code with PKCE;
-- refresh-token rotation and revocation;
-- client-credentials clients for supported local integrations;
-- Dynamic Client Registration for the constrained ChatGPT compatibility path;
-- user-defined confidential clients as a compatibility fallback;
-- protected-resource and authorization-server discovery metadata.
+This channel can expose bounded operational information needed by the GUI, such
+as runtime state, active MCP-session counts, managed agents, and collaboration
+projections when that mode is enabled.
 
-OAuth scopes gate tools, but scopes do not make unsafe actions safe. Workspace
-mode, repository-execution policy, explicit execution approval, and full-access
-policy remain additional checks.
+Private credentials, prompts, workspace file contents, OAuth token hashes, and
+model reasoning must not cross into the webview state.
 
-## Tool layers
+## Tool activity
 
-### Workspace harness
+The MCP harness records bounded tool-audit metadata independently from the
+private ChatGPT transcript. The audit record is intended for operational
+questions such as whether a tool ran, whether it succeeded, how long it took,
+and which access boundary applied.
 
-- `read`, `grep`, `find`, and `ls` inspect the configured workspace.
-- `edit` and `write` mutate workspace files when the token permits writes.
-- `run` exposes fixed Git inspection profiles and opt-in npm build/test
-  profiles.
-- `bash` exists only in explicit unrestricted mode.
+The dashboard may display that metadata when it is available through the
+current admin projection. It must not turn the audit stream into a prompt or
+result viewer.
 
-### Collaboration
+## Collaboration mode
 
-- `agent_chat_post` and `agent_chat_read` provide a small durable coordination
-  feed plus `pilink://agent-chat` notifications.
-- `agent_task_*` implements create/read/claim/input/release/finish lifecycle.
-- `collaboration_bootstrap`, role prompts, and resumable sessions bind
-  collaboration context server-side.
-- `agent_work_*` implements waiting, listing, and manager release.
-- `agent_memory_*` exposes governed read-only projections.
-- audit/progress services retain bounded operational metadata without tool
-  arguments, file contents, prompts, or results.
+Collaboration is additive. When enabled, PiLink may construct durable services
+for:
 
-### Supervised Pi agents
+- agent chat;
+- task ownership and leases;
+- memory projections;
+- work-loop coordination;
+- verified collaboration sessions;
+- supervised-agent orchestration.
 
-PiLink adds local agent runtime operations for spawn, list, status, output,
-follow-up, cancellation, and stop. These agents require a configured Pi Local
-provider/model. They do not create new ChatGPT conversations and do not grant a
-remote ChatGPT session extra authority.
+Those services use private state outside the workspace and remain subject to
+OAuth scope, identity verification, provider configuration where applicable,
+and the same filesystem/process access policy as the base harness.
 
-## Data placement
+When collaboration is disabled, its public tools are not registered. Existing
+private collaboration data can remain on disk without becoming visible through
+the Single-agent catalog.
 
-The configured workspace and private data directory must be separate. Durable
-coordination and audit data is namespaced by a project/workspace hash under the
-private data directory. Placing that directory under the workspace would let
-workspace tools inspect or alter security-relevant state, so collaboration
-services fail closed when the layout is unsafe.
+## Optional local Pi agent
 
-Typical private state includes:
+VSPiLink retains a loopback-managed provider-backed agent runtime for users who
+want it. This is an optional local capability, not a peer product mode.
 
-- server/JWT/bootstrap secrets;
-- OAuth clients, revocation, and refresh state;
-- agent chat, tasks, collaboration sessions, memory, and audit records;
-- generated hosting configuration and binary references;
-- Pi Local provider credentials stored by the supported credential path.
+The local agent has its own provider/model configuration and authentication.
+It can be ignored completely when the extension is used only as a graphical
+launcher for remote MCP access.
 
-Private state is host-local. Do not share a live data directory between
-machines through NFS or another distributed filesystem.
+## Hosting
 
-## Hosting model
+Hosting is independent from runtime mode and access mode. PiLink can operate
+with:
 
-The sidecar listens on loopback. HTTPS is terminated by an operator-managed
-reverse proxy, Cloudflare Named/Quick Tunnel, or the legacy direct `nip.io`
-path. Named Tunnel and existing-domain modes keep a stable OAuth issuer and
-resource origin. Quick Tunnel changes origin on restart and is therefore an
-evaluation mode.
+- a Cloudflare fixed/Named Tunnel;
+- an operator-managed HTTPS reverse proxy;
+- a temporary Cloudflare Quick Tunnel;
+- local-only serving;
+- the legacy `nip.io` path.
 
-## Execution modes
+A remote ChatGPT client needs a reachable HTTPS origin. Local-only operation is
+valid for same-machine clients but cannot be reached by ChatGPT web.
 
-| Mode | Filesystem | Processes |
-| --- | --- | --- |
-| Open folder | Canonical selected workspace only | Fixed read-only profiles; build/test only after explicit opt-in |
-| Open folder + execution approval | Same workspace boundary | Sensitive enabled profiles require fresh client elicitation |
-| Full access | All paths available to the PiLink OS user | General commands available to an explicitly authorized client |
-| Pi Local | Uses the selected workspace/runtime mode | Model calls use the configured provider |
+Quick Tunnel is intentionally temporary; recreating it changes the public
+origin and therefore invalidates assumptions tied to the old URL.
 
-None of these modes is an OS sandbox. Even a repository build executed from
-safe workspace mode can run arbitrary repository code as the PiLink user.
+## Process ownership
+
+A PiLink configuration/port should have one active owner. The CLI, VSPiLink,
+and managed hosting services must not race to run independent copies against
+the same private state.
+
+The extension supervisor distinguishes extension-owned processes from managed
+services and external listeners. Mode changes or reconfiguration refuse unsafe
+handoffs rather than silently starting a second owner.
+
+## Packaging boundary
+
+The VS Code extension ships the PiLink sidecar runtime but keeps the GUI source
+separate from the core server implementation:
+
+- `src/` — core server, OAuth, MCP, security, audit, and agent services;
+- `packages/vscode/src/` — VS Code process/orchestration layer;
+- `packages/vscode/media/app.js` — dashboard state/rendering logic;
+- `packages/vscode/media/app.css` — VS Code-themed dashboard styling;
+- `packages/vscode/test/` — extension contracts;
+- `docs/` — public operating and security guidance.
+
+The removed legacy dashboard is not packaged alongside the new control surface.
+There should be one active UI implementation, not two competing versions.
+
+## Design rule
+
+The architectural rule for future VSPiLink work is:
+
+> if a feature is not needed to choose a project, start/stop PiLink, understand
+> the connection state, or recover a common failure, it belongs under Advanced
+> or outside the main dashboard.
+
+That keeps the extension aligned with PiLink's original purpose while allowing
+the more specialized collaboration and local-agent capabilities to remain
+available for users who deliberately need them.
