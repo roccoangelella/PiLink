@@ -8,34 +8,39 @@ PiLink has two core server capability modes:
 | **Collaborative public chat** | `PI_RUNTIME_MODE=collaboration` | Authenticated agents must coordinate through PiLink's durable chat, tasks, work loop, memory projections, or remote supervised-agent controls. |
 
 `pilink start --mode vscode` is not a third server capability mode. It is only a
-handoff into the optional PiLink VS Code graphical control surface.
+handoff into the optional PiLink VS Code graphical launcher.
 
 ## VS Code launcher behavior
 
-A fresh VSPiLink installation uses **Single agent** for the ordinary graphical
-setup. The user does not have to understand the collaboration architecture
-before starting the MCP bridge.
+A fresh VSPiLink installation uses **Single agent**. More strongly, the current
+graphical setup and endpoint-reconfiguration paths always write
+`PI_RUNTIME_MODE=single` and Project-folder access.
 
-The main launcher no longer offers collaboration as a peer of the safe start
-buttons. **Quick start for ChatGPT** and **Local only** both use the single-agent
-workflow and Project-folder access.
+The user therefore does not choose a runtime mode in the normal VS Code product.
+The first-run choices are endpoint choices only:
 
-The retained **Advanced setup...** compatibility flow can still expose a
-workflow selector for operators who deliberately enter that path. An existing
-project already configured for collaboration is also detected rather than
-silently rewritten; the dashboard offers a clear switch back to Single agent.
+- stable Cloudflare fixed domain;
+- existing HTTPS domain;
+- temporary Quick Tunnel;
+- local only.
 
-The graphical dashboard no longer has a top-level ChatGPT-MCP-versus-Pi-Local
-mode selector. ChatGPT is treated as an ordinary remote MCP client of the
-server. The optional local Pi provider/runtime is separate from the core mode
-and is not promoted as a parallel graphical product.
+The launcher does not offer an **Enable collaboration** action. If it detects an
+existing configuration already set to `collaboration`, it labels that as an
+advanced existing state and offers **Switch to single-agent**. It does not
+silently rewrite the old configuration merely by opening the dashboard.
 
-Neither server mode chooses hosting, authorizes an OAuth client, or grants Full
-machine access.
+The optional local Pi provider/runtime is separate from the core mode and is not
+a parallel graphical product. Native VS Code MCP integration, provider-backed
+chat/agents, and manual OAuth management are likewise outside the focused
+launcher surface.
+
+Neither core server mode by itself chooses hosting, authorizes an OAuth client,
+or grants Full machine access.
 
 ## Choose from the CLI
 
-For scripts, services, and other automated launches, use an explicit core mode:
+For scripts, services, collaboration, and other operator-controlled launches,
+use an explicit core mode:
 
 ```bash
 # Original single-agent workspace bridge.
@@ -102,7 +107,7 @@ mode changes.
 
 The optional local Pi provider/runtime is separate from the core mode.
 
-In Single agent mode, the loopback-protected administration path can use a
+In Single agent mode, the loopback-protected administration layer can use a
 configured provider for local supervised work without registering the public
 collaboration toolset.
 
@@ -111,8 +116,8 @@ supervision services can be registered subject to their own authorization and
 private-state checks.
 
 Provider credentials never substitute for MCP OAuth, and MCP OAuth never signs
-the user into a model provider. The normal VS Code launcher does not ask users
-to configure this provider path.
+the user into a model provider. The focused VS Code launcher does not expose the
+provider/agent product surface.
 
 ## Headless and SSH operation
 
@@ -151,11 +156,10 @@ Existing collaboration data can remain in the private data directory while the
 server runs in Single agent mode; those collaboration services are simply not
 registered until Collaboration is enabled again.
 
-For an existing VS Code project already in Collaboration mode, the launcher
-shows that as an advanced configuration and can switch it back to Single agent.
-To enable Collaboration from a fresh setup, use the CLI or deliberately enter
-the retained Advanced setup compatibility flow rather than expecting a normal
-main-screen toggle.
+For an existing VS Code project already in Collaboration mode, the launcher can
+switch it back to Single agent. To enable Collaboration, use the PiLink CLI or
+another explicit operator path; graphical endpoint setup intentionally resets
+the project to Single agent.
 
 ## Troubleshooting
 
