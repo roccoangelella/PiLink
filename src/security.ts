@@ -1,6 +1,7 @@
 import net from "node:net";
 import type { NextFunction, Request, Response } from "express";
 import { normalizeHttpOrigin } from "./config.js";
+import { tryHandleLocalChatGptAuthorization } from "./oauth-local-approval.js";
 import { requestHostname } from "./oauth-owner.js";
 
 const MCP_TRANSPORT_PATHS = new Set(["/sse", "/sse/", "/messages", "/messages/"]);
@@ -51,6 +52,19 @@ export function createCorsAndOriginProtection(allowedOrigins: readonly string[])
       res.sendStatus(204);
       return;
     }
+
+    // During the short CLI-owned setup window, a validated ChatGPT OAuth
+    // authorization is completed only after the local terminal approves that
+    // exact request. Other OAuth flows fall through unchanged.
+    if (req.method === "GET" && req.path === "/oauth/authorize") {
+      void tryHandleLocalChatGptAuthorization(req, res)
+        .then((handled) => {
+          if (!handled && !res.headersSent) next();
+        })
+        .catch(next);
+      return;
+    }
+
     next();
   };
 }
