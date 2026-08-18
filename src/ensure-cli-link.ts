@@ -38,7 +38,7 @@ export function ensureCliLink(options: CliLinkOptions = {}): CliLinkResult {
   const homeDirectory = path.resolve(options.homeDirectory ?? os.homedir());
   const pathValue = options.pathValue ?? env.PATH ?? "";
   const nodeExecutable = path.resolve(options.nodeExecutable ?? process.execPath);
-  const cliTarget = path.resolve(options.cliTarget ?? path.join(repositoryRoot, "dist", "cli.js"));
+  const cliTarget = path.resolve(options.cliTarget ?? path.join(repositoryRoot, "dist", "terminal-launcher.js"));
   if (!fs.existsSync(cliTarget)) {
     throw new Error(`PiLink CLI build output is missing: ${cliTarget}`);
   }
