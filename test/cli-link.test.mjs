@@ -79,6 +79,42 @@ test("CLI linker refuses PATH directories outside the user's home", () => {
   }
 });
 
+test("CLI linker rejects a home PATH symlink that escapes outside the home", { skip: process.platform === "win32" }, () => {
+  const { home } = fixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pilink-cli-outside-"));
+  const linkedBin = path.join(home, "linked-bin");
+  fs.symlinkSync(outside, linkedBin, "dir");
+  try {
+    assert.equal(selectCliBinDirectory({
+      pathValue: linkedBin,
+      homeDirectory: home,
+      nodeExecutable: process.execPath,
+      platform: process.platform,
+    }), undefined);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("CLI linker prefers a stable user bin over a version-specific Node bin", () => {
+  const { home } = fixture();
+  const localBin = path.join(home, ".local", "bin");
+  const nodeBin = path.join(home, ".nvm", "versions", "node", "v24.18.0", "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  fs.mkdirSync(nodeBin, { recursive: true });
+  try {
+    assert.equal(selectCliBinDirectory({
+      pathValue: [nodeBin, localBin].join(path.delimiter),
+      homeDirectory: home,
+      nodeExecutable: path.join(nodeBin, process.platform === "win32" ? "node.exe" : "node"),
+      platform: process.platform,
+    }), localBin);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("CI and explicit opt-out disable source-build linking", () => {
   const { home, bin, cli } = fixture();
   try {
