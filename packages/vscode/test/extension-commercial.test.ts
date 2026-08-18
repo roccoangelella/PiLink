@@ -13,111 +13,123 @@ function methodSource(name: string): string {
   return source.slice(start, next === -1 ? source.length : next);
 }
 
-test("chat readiness requires authenticated admin runtime and isolates Named tunnel restart", () => {
-  const readiness = methodSource("ensureLocalChatRuntime");
-  assert.match(readiness, /readAdminStatus\(/);
-  assert.match(readiness, /inspectAdminAgentRuntime\(/);
-  assert.match(readiness, /waitForAdminRuntime\(/);
-  assert.match(readiness, /restartManagedChatServer\(snapshot\)/);
-  assert.match(readiness, /isLoopbackPortOccupied\(/);
-  assert.doesNotMatch(readiness, /startConfigured\(/);
-
-  const localStart = methodSource("setupChatOnce");
-  assert.match(localStart, /ensureLocalChatRuntime\(snapshot\)/);
-  assert.doesNotMatch(localStart, /openPanel\(/);
+test("the extension controller is an MCP launcher rather than a multiproduct agent surface", () => {
+  assert.doesNotMatch(source, /AgentAuthSidecar|OAuthClientService|WizardController|RuntimeModeStore/);
+  assert.doesNotMatch(source, /registerNativeMcpProvider|setupChat\(|sendChat\(|spawnAgent\(|configureAgents\(/);
+  assert.doesNotMatch(source, /startUnsafe\(|registerClient\(|connectNativeMcp\(|openCollaborationMonitor\(/);
+  assert.match(source, /ProcessSupervisor/);
+  assert.match(source, /createOwnerPairing/);
+  assert.match(source, /readAdminStatus/);
 });
 
-test("workspace selection uses real WorkspaceFolder URIs and never process.cwd", () => {
-  const scope = methodSource("configurationScope");
-  assert.match(scope, /vscode\.workspace\.workspaceFolders/);
-  assert.match(scope, /exactFolder\.uri/);
-  assert.match(scope, /containingFolder\.uri/);
-  assert.doesNotMatch(source, /process\.cwd\(\)/);
-  assert.match(methodSource("setupChatOnce"), /selectWorkspace\(undefined, true\)/);
+test("registered commands expose a small public surface plus state-aware dashboard actions", () => {
+  const register = methodSource("registerCommands");
+  for (const command of [
+    "openSidebar", "openPanel", "connectChatGpt", "stop", "guidedSetup", "openConfig", "refresh", "useWorkspace", "openDocs",
+    "manageTrust", "chooseWorkspace", "setupStable", "setupQuick", "setupLocal", "start", "restart", "openChatGpt", "copyMcpUrl", "openTerminal", "switchToSingle",
+  ]) assert.match(register, new RegExp(`register\\("${command}"`));
+  assert.doesNotMatch(register, /startUnsafe|configureAgents|spawnAgent|connectNativeMcp|registerClient/);
 });
 
-test("new chat tombstones the old selection and cancels before stop", () => {
-  const newChat = methodSource("newChat");
-  assert.match(newChat, /\+\+this\.chatSelectionGeneration/);
-  assert.match(newChat, /rememberDismissedChatAgent\(agentId\)/);
-  assert.ok(newChat.indexOf("cancelAdminAgentTurn") < newChat.indexOf("stopAdminAgent"));
-  assert.match(newChat, /finally \{/);
-  assert.match(newChat, /setActiveChatAgent\(undefined, selectionGeneration\)/);
+test("fresh graphical setup fixes single-agent and project-folder safety policy", () => {
+  const setup = methodSource("setupAndStart");
+  assert.match(setup, /runtimeMode: DEFAULT_RUNTIME_MODE/);
+  assert.match(setup, /provisionWizardConfiguration/);
+  assert.doesNotMatch(setup, /accessMode|unsafeFullAccess|allow-unsafe-full-access/);
 
-  const state = methodSource("localChatState");
-  assert.match(state, /dismissedChatAgentIds\.has/);
-  assert.match(state, /selectionGeneration !== this\.chatSelectionGeneration/);
+  const start = methodSource("startConfigured");
+  assert.match(start, /snapshot\.unsafeFullAccess/);
+  assert.match(start, /Reconfigure PiLink safely/);
+  assert.doesNotMatch(start, /allow-unsafe-full-access/);
 });
 
-test("ChatGPT MCP connection is primary and opens the real VS Code integrated browser", () => {
-  const browser = methodSource("openIntegratedBrowser");
-  assert.match(browser, /getCommands\(true\)/);
-  assert.match(browser, /workbench\.action\.browser\.open/);
-  assert.match(browser, /openToSide: true/);
-  assert.match(browser, /reuseUrlFilter\?: string/);
-  assert.match(browser, /\.\.\.\(reuseUrlFilter \? \{ reuseUrlFilter \} : \{\}\)/);
-  assert.match(browser, /vscode\.env\.openExternal/);
-  assert.match(browser, /Open in system browser/);
-  assert.match(browser, /action !== "Open in system browser"/);
-  assert.match(browser, /try \{/);
-  assert.match(browser, /catch \{/);
-  assert.doesNotMatch(browser, /simpleBrowser|webview|iframe/i);
+test("stable setup is the primary hosted path and does not expose legacy hosting products", () => {
+  const stable = methodSource("setupStable");
+  assert.match(stable, /Cloudflare fixed domain/);
+  assert.match(stable, /Existing HTTPS domain/);
+  assert.doesNotMatch(stable, /Quick Tunnel|Named Tunnel|nip\.io|Full access/);
 
-  const connect = methodSource("connectChatGpt");
-  assert.match(connect, /state\.externalMcp\.configured/);
-  assert.match(connect, /state\.externalMcp\.connected/);
-  assert.match(connect, /this\.openChatGpt\("work"\)/);
-  assert.match(connect, /this\.wizard\.resumeRuntime/);
-  assert.match(connect, /clipboard\.writeText\(state\.mcpUrl\)/);
-  assert.match(connect, /destination: "work"/);
-  assert.doesNotMatch(connect, /configureAgents/);
-
-  const openChat = methodSource("openChatGptInVsCode");
-  assert.match(openChat, /this\.openChatGpt\("work"\)/);
-
-  const navigate = methodSource("openChatGpt");
-  assert.match(navigate, /chatGptNavigation\(destination\)/);
-  assert.match(navigate, /navigation\.reuseUrlFilter/);
-  assert.doesNotMatch(navigate, /"https:\/\/chatgpt\.com\/\*\*"/);
-
-  const pairing = methodSource("pairWizardOwner");
-  assert.match(pairing, /requirePersistentBrowserStorage\(\)/);
-  assert.match(pairing, /pairing\.verificationCode/);
-  assert.match(pairing, /clipboard\.writeText\(pairing\.verificationCode\)/);
-  assert.match(pairing, /searchParams\.set\("continue", navigation\.url\)/);
-  assert.match(pairing, /openIntegratedBrowser\(/);
-
-  const runtime = methodSource("startWizardRuntime");
-  assert.match(runtime, /PILINK_OAUTH_SETUP_DRIVER: "vscode"/);
-
-  const storage = methodSource("requirePersistentBrowserStorage");
-  assert.match(storage, /storage !== "ephemeral"/);
-  assert.match(storage, /workbench\.browser\.dataStorage/);
-
-  const monitor = methodSource("openCollaborationMonitor");
-  assert.match(monitor, /shellArgs: \[cliPath, "chat"\]/);
-  assert.match(monitor, /PILINK_CONFIG: snapshot\.configPath/);
-  assert.match(monitor, /samePath\(snapshot\.workspace, workspacePath\)/);
-  assert.match(monitor, /isPathInside\(snapshot\.workspace, snapshot\.dataDir\)/);
-  assert.doesNotMatch(monitor, /configureAgents|setupChat/);
+  const reconfigure = methodSource("reconfigure");
+  assert.match(reconfigure, /Cloudflare fixed domain/);
+  assert.match(reconfigure, /Existing HTTPS domain/);
+  assert.match(reconfigure, /Cloudflare Quick Tunnel/);
+  assert.match(reconfigure, /Local only/);
+  assert.doesNotMatch(reconfigure, /Full access|Public chat & orchestration|model provider/);
 });
 
-
-test("fixed-domain wizard provisions Cloudflare from one protected API token", () => {
+test("fixed-domain setup accepts one protected Cloudflare token and never persists the account token", () => {
   const collect = methodSource("collectHostingSelection");
-  const fixedStart = collect.indexOf('if (kind === "cloudflare-fixed")');
-  const fixedEnd = collect.indexOf('if (kind === "custom-domain")', fixedStart);
-  assert.ok(fixedStart >= 0 && fixedEnd > fixedStart);
-  const fixed = collect.slice(fixedStart, fixedEnd);
-  assert.match(fixed, /Cloudflare API token/);
-  assert.match(fixed, /password: true/);
-  assert.match(fixed, /provisionFixedDomainViaCli/);
-  assert.doesNotMatch(fixed, /Cloudflare tunnel UUID|selectCloudflareCredential|Route is configured/);
+  assert.match(collect, /Cloudflare API token/);
+  assert.match(collect, /password: true/);
+  assert.match(collect, /provisionFixedDomainViaCli/);
 
   const provision = methodSource("provisionFixedDomainViaCli");
   assert.match(provision, /runJsonCli/);
   assert.match(provision, /"fixed-domain-provision"/);
   assert.match(provision, /environment: \{ CLOUDFLARE_API_TOKEN: apiToken \}/);
-  assert.match(provision, /cloudflareCredentials\.store\("tunnel-token-file", tokenFile\)/);
-  assert.doesNotMatch(provision, /args: \[[^\]]*apiToken/s);
+  assert.match(provision, /isPathInside\(tokenDirectory, tokenFile\)/);
+  assert.doesNotMatch(provision, /writePrivateFile\([^)]*apiToken|updateEnvValue\([^)]*apiToken/);
+});
+
+test("workspace selection uses VS Code folders and never process.cwd", () => {
+  const scope = methodSource("configurationScope");
+  assert.match(scope, /vscode\.workspace\.workspaceFolders/);
+  assert.match(scope, /exact\.uri/);
+  assert.match(scope, /containing\.uri/);
+  assert.doesNotMatch(source, /process\.cwd\(\)/);
+  assert.match(methodSource("requireWorkspace"), /selectWorkspace\(undefined, true\)/);
+});
+
+test("ChatGPT connection uses local owner verification and a real integrated browser", () => {
+  const connect = methodSource("connectChatGpt");
+  assert.match(connect, /state\.externalMcp\.connected/);
+  assert.match(connect, /clipboard\.writeText\(state\.mcpUrl\)/);
+  assert.match(connect, /pairOwner\(state\.publicUrl, snapshot, "plugins"\)/);
+  assert.doesNotMatch(connect, /configureAgents|registerExternalClient|client_secret/);
+
+  const pairing = methodSource("pairOwner");
+  assert.match(pairing, /createOwnerPairing/);
+  assert.match(pairing, /pairing\.verificationCode/);
+  assert.match(pairing, /clipboard\.writeText\(pairing\.verificationCode\)/);
+  assert.match(pairing, /searchParams\.set\("continue", navigation\.url\)/);
+  assert.match(pairing, /openIntegratedBrowser/);
+
+  const browser = methodSource("openIntegratedBrowser");
+  assert.match(browser, /workbench\.action\.browser\.open/);
+  assert.match(browser, /openToSide: true/);
+  assert.match(browser, /vscode\.env\.openExternal/);
+  assert.doesNotMatch(browser, /simpleBrowser|iframe/i);
+});
+
+test("Quick Tunnel authorization is bound to the observed transient origin", () => {
+  const state = methodSource("dashboardState");
+  assert.match(state, /QUICK_TUNNEL_AUTHORIZED_ORIGIN_KEY/);
+  assert.match(state, /quickAuthorizedOrigin === publicUrl/);
+  assert.match(state, /quickTunnel/);
+  assert.match(state, /durableAuthorization/);
+});
+
+test("the extension refuses to manage processes it did not start", () => {
+  const stop = methodSource("stopConfigured");
+  assert.match(stop, /this\.supervisor\.isActive/);
+  assert.match(stop, /running outside this VS Code session/);
+
+  const restart = methodSource("restartConfigured");
+  assert.match(restart, /running outside this VS Code session/);
+  assert.match(restart, /snapshot\.unsafeFullAccess/);
+
+  const switchMode = methodSource("switchToSingle");
+  assert.match(switchMode, /detectExternalRuntime/);
+  assert.match(switchMode, /PI_RUNTIME_MODE/);
+  assert.match(switchMode, /"single"/);
+});
+
+test("activity monitoring remains metadata-only", () => {
+  const state = methodSource("dashboardState");
+  assert.match(state, /readAdminCollaboration/);
+  assert.match(state, /activity = collaboration\.activity\.slice\(-8\)/);
+  assert.match(state, /tool: item\.tool/);
+  assert.match(state, /durationMs: item\.durationMs/);
+  assert.match(state, /outcome: item\.outcome/);
+  assert.doesNotMatch(state, /item\.arguments|item\.result|item\.prompt|item\.path/);
 });
