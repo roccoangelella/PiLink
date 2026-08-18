@@ -35,6 +35,10 @@ All notable PiLink changes are documented in this file.
   stdout/stderr. Interactive setup therefore keeps normal prompts working,
   including the hidden Cloudflare API-token prompt, while routine runtime logs
   remain filtered.
+- Interactive ChatGPT DCR setup now uses a concise four-step guide and confirms
+  the incoming connection directly in the local PiLink terminal instead of
+  requiring the browser pairing URL/code round trip. Headless and VSPiLink
+  flows keep their compatible local-owner verification paths.
 
 ### Security
 
@@ -44,6 +48,11 @@ All notable PiLink changes are documented in this file.
   explicit development-only override is set.
 - Linux helper bootstrap pins official `cloudflared` 2026.7.2 and Caddy 2.11.4
   assets by architecture and rejects unverified or remote plain-HTTP downloads.
+- Interactive public ChatGPT OAuth authorization is now gated by an explicit
+  local `y/N` decision bound to the exact registered client, callback, scope,
+  state, and S256 PKCE challenge. Denied clients are disabled, concurrent
+  mismatched requests are rejected, and successful approval closes the
+  temporary DCR registration window immediately.
 - Manual, read-only release workflow with no publishing credentials.
 
 Release dates and version headings are added only when a tested commit is
