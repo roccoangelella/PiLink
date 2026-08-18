@@ -71,7 +71,8 @@ export function selectCliBinDirectory(options: {
     .split(path.delimiter)
     .map((entry) => entry.trim())
     .filter(Boolean)
-    .map((entry) => path.resolve(entry));
+    .map((entry) => path.resolve(entry))
+    .filter((entry) => !isNpmInjectedBin(entry, options.platform));
   const key = (value: string) => options.platform === "win32" ? value.toLowerCase() : value;
   const pathKeys = new Set(pathEntries.map(key));
   const preferred = [
@@ -163,6 +164,12 @@ function isWithinHome(candidate: string, homeDirectory: string, platform: NodeJS
   const normalize = (value: string) => platform === "win32" ? value.toLowerCase() : value;
   const relative = path.relative(normalize(path.resolve(homeDirectory)), normalize(path.resolve(candidate)));
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function isNpmInjectedBin(candidate: string, platform: NodeJS.Platform): boolean {
+  const normalized = candidate.replaceAll("\\", "/");
+  const comparable = platform === "win32" ? normalized.toLowerCase() : normalized;
+  return comparable.endsWith("/node_modules/.bin") || comparable.includes("/node_modules/.bin/");
 }
 
 function isDanglingSymlink(targetPath: string): boolean {
