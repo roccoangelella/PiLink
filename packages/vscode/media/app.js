@@ -205,15 +205,26 @@
     const online = isOnline();
     const external = isExternalRuntime();
     if (currentState.unsafeFullAccess) {
+      if (online && external) {
+        return {
+          eyebrow: "SAFETY CHECK",
+          title: "External Full-access PiLink detected",
+          description: "This instance was started outside VS Code with unrestricted machine access. VS Code will monitor it but will not take ownership or change its configuration.",
+          tone: "warning",
+          badge: { label: "Full access · external", tone: "danger" },
+          actions: [{ label: "Open config", command: "openConfig", variant: "ghost" }],
+          note: "Stop or reconfigure this instance using the CLI or service manager that started it.",
+        };
+      }
       return {
         eyebrow: "SAFETY CHECK",
         title: online ? "Full machine access is running" : "Full machine access is saved",
         description: online
-          ? "This configuration is outside the normal graphical workflow. Reconfigure it for project-folder access after stopping the current instance."
+          ? "This configuration is outside the normal graphical workflow. Stop it before returning to project-folder access."
           : "PiLink will not start a saved Full-access configuration from the graphical workflow.",
         tone: "warning",
         badge: { label: "Full access", tone: "danger" },
-        actions: online && !external
+        actions: online
           ? [{ label: "Stop PiLink", command: "stop", variant: "primary" }]
           : [
               { label: "Reconfigure safely…", command: "reconfigure", variant: "primary" },
