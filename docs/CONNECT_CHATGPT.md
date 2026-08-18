@@ -10,11 +10,11 @@ ChatGPT Work -> installed/private PiLink plugin -> OAuth -> PiLink MCP endpoint
                                             selected project
 ```
 
-VSPiLink is optional. When installed, it replaces most of the CLI setup with a
-small VS Code control surface. It does not embed ChatGPT or read its page,
-cookies, transcript, composer, or reasoning.
+The PiLink VS Code extension is optional. When installed, it replaces most of
+the ordinary CLI startup with a small launcher/status surface. It does not
+embed ChatGPT or read its page, cookies, transcript, composer, or reasoning.
 
-## Fast path with VSPiLink
+## Fast path with the VS Code launcher
 
 For a first connection where a temporary HTTPS hostname is acceptable:
 
@@ -36,18 +36,19 @@ Quick start deliberately uses:
 - no unrestricted shell;
 - a Cloudflare Quick Tunnel for the public HTTPS origin.
 
-A Quick Tunnel is temporary. Its public hostname changes when it is recreated,
-so use a stable endpoint for a connection you want to keep across restarts.
+A Quick Tunnel is temporary. Its public hostname changes when it is recreated.
 
-## Stable deployment with VSPiLink
+## Stable deployment
 
-Use **Stable endpoint...** on first run, or **Advanced -> Change hosting...**
-afterward, when you want a durable public origin.
+For a durable public origin, deliberately enter **Advanced setup...** from the
+PiLink launcher. The retained advanced setup supports stable Cloudflare
+fixed/Named-Tunnel deployments and an existing HTTPS domain/reverse proxy, as
+well as legacy hosting paths.
 
-The advanced hosting flow supports the PiLink hosting backends, including a
-Cloudflare fixed domain / Named Tunnel and an existing HTTPS domain or reverse
-proxy. Keep **Project folder only** access unless you deliberately need the
-Full-machine mode described in the security documentation.
+Because this is the compatibility/operator flow, it can expose extra workflow
+and access choices. Review them explicitly. Keep **Single agent** and **Project
+folder only** unless you actually intend to enable collaboration or broader
+machine authority.
 
 After the server and public endpoint are healthy, return to the main card and
 select **Connect ChatGPT**.
@@ -69,7 +70,7 @@ In ChatGPT Work:
 1. Open the available **Plugins** controls.
 2. Install or connect the PiLink entry supplied for your deployment.
 3. If you are the deployment owner and creation/import controls are available,
-   configure that entry with the PiLink MCP URL shown by VSPiLink.
+   configure that entry with the PiLink MCP URL shown by the launcher.
 4. If no PiLink entry or permitted creation/import control exists, ask the
    workspace administrator or plugin publisher to make it available.
 
@@ -81,12 +82,13 @@ The repository directory `plugins/pilink` is a separate local Codex plugin used
 for local development. It does not provision or replace the private ChatGPT
 plugin entry for a remote PiLink deployment.
 
-## OAuth with VSPiLink
+## OAuth with the VS Code launcher
 
-VSPiLink keeps the public endpoint and local machine authorization separate.
-Knowing the public MCP URL is not enough to take control of the machine.
+The extension keeps the public endpoint and local machine authorization
+separate. Knowing the public MCP URL is not enough to take control of the
+machine.
 
-When VSPiLink begins owner pairing it:
+When the extension begins owner pairing it:
 
 1. asks the local PiLink server for a short-lived, one-use pairing page;
 2. shows a separate local verification code in VS Code;
@@ -109,7 +111,8 @@ because no MCP transport is currently open.
 ### Manual compatibility fallback
 
 Keep the manual path only for a builder that explicitly requires user-defined
-OAuth client values and cannot use the automatic registration flow:
+OAuth client values and cannot use the automatic registration flow. This path
+is an operator/compatibility feature; it is not a normal dashboard action.
 
 1. copy the exact Callback/Redirect URL displayed by that builder;
 2. use PiLink's manual OAuth-client registration path;
@@ -121,16 +124,16 @@ OAuth client values and cannot use the automatic registration flow:
 Never paste the client secret into a ChatGPT conversation, repository, issue,
 screenshot, or log. Treat it as a password.
 
-## Understand the VSPiLink connection states
+## Understand the connection states
 
 The simplified dashboard separates durable OAuth from a live MCP transport:
 
 | Dashboard state | Meaning |
 | --- | --- |
 | **Not connected** | No ChatGPT OAuth client has been prepared yet. |
-| **Authorization pending** | The client exists, but OAuth has not finished. Continue the existing flow. |
+| **Authorize** / authorization pending | The client exists, but OAuth has not finished. Continue the existing flow. |
 | **OAuth ready** | Authorization is stored and can survive a server restart. |
-| **Connected** | At least one MCP transport is active right now. |
+| **Connected** / **N active** | At least one MCP transport is active right now. |
 
 `OAuth ready` without `Connected` is normal. ChatGPT does not need to keep a
 transport open continuously; it can create one when it invokes PiLink tools.
@@ -147,18 +150,22 @@ status, package scripts, and the tests you would run. Do not modify files.
 Confirm the reported project before authorizing writes or repository execution.
 A connected plugin does not mean every ChatGPT message will invoke PiLink.
 
-## What VSPiLink monitors
+## What the VS Code launcher monitors
 
-The main dashboard shows bridge status and a small amount of metadata-only MCP
-activity: tool name, outcome, duration, and access mode.
+The main dashboard always shows the bridge lifecycle: local server state,
+endpoint state, and ChatGPT authorization/connection state.
 
-It does not display prompts, file paths, tool arguments, tool results, or the
-ChatGPT transcript.
+When the current administrative projection supplies MCP audit metadata, it can
+also show a small bounded recent-activity list with fields such as tool name,
+outcome, duration, and time. In server modes where that projection is not
+available, the activity section remains absent.
 
-If you explicitly enable PiLink's **Public chat & orchestration** workflow, the
-separate Agent & Task Monitor can show the coordination objects published
-through PiLink's collaboration tools. That advanced workflow is not required
-for ordinary single-agent workspace access.
+The dashboard does not display prompts, file paths, tool arguments, tool
+results, or the ChatGPT transcript.
+
+PiLink's collaboration services remain available to operators through the CLI
+and compatibility paths when explicitly enabled. They are not a second chat or
+task product inside the normal VS Code launcher.
 
 ## Returning after a restart
 
@@ -173,13 +180,13 @@ Quick Tunnel is different: recreating it gives PiLink a different public
 origin, so a client configured with the previous URL must be updated or replaced
 with a connection to the new origin.
 
-## Other PiLink clients
+## Other PiLink clients and compatibility paths
 
-The same core MCP server can also be used by other supported clients. Codex and
-VS Code's optional native MCP provider use their own client configuration and
-should not be confused with the ChatGPT Work plugin connection. Likewise, the
-optional local Pi provider/runtime uses separate provider credentials.
+The same core MCP server can be used by other supported clients. The extension
+backend also retains native VS Code MCP and local provider-backed agent support
+for compatibility/operator workflows, but those are intentionally not promoted
+as parallel products in the normal launcher.
 
-For the extension workflow see [VSPiLink](VSCODE_EXTENSION.md). For trust and
-execution boundaries see [Security model](SECURITY_MODEL.md). For the complete
-server model see [Architecture](ARCHITECTURE.md).
+For the extension workflow see [PiLink VS Code extension](VSCODE_EXTENSION.md).
+For trust and execution boundaries see [Security model](SECURITY_MODEL.md). For
+the complete server model see [Architecture](ARCHITECTURE.md).
