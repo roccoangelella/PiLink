@@ -64,26 +64,10 @@
         active: externalMcp.active === true,
         activeSessions: integer(externalMcp.activeSessions),
       },
-      activity: normalizeActivity(source.activity),
       version: text(source.version, 80),
       nodeVersion: text(source.nodeVersion, 80),
       error: text(source.error, 1200),
     };
-  }
-
-  function normalizeActivity(value) {
-    if (!Array.isArray(value)) return [];
-    return value.slice(-8).flatMap(function (entry) {
-      const item = record(entry);
-      const tool = text(item.tool, 120);
-      if (!tool) return [];
-      return [{
-        tool: tool,
-        outcome: item.outcome === "error" ? "error" : "success",
-        durationMs: integer(item.durationMs),
-        startedAt: text(item.startedAt, 100),
-      }];
-    });
   }
 
   function render() {
@@ -98,7 +82,6 @@
       if (currentState.unsafeFullAccess) shell.appendChild(renderFullAccessNotice());
       if (currentState.runtimeMode === "collaboration") shell.appendChild(renderCollaborationNotice());
       if (isExternalRuntime()) shell.appendChild(renderExternalRuntimeNotice());
-      if (currentState.activity.length) shell.appendChild(renderActivity());
       shell.appendChild(renderAdvanced());
     }
     shell.appendChild(renderFooter());
@@ -364,30 +347,6 @@
     return notice;
   }
 
-  function renderActivity() {
-    const section = el("section", "section-card");
-    const header = el("div", "section-card__header");
-    const copy = el("div", "");
-    copy.appendChild(el("div", "eyebrow", "RECENT ACTIVITY"));
-    copy.appendChild(el("h3", "section-card__title", "MCP calls"));
-    header.appendChild(copy);
-    header.appendChild(chip("Metadata only", "neutral"));
-    section.appendChild(header);
-    const list = el("div", "activity-list");
-    currentState.activity.slice(-5).reverse().forEach(function (item) {
-      const row = el("div", "activity-row");
-      const main = el("div", "activity-row__main");
-      main.appendChild(el("span", "activity-row__tool", item.tool));
-      main.appendChild(el("span", "activity-row__meta", activityMeta(item)));
-      row.appendChild(main);
-      row.appendChild(chip(item.outcome === "error" ? "Error" : "OK", item.outcome === "error" ? "danger" : "success"));
-      list.appendChild(row);
-    });
-    section.appendChild(list);
-    section.appendChild(el("p", "section-card__hint", "Arguments, file paths, prompts, and results are intentionally not shown here."));
-    return section;
-  }
-
   function renderAdvanced() {
     const details = el("details", "advanced");
     details.dataset.stateKey = "advanced";
@@ -557,16 +516,6 @@
     } catch {
       return value.length > 70 ? value.slice(0, 67) + "…" : value;
     }
-  }
-
-  function activityMeta(item) {
-    const parts = [];
-    if (item.durationMs) parts.push(item.durationMs + " ms");
-    if (item.startedAt) {
-      const date = new Date(item.startedAt);
-      if (!Number.isNaN(date.getTime())) parts.push(date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
-    }
-    return parts.join(" · ");
   }
 
   function chip(label, tone) {
