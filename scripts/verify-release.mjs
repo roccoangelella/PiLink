@@ -42,7 +42,8 @@ const requiredNpmPluginEntries = [
 const userFacingSourceFiles = [
   "packages/vscode/package.json",
   "packages/vscode/README.md",
-  "packages/vscode/media/main.js",
+  "packages/vscode/media/app.js",
+  "packages/vscode/media/app.css",
 ];
 const italianUiPattern = /\b(?:Configurazione assistita|Connetti|Accedi|Avvia|Arresta|Riprova|Attenzione|Apri|Copia|Riavvia|Reimposta|Impostazioni|Agenti|Nessuna conversazione|In attesa|Cartella aperta|Accesso completo|Non collegato|È necessario intervenire)\b/iu;
 const embeddedDeploymentPatterns = [
@@ -224,6 +225,13 @@ function shouldCaptureMarkdown(normalized) {
     || (normalized.startsWith("extension/runtime/docs/") && normalized.endsWith(".md"));
 }
 
+function shouldCapturePackagedUi(normalized) {
+  return normalized === "extension/package.json"
+    || normalized === "extension/media/app.js"
+    || normalized === "extension/media/app.css"
+    || normalized === "extension/readme.md";
+}
+
 async function inspectVsix(file, expected) {
   const budget = releaseArchiveBudgets.vsix;
   assertArchiveBudget("VSIX", { compressedBytes: fs.statSync(file).size }, budget);
@@ -271,9 +279,7 @@ async function inspectVsix(file, expected) {
         return;
       }
 
-      const capture = normalized === "extension/package.json"
-        || normalized === "extension/media/main.js"
-        || shouldCaptureMarkdown(normalized);
+      const capture = shouldCapturePackagedUi(normalized) || shouldCaptureMarkdown(normalized);
       zip.openReadStream(entry, (error, stream) => {
         if (error || !stream) {
           abort(error ?? new Error(`Unable to inspect ${normalized}`));
@@ -308,9 +314,7 @@ async function inspectVsix(file, expected) {
             try {
               if (normalized === "extension/package.json") extensionPackage = JSON.parse(content);
               if (shouldCaptureMarkdown(normalized)) markdownFiles.set(normalized, content);
-              if (normalized === "extension/package.json" || normalized === "extension/media/main.js" || normalized === "extension/readme.md") {
-                packagedUi.set(normalized, content);
-              }
+              if (shouldCapturePackagedUi(normalized)) packagedUi.set(normalized, content);
             } catch (parseError) {
               abort(parseError);
               return;
@@ -329,6 +333,12 @@ async function inspectVsix(file, expected) {
   }
   for (const required of requiredVsixEntries) {
     if (!archiveEntries.has(required)) fail(`VSIX is missing required release document ${required}`);
+  }
+  for (const required of ["extension/media/app.js", "extension/media/app.css"]) {
+    if (!archiveEntries.has(required)) fail(`VSIX is missing dashboard asset ${required}`);
+  }
+  for (const legacy of ["extension/media/main.js", "extension/media/styles.css"]) {
+    if (archiveEntries.has(legacy)) fail(`VSIX still contains legacy dashboard asset ${legacy}`);
   }
   for (const [name, content] of packagedUi) assertEnglishUi(content, name);
   verifyVirtualMarkdownLinks(markdownFiles, archiveEntries);
@@ -441,7 +451,7 @@ function inspectInstallers(expected) {
 
 function inspectReleaseGuide() {
   const guide = fs.readFileSync(path.join(releaseDirectory, "INSTALL.md"), "utf8");
-  for (const required of ["./install.sh", ".\\install.ps1", "SHA256SUMS", "Secondary Side Bar", "VSPiLink: Connect ChatGPT via MCP"]) {
+  for (const required of ["./install.sh", ".\\install.ps1", "SHA256SUMS", "Secondary Side Bar", "PiLink"]) {
     if (!guide.includes(required)) fail(`release INSTALL.md is missing required guidance: ${required}`);
   }
 }
