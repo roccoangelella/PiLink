@@ -25,10 +25,9 @@
   if (root) {
     root.addEventListener("click", function (event) {
       const target = event.target instanceof Element ? event.target.closest("[data-command]") : null;
-      if (!target || target.hasAttribute("disabled")) return;
+      if (!target || target.hasAttribute("disabled") || currentState.operation) return;
       const command = target.getAttribute("data-command");
-      if (!command) return;
-      vscode.postMessage({ type: "command", command: command });
+      if (command) vscode.postMessage({ type: "command", command: command });
     });
     root.addEventListener("toggle", function (event) {
       const details = event.target;
@@ -52,6 +51,7 @@
         status: text(process.status, 40).toLowerCase() || "stopped",
         mode: text(process.mode, 120),
       },
+      operation: text(source.operation, 160),
       runtimeMode: source.runtimeMode === "collaboration" ? "collaboration" : "single",
       hostingMode: text(source.hostingMode, 80).toLowerCase(),
       unsafeFullAccess: source.unsafeFullAccess === true,
@@ -90,20 +90,17 @@
     if (!root) return;
     const shell = el("main", "shell");
     shell.appendChild(renderHeader());
-
-    if (!currentState.trustKnown) {
-      shell.appendChild(renderLoading());
-    } else if (!currentState.trusted) {
-      shell.appendChild(renderTrustGate());
-    } else {
+    if (!currentState.trustKnown) shell.appendChild(renderLoading());
+    else if (!currentState.trusted) shell.appendChild(renderTrustGate());
+    else {
       shell.appendChild(renderPrimaryCard());
       if (currentState.error) shell.appendChild(renderError(currentState.error));
       if (currentState.unsafeFullAccess) shell.appendChild(renderFullAccessNotice());
       if (currentState.runtimeMode === "collaboration") shell.appendChild(renderCollaborationNotice());
+      if (isExternalRuntime()) shell.appendChild(renderExternalRuntimeNotice());
       if (currentState.activity.length) shell.appendChild(renderActivity());
       shell.appendChild(renderAdvanced());
     }
-
     shell.appendChild(renderFooter());
     root.replaceChildren(shell);
   }
@@ -157,7 +154,6 @@
     if (model.badge) heading.appendChild(chip(model.badge.label, model.badge.tone));
     card.appendChild(heading);
     card.appendChild(el("p", "primary-card__description", model.description));
-
     if (model.actions.length) {
       const actions = el("div", "actions");
       model.actions.forEach(function (action) {
@@ -171,12 +167,11 @@
   }
 
   function primaryModel() {
-    const transition = currentState.process.status === "starting" || currentState.process.status === "stopping";
-    if (transition) {
+    if (currentState.operation) {
       return {
         eyebrow: "PILINK",
-        title: currentState.process.status === "stopping" ? "Stopping PiLink…" : "Starting PiLink…",
-        description: "Applying the project configuration and checking the bridge.",
+        title: currentState.operation + "…",
+        description: "This operation is in progress. PiLink disables other state-changing actions until it finishes.",
         tone: "progress",
         badge: { label: "Working", tone: "progress" },
         actions: [],
@@ -208,20 +203,18 @@
     }
 
     const online = isOnline();
+    const external = isExternalRuntime();
     if (currentState.unsafeFullAccess) {
       return {
         eyebrow: "SAFETY CHECK",
         title: online ? "Full machine access is running" : "Full machine access is saved",
         description: online
-          ? "This configuration is outside the normal graphical workflow. Stop it or reconfigure PiLink for project-folder access."
+          ? "This configuration is outside the normal graphical workflow. Reconfigure it for project-folder access after stopping the current instance."
           : "PiLink will not start a saved Full-access configuration from the graphical workflow.",
         tone: "warning",
         badge: { label: "Full access", tone: "danger" },
-        actions: online
-          ? [
-              { label: "Stop PiLink", command: "stop", variant: "primary" },
-              { label: "Reconfigure safely…", command: "reconfigure", variant: "secondary" },
-            ]
+        actions: online && !external
+          ? [{ label: "Stop PiLink", command: "stop", variant: "primary" }]
           : [
               { label: "Reconfigure safely…", command: "reconfigure", variant: "primary" },
               { label: "Open config", command: "openConfig", variant: "ghost" },
@@ -246,13 +239,17 @@
     if (!isPublicEndpoint()) {
       return {
         eyebrow: "MCP BRIDGE",
-        title: "PiLink is running locally",
-        description: "The bridge is healthy on this machine. ChatGPT Work needs a public HTTPS endpoint to reach it.",
-        badge: { label: "Local", tone: "success" },
-        actions: [
-          { label: "Configure remote endpoint", command: "setupStable", variant: "primary" },
-          { label: "Stop", command: "stop", variant: "secondary" },
-        ],
+        title: external ? "PiLink is already running locally" : "PiLink is running locally",
+        description: external
+          ? "VS Code detected a PiLink instance started elsewhere. It can monitor it, but it will not take ownership of that process."
+          : "The bridge is healthy on this machine. ChatGPT Work needs a public HTTPS endpoint to reach it.",
+        badge: { label: external ? "Detected" : "Local", tone: "success" },
+        actions: external
+          ? []
+          : [
+              { label: "Configure remote endpoint", command: "setupStable", variant: "primary" },
+              { label: "Stop", command: "stop", variant: "secondary" },
+            ],
       };
     }
 
@@ -265,7 +262,7 @@
         actions: [
           { label: "Connect ChatGPT", command: "connectChatGpt", variant: "primary" },
           { label: "Copy MCP URL", command: "copyMcpUrl", variant: "secondary" },
-          { label: "Stop", command: "stop", variant: "ghost" },
+          ...(!external ? [{ label: "Stop", command: "stop", variant: "ghost" }] : []),
         ],
       };
     }
@@ -278,7 +275,7 @@
         badge: { label: "Authorization pending", tone: "warning" },
         actions: [
           { label: "Continue connection", command: "connectChatGpt", variant: "primary" },
-          { label: "Stop", command: "stop", variant: "secondary" },
+          ...(!external ? [{ label: "Stop", command: "stop", variant: "secondary" }] : []),
         ],
       };
     }
@@ -292,7 +289,7 @@
         badge: { label: sessions ? sessions + " active" : "Connected", tone: "success" },
         actions: [
           { label: "Open ChatGPT Work", command: "openChatGpt", variant: "primary" },
-          { label: "Stop PiLink", command: "stop", variant: "secondary" },
+          ...(!external ? [{ label: "Stop PiLink", command: "stop", variant: "secondary" }] : []),
         ],
       };
     }
@@ -305,7 +302,7 @@
       actions: [
         { label: "Open ChatGPT Work", command: "openChatGpt", variant: "primary" },
         { label: "Copy MCP URL", command: "copyMcpUrl", variant: "secondary" },
-        { label: "Stop", command: "stop", variant: "ghost" },
+        ...(!external ? [{ label: "Stop", command: "stop", variant: "ghost" }] : []),
       ],
     };
   }
@@ -343,7 +340,16 @@
     body.appendChild(el("strong", "notice__title", "Advanced collaboration configuration detected"));
     body.appendChild(el("p", "notice__copy", "This project uses PiLink's collaboration tool catalog. The VS Code launcher now defaults to the simpler single-agent bridge."));
     notice.appendChild(body);
-    notice.appendChild(commandButton("Switch to single-agent", "switchToSingle", "secondary"));
+    if (!isExternalRuntime()) notice.appendChild(commandButton("Switch to single-agent", "switchToSingle", "secondary"));
+    return notice;
+  }
+
+  function renderExternalRuntimeNotice() {
+    const notice = el("section", "notice notice--info");
+    const body = el("div", "notice__body");
+    body.appendChild(el("strong", "notice__title", "PiLink was started outside VS Code"));
+    body.appendChild(el("p", "notice__copy", "This extension will monitor the detected service but will not stop, restart, or reconfigure a process it does not own. Use the launcher or service manager that started it."));
+    notice.appendChild(body);
     return notice;
   }
 
@@ -356,7 +362,6 @@
     header.appendChild(copy);
     header.appendChild(chip("Metadata only", "neutral"));
     section.appendChild(header);
-
     const list = el("div", "activity-list");
     currentState.activity.slice(-5).reverse().forEach(function (item) {
       const row = el("div", "activity-row");
@@ -387,16 +392,17 @@
     detailRow(info, "Project", workspaceLabel());
     detailRow(info, "Hosting", hostingLabel(currentState.hostingMode));
     detailRow(info, "Workflow", currentState.runtimeMode === "collaboration" ? "Collaboration (advanced)" : "Single agent");
+    detailRow(info, "Process", isExternalRuntime() ? "Detected outside VS Code" : currentState.process.mode || (isOnline() ? "Managed by VS Code" : "Stopped"));
     detailRow(info, "MCP endpoint", currentState.mcpUrl ? compactUrl(currentState.mcpUrl) : "Not available");
     body.appendChild(info);
 
     const actions = el("div", "button-row");
-    if (isOnline()) actions.appendChild(commandButton("Restart", "restart", "secondary"));
-    if (isOnline()) actions.appendChild(commandButton("Stop", "stop", "secondary"));
-    actions.appendChild(commandButton("Reconfigure endpoint…", "reconfigure", "secondary"));
+    if (isOnline() && !isExternalRuntime()) actions.appendChild(commandButton("Restart", "restart", "secondary"));
+    if (isOnline() && !isExternalRuntime()) actions.appendChild(commandButton("Stop", "stop", "secondary"));
+    if (!isExternalRuntime()) actions.appendChild(commandButton("Reconfigure endpoint…", "reconfigure", "secondary"));
     if (currentState.mcpUrl) actions.appendChild(commandButton("Copy MCP URL", "copyMcpUrl", "ghost"));
     actions.appendChild(commandButton("Open config", "openConfig", "ghost"));
-    actions.appendChild(commandButton("Show terminal", "openTerminal", "ghost"));
+    if (!isExternalRuntime()) actions.appendChild(commandButton("Show terminal", "openTerminal", "ghost"));
     actions.appendChild(commandButton("Open guide", "openDocs", "ghost"));
     body.appendChild(actions);
     body.appendChild(el("p", "advanced-section__hint", "Local model-provider chat, native VS Code MCP, manual OAuth clients, collaboration enablement, and Full-access launch are intentionally not part of the ordinary graphical workflow."));
@@ -422,6 +428,7 @@
   function topStatus() {
     if (!currentState.trustKnown) return { label: "Loading", tone: "neutral" };
     if (!currentState.trusted) return { label: "Restricted", tone: "warning" };
+    if (currentState.operation) return { label: "Working", tone: "warning" };
     if (!currentState.configured) return { label: "Setup", tone: "neutral" };
     if (currentState.unsafeFullAccess) return { label: "Full access", tone: "warning" };
     if (!isOnline()) return { label: "Stopped", tone: "neutral" };
@@ -433,6 +440,7 @@
 
   function serverStatus() {
     if (!currentState.configured) return "Not configured";
+    if (isExternalRuntime()) return "Running · external";
     return isOnline() ? "Running" : "Stopped";
   }
 
@@ -483,11 +491,16 @@
     button.className = "button button--" + (variant || "secondary");
     button.textContent = label;
     button.dataset.command = command;
+    if (currentState.operation) button.disabled = true;
     return button;
   }
 
   function isOnline() {
     return currentState.process.status === "running" || currentState.process.status === "starting";
+  }
+
+  function isExternalRuntime() {
+    return isOnline() && currentState.process.mode.toLowerCase() === "detected service";
   }
 
   function isPublicEndpoint() {
