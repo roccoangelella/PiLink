@@ -31,6 +31,10 @@ All notable PiLink changes are documented in this file.
 - `npm run dev` is now compile/watch only; raw development-server startup moved
   to the explicit `npm run dev:server` command. `npm run cli -- ...` provides a
   source-checkout CLI fallback when no user PATH launcher can be created.
+- The quiet terminal launcher now preserves the effective TTY state of proxied
+  stdout/stderr. Interactive setup therefore keeps normal prompts working,
+  including the hidden Cloudflare API-token prompt, while routine runtime logs
+  remain filtered.
 
 ### Security
 
