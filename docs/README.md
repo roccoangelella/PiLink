@@ -10,6 +10,7 @@ the public repository and release packages.
 | Goal | Guide |
 | --- | --- |
 | Install PiLink or the optional VSPiLink extension | [Installation](INSTALLATION.md) |
+| Understand the VSPiLink screen, buttons, statuses, and workflows | [VSPiLink: how the VS Code extension works](VSCODE_EXTENSION.md) |
 | Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
 | Start a first instance | [Getting started](GETTING_STARTED.md) |
 | Choose single-agent, collaboration, or VS Code entry | [Runtime mode selection](operations/mode-selection.md) |
