@@ -59,6 +59,11 @@ This separates “the process is running,” “the endpoint is reachable,” an
 `OAuth ready` does not mean a network connection must remain open. ChatGPT can
 create an MCP session when it actually invokes PiLink tools.
 
+There is deliberately no transcript, task board, activity feed, agent list, or
+provider console in this extension. Those surfaces made the launcher look like a
+second product and obscured the only question the UI needs to answer: **is the
+MCP bridge ready, and what should I do next?**
+
 ## Details & recovery
 
 The collapsed **Details & recovery** section contains bridge operations useful
@@ -97,16 +102,6 @@ operation belongs to the PiLink CLI/operator workflow.
 Legacy managed Named-Tunnel services are also not started by the simplified
 launcher; reconfigure them into one of the supported graphical endpoint types or
 manage them from the CLI/service manager.
-
-## Recent activity
-
-When the current administrative projection supplies audit metadata, a small
-activity list answers one useful question: “is the remote client actually
-calling PiLink?” It shows only bounded operational metadata such as tool name,
-outcome, and duration.
-
-It intentionally does not display prompts, file paths, tool arguments, tool
-results, ChatGPT transcript content, cookies, DOM data, or model reasoning.
 
 ## Install
 
