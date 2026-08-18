@@ -11,6 +11,18 @@ npm --version
 npm ci
 ```
 
+The development scripts intentionally separate compilation from runtime startup:
+
+- `npm run dev` runs TypeScript in watch mode only. It does **not** start PiLink.
+- `npm run dev:server` explicitly starts the raw `src/index.ts` development
+  server under `tsx watch`; use it only when server startup is what you intend.
+- `npm run build` performs a normal source build and then safely creates or
+  repairs the user-level `pilink` launcher when an eligible PATH directory is
+  available.
+- `npm run cli -- <arguments>` runs the built terminal launcher directly from
+  the checkout and is the fallback when no global/user PATH launcher is
+  available.
+
 Do not commit `node_modules`, `dist`, ad-hoc package builds, runtime state,
 OAuth client stores, tunnel credentials, logs, certificates, or local `.env`
 files. The only binary archives intentionally versioned are the maintainer-built,
