@@ -16,6 +16,7 @@ const LOCAL_APPROVAL_TIMEOUT_MS = 90_000;
 const CLIENT_ID_PATTERN = /^pi_[a-f0-9]{16}$/iu;
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/u;
 const CHATGPT_DCR_SCOPE = "mcp:tools offline_access";
+const CHATGPT_RESOURCE_SCOPES = ["mcp:tools", "mcp:read", "mcp:write"] as const;
 const UNSAFE_TERMINAL_TEXT = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 const UNSAFE_TERMINAL_TEXT_GLOBAL = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
 
@@ -133,6 +134,12 @@ export function isApprovedChatGptPublicClient(client: OAuthClient, redirectUri: 
 
 export function resolveClientScope(requestedScope: string | undefined, allowedScope: string): string | undefined {
   const allowed = new Set(allowedScope.split(/\s+/u).filter(Boolean));
+  // Keep the local terminal-approval path aligned with the main OAuth router:
+  // mcp:tools is PiLink's umbrella permission, while ChatGPT may echo the
+  // advertised mcp:read and mcp:write resource aliases alongside it.
+  if (allowed.has("mcp:tools")) {
+    for (const scope of CHATGPT_RESOURCE_SCOPES) allowed.add(scope);
+  }
   const requested = (requestedScope || allowedScope).split(/\s+/u).filter(Boolean);
   if (requested.length === 0 || requested.length > allowed.size) return undefined;
   if (new Set(requested).size !== requested.length) return undefined;

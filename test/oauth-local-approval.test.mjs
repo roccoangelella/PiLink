@@ -33,10 +33,17 @@ test("local approval accepts only the exact public ChatGPT DCR client", () => {
   }), redirect), false);
 });
 
-test("local approval never expands the registered OAuth scope", () => {
+test("local approval treats mcp:tools as the read/write umbrella without accepting unrelated scopes", () => {
   assert.equal(resolveClientScope(undefined, "mcp:tools offline_access"), "mcp:tools offline_access");
   assert.equal(resolveClientScope("mcp:tools", "mcp:tools offline_access"), "mcp:tools");
   assert.equal(resolveClientScope("offline_access mcp:tools", "mcp:tools offline_access"), "offline_access mcp:tools");
-  assert.equal(resolveClientScope("mcp:read", "mcp:tools offline_access"), undefined);
+  assert.equal(
+    resolveClientScope("offline_access mcp:tools mcp:read mcp:write", "mcp:tools offline_access"),
+    "offline_access mcp:tools mcp:read mcp:write",
+  );
+  assert.equal(resolveClientScope("mcp:read", "mcp:tools offline_access"), "mcp:read");
+  assert.equal(resolveClientScope("mcp:write", "mcp:tools offline_access"), "mcp:write");
+  assert.equal(resolveClientScope("mcp:admin", "mcp:tools offline_access"), undefined);
+  assert.equal(resolveClientScope("mcp:write", "mcp:read offline_access"), undefined);
   assert.equal(resolveClientScope("mcp:tools mcp:tools", "mcp:tools offline_access"), undefined);
 });
