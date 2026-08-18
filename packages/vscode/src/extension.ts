@@ -1,10 +1,8 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
 import { chatGptNavigation, type ChatGptDestination } from "./chatgpt-links.js";
 import {
-  localServerUrl,
   provisionWizardConfiguration,
   readConfigSnapshot,
   resolveConfigPath,
@@ -16,17 +14,14 @@ import { DashboardProvider } from "./dashboard.js";
 import { effectiveProcessState } from "./dashboard-model.js";
 import {
   createOwnerPairing,
+  isLoopbackPortOccupied,
   readAdminCollaboration,
   readAdminStatus,
   readHealth,
   waitForHealth,
   waitForPublicHealth,
 } from "./health.js";
-import {
-  hostingStartPlan,
-  normalizeHostingSelection,
-  type HostingSelection,
-} from "./hosting-model.js";
+import { normalizeHostingSelection, type HostingSelection } from "./hosting-model.js";
 import { resolveSidecarNodeRuntime, type SidecarNodeRuntime } from "./node-runtime.js";
 import { ProcessSupervisor, resolveCliPath, runJsonCli } from "./process-supervisor.js";
 import type { DashboardState, WebviewCommand, WebviewCommandMessage } from "./protocol.js";
@@ -36,6 +31,9 @@ let activeController: ExtensionController | undefined;
 
 const SELECTED_WORKSPACE_KEY = "pilink.selectedWorkspace.v1";
 const QUICK_TUNNEL_AUTHORIZED_ORIGIN_KEY = "pilink.quickTunnelAuthorizedOrigin.v1";
+
+type LauncherHostingKind = "cloudflare-fixed" | "custom-domain" | "quick-tunnel" | "local";
+type PreparedHosting = HostingSelection & { tunnelTokenFile?: string };
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   activeController = new ExtensionController(context);
@@ -53,6 +51,7 @@ class ExtensionController {
   private readonly dashboard: DashboardProvider;
   private sidecarNodeCache?: { key: string; runtime: SidecarNodeRuntime };
   private selectedWorkspacePath?: string;
+  private operationLabel = "";
   private disposing = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -111,30 +110,46 @@ class ExtensionController {
     const register = (name: string, callback: (...args: unknown[]) => unknown) => {
       this.disposables.push(vscode.commands.registerCommand(`vspilink.${name}`, callback));
     };
+    const operation = (label: string, callback: () => Promise<unknown>) => () => this.runOperation(label, callback);
 
     // Public command-palette surface.
     register("openSidebar", () => this.openSidebar());
     register("openPanel", () => this.dashboard.openPanel());
-    register("connectChatGpt", () => this.connectChatGpt());
-    register("stop", () => this.stopConfigured());
-    register("guidedSetup", () => this.reconfigure());
+    register("connectChatGpt", operation("Connecting ChatGPT", () => this.connectChatGpt()));
+    register("stop", operation("Stopping PiLink", () => this.stopConfigured()));
+    register("guidedSetup", operation("Reconfiguring PiLink", () => this.reconfigure()));
     register("openConfig", () => this.openConfig());
     register("refresh", () => this.dashboard.refresh());
-    register("useWorkspace", (resource) => this.chooseWorkspace(resource instanceof vscode.Uri ? resource : undefined));
+    register("useWorkspace", (resource) => this.runOperation(
+      "Changing project",
+      () => this.chooseWorkspace(resource instanceof vscode.Uri ? resource : undefined),
+    ));
     register("openDocs", () => this.openDocs());
 
     // State-aware dashboard commands. They remain hidden from the palette.
     register("manageTrust", () => vscode.commands.executeCommand("workbench.trust.manage"));
-    register("chooseWorkspace", () => this.chooseWorkspace(undefined, true));
-    register("setupStable", () => this.setupStable());
-    register("setupQuick", () => this.setupAndStart({ kind: "quick-tunnel" }));
-    register("setupLocal", () => this.setupAndStart({ kind: "local" }));
-    register("start", () => this.startConfigured());
-    register("restart", () => this.restartConfigured());
+    register("chooseWorkspace", operation("Choosing project", () => this.chooseWorkspace(undefined, true)));
+    register("setupStable", operation("Setting up stable endpoint", () => this.setupStable()));
+    register("setupQuick", operation("Starting temporary endpoint", () => this.setupAndStart({ kind: "quick-tunnel" })));
+    register("setupLocal", operation("Starting local bridge", () => this.setupAndStart({ kind: "local" })));
+    register("start", operation("Starting PiLink", () => this.startConfigured()));
+    register("restart", operation("Restarting PiLink", () => this.restartConfigured()));
     register("openChatGpt", () => this.openChatGptInVsCode());
     register("copyMcpUrl", () => this.copyMcpUrl());
     register("openTerminal", () => this.showTerminal());
-    register("switchToSingle", () => this.switchToSingle());
+    register("switchToSingle", operation("Switching to single-agent", () => this.switchToSingle()));
+  }
+
+  private async runOperation<T>(label: string, callback: () => Promise<T>): Promise<T> {
+    if (this.operationLabel) throw new Error(`PiLink is already busy: ${this.operationLabel}.`);
+    this.operationLabel = label;
+    await this.dashboard.refresh();
+    try {
+      return await callback();
+    } finally {
+      this.operationLabel = "";
+      await this.dashboard.refresh();
+    }
   }
 
   private async handleWebviewCommand(message: WebviewCommandMessage): Promise<void> {
@@ -214,6 +229,7 @@ class ExtensionController {
       workspace: snapshot.workspace || this.defaultWorkspacePath() || "",
       configPath: snapshot.configPath,
       process: processState,
+      operation: this.operationLabel,
       hostingMode: snapshot.hostingMode,
       runtimeMode,
       unsafeFullAccess: snapshot.unsafeFullAccess,
@@ -229,7 +245,7 @@ class ExtensionController {
       activity,
       version: String(this.context.extension.packageJSON.version || "2.2.0"),
       nodeVersion: sidecarNode.version || "not detected",
-      ...(!sidecarNode.ok ? { error: sidecarNode.error } : {}),
+      ...(!sidecarNode.ok && !admin.online ? { error: sidecarNode.error } : {}),
     };
   }
 
@@ -252,32 +268,42 @@ class ExtensionController {
     this.requireTrustedWorkspace();
     const target = await this.selectWorkspace(resource, forcePicker);
     if (!target) return;
-    this.selectedWorkspacePath = path.resolve(target);
-    await this.context.workspaceState.update(SELECTED_WORKSPACE_KEY, this.selectedWorkspacePath);
+    const resolvedTarget = path.resolve(target);
+    assertExistingDirectory(resolvedTarget, "Selected PiLink project");
 
-    const snapshot = this.snapshot(target);
-    if (!snapshot.configured || samePath(snapshot.workspace, target)) {
+    const previousSelection = this.selectedWorkspacePath;
+    this.selectedWorkspacePath = resolvedTarget;
+    await this.context.workspaceState.update(SELECTED_WORKSPACE_KEY, resolvedTarget);
+
+    const snapshot = this.snapshot(resolvedTarget);
+    if (!snapshot.configured || samePath(snapshot.workspace, resolvedTarget)) {
       await this.dashboard.refresh();
       return;
     }
 
     const approval = await vscode.window.showWarningMessage(
-      `Use ${target} as the PiLink project instead of ${snapshot.workspace}?`,
+      `Use ${resolvedTarget} as the PiLink project instead of ${snapshot.workspace}?`,
       {
         modal: true,
         detail: "Authorized MCP clients will see the new project. OAuth and hosting settings remain unchanged.",
       },
       "Use this project",
     );
-    if (approval !== "Use this project") return;
+    if (approval !== "Use this project") {
+      this.selectedWorkspacePath = previousSelection;
+      await this.context.workspaceState.update(SELECTED_WORKSPACE_KEY, previousSelection);
+      return;
+    }
 
     if (await this.detectExternalRuntime(snapshot)) {
+      this.selectedWorkspacePath = previousSelection;
+      await this.context.workspaceState.update(SELECTED_WORKSPACE_KEY, previousSelection);
       throw new Error("PiLink is running outside this VS Code session. Stop it with the CLI before changing the project.");
     }
     const wasRunning = this.supervisor.isActive;
     if (wasRunning) await this.supervisor.stop();
     let contents = fs.readFileSync(snapshot.configPath, "utf8");
-    contents = updateEnvValue(contents, "PI_WORK_DIR", path.resolve(target));
+    contents = updateEnvValue(contents, "PI_WORK_DIR", resolvedTarget);
     writePrivateFile(snapshot.configPath, contents.endsWith("\n") ? contents : `${contents}\n`);
     if (wasRunning) await this.startConfigured();
     await this.dashboard.refresh();
@@ -285,6 +311,7 @@ class ExtensionController {
 
   private async setupStable(): Promise<void> {
     this.requireTrustedWorkspace();
+    await this.assertCanReconfigure();
     const selected = await vscode.window.showQuickPick([
       {
         label: "Cloudflare fixed domain",
@@ -308,6 +335,7 @@ class ExtensionController {
 
   private async reconfigure(): Promise<void> {
     this.requireTrustedWorkspace();
+    await this.assertCanReconfigure();
     const selected = await vscode.window.showQuickPick([
       {
         label: "Cloudflare fixed domain",
@@ -339,9 +367,15 @@ class ExtensionController {
     await this.setupAndStart(hosting);
   }
 
-  private async collectHostingSelection(
-    kind: "cloudflare-fixed" | "custom-domain" | "quick-tunnel" | "local",
-  ): Promise<HostingSelection | undefined> {
+  private async assertCanReconfigure(): Promise<void> {
+    const workspace = await this.requireWorkspace();
+    const snapshot = this.snapshot(workspace);
+    if (await this.detectExternalRuntime(snapshot)) {
+      throw new Error("PiLink is running outside this VS Code session. Stop that instance before changing its project or endpoint.");
+    }
+  }
+
+  private async collectHostingSelection(kind: LauncherHostingKind): Promise<PreparedHosting | undefined> {
     if (kind === "quick-tunnel" || kind === "local") return { kind };
 
     if (kind === "custom-domain") {
@@ -386,7 +420,7 @@ class ExtensionController {
       tunnelId: provisioned.tunnelId,
     });
     if (!hosting) throw new Error("Cloudflare provisioning returned an invalid fixed-domain configuration.");
-    return { ...hosting, credentialLabel: provisioned.tokenFile };
+    return { ...hosting, tunnelTokenFile: provisioned.tokenFile };
   }
 
   private async provisionFixedDomainViaCli(
@@ -432,7 +466,7 @@ class ExtensionController {
     return { tunnelId, tokenFile };
   }
 
-  private async setupAndStart(hosting: HostingSelection): Promise<void> {
+  private async setupAndStart(hosting: PreparedHosting): Promise<void> {
     this.requireTrustedWorkspace();
     const workspace = await this.requireWorkspace();
     const before = this.snapshot(workspace);
@@ -449,7 +483,7 @@ class ExtensionController {
       runtimeMode: DEFAULT_RUNTIME_MODE,
     });
     if (hosting.kind === "cloudflare-fixed") {
-      const tokenFile = hosting.credentialLabel;
+      const tokenFile = hosting.tunnelTokenFile;
       if (!tokenFile || !path.isAbsolute(tokenFile)) {
         throw new Error("The Cloudflare tunnel token file is unavailable. Run fixed-domain setup again.");
       }
@@ -466,7 +500,7 @@ class ExtensionController {
     this.requireTrustedWorkspace();
     const snapshot = this.snapshot();
     if (!snapshot.configured) {
-      await this.reconfigure();
+      await this.setupStable();
       return;
     }
     if (snapshot.unsafeFullAccess) {
@@ -479,6 +513,9 @@ class ExtensionController {
     }
     if (snapshot.hostingMode === "cloudflare-named") {
       throw new Error("This project uses the legacy managed Named-Tunnel service. Reconfigure it in PiLink for VS Code, or manage that service with the CLI.");
+    }
+    if (await isLoopbackPortOccupied(snapshot.port)) {
+      throw new Error(`Port ${snapshot.port} is already in use by another process. Stop it or choose a different PiLink port.`);
     }
 
     const plan = startPlanFromSnapshot(snapshot);
@@ -539,7 +576,7 @@ class ExtensionController {
     this.requireTrustedWorkspace();
     const snapshot = this.snapshot();
     if (snapshot.unsafeFullAccess) {
-      throw new Error("VSPiLink will not restart a saved Full-access configuration. Reconfigure safely or use the CLI deliberately.");
+      throw new Error("PiLink will not restart a saved Full-access configuration. Reconfigure safely or use the CLI deliberately.");
     }
     if (this.supervisor.isActive) {
       await this.supervisor.stop();
@@ -558,6 +595,9 @@ class ExtensionController {
     const snapshot = this.snapshot();
     if (!snapshot.configured) return;
     if (runtimeModeFromConfig(snapshot.values.PI_RUNTIME_MODE) !== "collaboration") return;
+    if (process.env.PI_RUNTIME_MODE === "collaboration") {
+      throw new Error("PI_RUNTIME_MODE=collaboration is set in the VS Code process environment. Remove that override before switching this project to single-agent.");
+    }
     if (await this.detectExternalRuntime(snapshot)) {
       throw new Error("PiLink is running outside this VS Code session. Stop it before switching the workflow.");
     }
@@ -615,7 +655,7 @@ class ExtensionController {
     this.requireTrustedWorkspace();
     const state = await this.dashboardState();
     if (!state.externalMcp.connected) {
-      await this.connectChatGpt();
+      await this.runOperation("Connecting ChatGPT", () => this.connectChatGpt());
       return;
     }
     await this.openChatGpt("work");
@@ -701,6 +741,7 @@ class ExtensionController {
 
   private async copyMcpUrl(): Promise<void> {
     const state = await this.dashboardState();
+    if (!state.mcpUrl) throw new Error("PiLink does not have an MCP endpoint yet.");
     await vscode.env.clipboard.writeText(state.mcpUrl);
     void vscode.window.showInformationMessage(`PiLink MCP URL copied: ${state.mcpUrl}`);
   }
@@ -743,7 +784,7 @@ class ExtensionController {
 
   private snapshot(workspaceOverride?: string): ConfigSnapshot {
     const workspace = workspaceOverride || this.defaultWorkspacePath() || "";
-    const config = vscode.workspace.getConfiguration("vspilink", this.configurationScope(workspaceOverride));
+    const config = vscode.workspace.getConfiguration("vspilink", this.configurationScope(workspace));
     const configuredPath = config.get<string>("configPath", "");
     return readConfigSnapshot(resolveConfigPath(configuredPath, workspace), workspace);
   }
@@ -769,15 +810,15 @@ class ExtensionController {
     return runtime;
   }
 
-  private configurationScope(workspaceOverride?: string): vscode.Uri | undefined {
-    if (workspaceOverride) {
+  private configurationScope(workspacePath?: string): vscode.Uri | undefined {
+    if (workspacePath) {
       const folders = vscode.workspace.workspaceFolders || [];
-      const resolved = path.resolve(workspaceOverride);
+      const resolved = path.resolve(workspacePath);
       const exact = folders.find((folder) => samePath(folder.uri.fsPath, resolved));
       if (exact) return exact.uri;
       const containing = folders.find((folder) => isPathInside(folder.uri.fsPath, resolved));
       if (containing) return containing.uri;
-      return vscode.Uri.file(workspaceOverride);
+      return vscode.Uri.file(resolved);
     }
     const active = vscode.window.activeTextEditor?.document.uri;
     const activeFolder = active ? vscode.workspace.getWorkspaceFolder(active) : undefined;
@@ -786,15 +827,21 @@ class ExtensionController {
   }
 
   private defaultWorkspacePath(): string | undefined {
-    return this.configurationScope()?.fsPath || this.selectedWorkspacePath;
+    if (this.selectedWorkspacePath) return this.selectedWorkspacePath;
+    return this.configurationScope()?.fsPath;
   }
 
   private async requireWorkspace(): Promise<string> {
     const current = this.defaultWorkspacePath();
-    if (current) return path.resolve(current);
+    if (current) {
+      const resolved = path.resolve(current);
+      assertExistingDirectory(resolved, "PiLink project");
+      return resolved;
+    }
     const selected = await this.selectWorkspace(undefined, true);
     if (!selected) throw new Error("Choose a project folder before starting PiLink.");
     this.selectedWorkspacePath = path.resolve(selected);
+    assertExistingDirectory(this.selectedWorkspacePath, "PiLink project");
     await this.context.workspaceState.update(SELECTED_WORKSPACE_KEY, this.selectedWorkspacePath);
     return this.selectedWorkspacePath;
   }
@@ -907,6 +954,16 @@ function runtimeModeFromConfig(value: unknown): RuntimeMode | undefined {
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function assertExistingDirectory(value: string, label: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(value);
+  } catch {
+    throw new Error(`${label} does not exist: ${value}`);
+  }
+  if (!stat.isDirectory()) throw new Error(`${label} is not a directory: ${value}`);
 }
 
 function samePath(left: string, right: string): boolean {
