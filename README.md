@@ -36,13 +36,9 @@ git clone https://github.com/roccoangelella/PiLink.git
 cd PiLink
 npm ci
 npm run build
-npm link
 ```
 
-`npm link` does **not** copy or move the PiLink repository. The source remains
-in the directory where you cloned it; `npm link` only creates a global
-`pilink` command that points back to this checkout. To see the npm prefix used
-on your machine, run `npm prefix -g`.
+`npm run build` compiles PiLink and then safely tries to expose `pilink` through an existing user-writable directory already on `PATH` and inside your home directory. It never uses `sudo`, edits shell startup files, or replaces an unrelated `pilink` command. Set `PILINK_SKIP_CLI_LINK=1` to disable this convenience. If no safe persistent PATH directory is available, the build still succeeds and prints the `npm exec` or one-time `npm link` fallback. `npm link` does **not** copy or move the PiLink repository; it only creates a launcher that points back to this checkout. To see the npm prefix used on your machine, run `npm prefix -g`.
 
 ### Where PiLink is installed and stores its files
 
@@ -51,7 +47,7 @@ There are three different locations to distinguish:
 | Purpose | Linux | Windows |
 | --- | --- | --- |
 | Source checkout | Wherever you ran `git clone`, for example `~/Projects/PiLink` | Wherever you ran `git clone`, for example `C:\Users\Alice\Projects\PiLink` |
-| `pilink` launcher created by `npm link` | Normally `<npm-global-prefix>/bin/pilink`; with a user prefix such as `~/.local`, this is `~/.local/bin/pilink` | Normally `<npm-global-prefix>\pilink.cmd`; the standard npm user prefix is commonly `%APPDATA%\npm` |
+| `pilink` launcher | `npm run build` prefers an existing user PATH such as `~/.local/bin`; the `npm link` fallback normally uses `<npm-global-prefix>/bin/pilink` | `npm run build` creates a safe user PATH shim when available; the `npm link` fallback normally uses `<npm-global-prefix>\pilink.cmd` |
 | PiLink private configuration and persistent data | `$XDG_CONFIG_HOME/pilink` when set, otherwise `~/.config/pilink` | `%USERPROFILE%\.config\pilink` by default |
 
 The private PiLink directory contains generated configuration and runtime state
