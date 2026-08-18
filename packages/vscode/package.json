@@ -1,7 +1,7 @@
 {
   "name": "vspilink",
   "displayName": "VSPiLink — PiLink for VS Code",
-  "description": "Optional VS Code control surface for PiLink single-agent and public-chat orchestration workflows.",
+  "description": "Start, connect, and manage the PiLink MCP bridge for the project open in VS Code.",
   "version": "2.2.0",
   "publisher": "0xfunboy",
   "license": "MIT",
@@ -39,7 +39,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode, the VSPiLink extension shows only PiLink status and documentation. Starting services, configuration, OAuth, and file access remain blocked.",
+      "description": "In Restricted Mode, VSPiLink shows PiLink status and documentation while setup, OAuth, service start, and project access remain blocked.",
       "restrictedConfigurations": [
         "vspilink.configPath",
         "vspilink.nodeExecutable",
@@ -51,166 +51,62 @@
     "commands": [
       {
         "command": "vspilink.openSidebar",
-        "title": "Open the VSPiLink Sidebar",
+        "title": "Open PiLink",
         "category": "VSPiLink",
         "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "vspilink.openPanel",
-        "title": "Open VSPiLink in an Editor Panel",
+        "title": "Open PiLink in Editor",
         "category": "VSPiLink",
         "icon": "$(open-preview)"
       },
       {
-        "command": "vspilink.selectRuntimeMode",
-        "title": "Choose VSPiLink Workflow",
-        "category": "VSPiLink",
-        "icon": "$(settings-gear)"
-      },
-      {
         "command": "vspilink.connectChatGpt",
-        "title": "Connect ChatGPT via MCP",
+        "title": "Connect ChatGPT",
         "category": "VSPiLink",
         "icon": "$(plug)"
       },
       {
-        "command": "vspilink.openChatGpt",
-        "title": "Open ChatGPT Work",
-        "category": "VSPiLink",
-        "icon": "$(globe)"
-      },
-      {
-        "command": "vspilink.initialize",
-        "title": "Initialize the Workspace",
-        "category": "VSPiLink"
-      },
-      {
         "command": "vspilink.start",
-        "title": "Start Safely (Workspace Access)",
+        "title": "Start PiLink",
         "category": "VSPiLink",
         "icon": "$(play)"
       },
       {
-        "command": "vspilink.startUnsafe",
-        "title": "Start with Full Access",
-        "category": "VSPiLink",
-        "icon": "$(warning)"
-      },
-      {
-        "command": "vspilink.guidedSetup",
-        "title": "Configure MCP Hosting (Advanced)",
-        "category": "VSPiLink",
-        "icon": "$(add)"
-      },
-      {
-        "command": "vspilink.legacySetup",
-        "title": "Run Legacy Setup in the Terminal",
-        "category": "VSPiLink",
-        "enablement": "isWorkspaceTrusted"
-      },
-      {
-        "command": "vspilink.serve",
-        "title": "Start Locally Only",
-        "category": "VSPiLink"
-      },
-      {
         "command": "vspilink.stop",
-        "title": "Stop",
+        "title": "Stop PiLink",
         "category": "VSPiLink",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "vspilink.restart",
-        "title": "Restart",
-        "category": "VSPiLink",
-        "icon": "$(debug-restart)"
-      },
-      {
-        "command": "vspilink.openConfig",
-        "title": "Open Private Configuration",
+        "command": "vspilink.guidedSetup",
+        "title": "Configure Hosting (Advanced)",
         "category": "VSPiLink",
         "icon": "$(settings-gear)"
       },
       {
-        "command": "vspilink.copyMcpUrl",
-        "title": "Copy MCP URL",
+        "command": "vspilink.openConfig",
+        "title": "Open PiLink Configuration",
         "category": "VSPiLink",
-        "icon": "$(copy)"
-      },
-      {
-        "command": "vspilink.registerClient",
-        "title": "Register an OAuth Client",
-        "category": "VSPiLink"
-      },
-      {
-        "command": "vspilink.connectNativeMcp",
-        "title": "Connect to VS Code Agents",
-        "category": "VSPiLink",
-        "icon": "$(plug)"
-      },
-      {
-        "command": "vspilink.disconnectNativeMcp",
-        "title": "Disconnect from VS Code Agents",
-        "category": "VSPiLink"
-      },
-      {
-        "command": "vspilink.showTerminal",
-        "title": "Show the VSPiLink Terminal",
-        "category": "VSPiLink",
-        "icon": "$(terminal)"
-      },
-      {
-        "command": "vspilink.openCollaborationMonitor",
-        "title": "Open the Agent and Task Monitor",
-        "category": "VSPiLink",
-        "icon": "$(organization)"
-      },
-      {
-        "command": "vspilink.reset",
-        "title": "Reset Generated State",
-        "category": "VSPiLink"
+        "icon": "$(settings-gear)"
       },
       {
         "command": "vspilink.refresh",
-        "title": "Refresh Status",
+        "title": "Refresh PiLink Status",
         "category": "VSPiLink",
         "icon": "$(refresh)"
       },
       {
         "command": "vspilink.useWorkspace",
-        "title": "Use the Current Folder as the VSPiLink Workspace",
+        "title": "Use This Folder for PiLink",
         "category": "VSPiLink"
       },
       {
         "command": "vspilink.openDocs",
-        "title": "Open the VSPiLink Guide",
+        "title": "Open PiLink Guide",
         "category": "VSPiLink",
         "icon": "$(book)"
-      },
-      {
-        "command": "vspilink.configureAgents",
-        "title": "Configure the Agent Provider and Model",
-        "category": "VSPiLink"
-      },
-      {
-        "command": "vspilink.logoutAgent",
-        "title": "Sign Out of the Agent Provider",
-        "category": "VSPiLink"
-      },
-      {
-        "command": "vspilink.spawnAgent",
-        "title": "Create an Agent",
-        "category": "VSPiLink"
-      },
-      {
-        "command": "vspilink.stopAgent",
-        "title": "Stop Agent",
-        "category": "VSPiLink"
-      },
-      {
-        "command": "vspilink.viewAgentOutput",
-        "title": "Show Agent Output",
-        "category": "VSPiLink"
       }
     ],
     "configuration": {
@@ -219,7 +115,7 @@
         "vspilink.openOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "Open the optional VSPiLink sidebar for PiLink after VS Code finishes starting."
+          "description": "Open the optional PiLink sidebar after VS Code finishes starting."
         },
         "vspilink.configPath": {
           "type": "string",
@@ -243,7 +139,7 @@
           "default": "mcp:read",
           "scope": "application",
           "restricted": true,
-          "description": "OAuth scope used by the native VS Code MCP provider."
+          "description": "OAuth scope used by the optional native VS Code MCP provider."
         },
         "vspilink.nodeExecutable": {
           "type": "string",
@@ -258,7 +154,7 @@
       "secondarySidebar": [
         {
           "id": "vspilinkSecondaryViewContainer",
-          "title": "VSPiLink",
+          "title": "PiLink",
           "icon": "media/icon.png"
         }
       ]
@@ -268,7 +164,7 @@
         {
           "id": "vspilink.sidebarSecondaryView",
           "type": "webview",
-          "name": "VSPiLink"
+          "name": "PiLink"
         }
       ]
     },
@@ -301,7 +197,7 @@
     "mcpServerDefinitionProviders": [
       {
         "id": "vspilink.mcp",
-        "label": "VSPiLink"
+        "label": "PiLink"
       }
     ]
   },
