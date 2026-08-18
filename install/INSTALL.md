@@ -26,8 +26,8 @@ install a VSIX whose release checksum cannot be verified.
    ```
 
 3. If Windows has marked the downloaded script as blocked, inspect its origin
-   and signature/checksum first, then run `Unblock-File .\install.ps1` and
-   repeat the command.
+   and checksum first, then run `Unblock-File .\install.ps1` and repeat the
+   command.
 
 The installer does not require administrator privileges and does not replace
 the system `node` command. When necessary, it downloads the pinned official
@@ -41,9 +41,18 @@ private per-user PiLink data directory.
 3. Select **Developer: Reload Window** and press Enter.
 4. If the right sidebar is hidden, select **View -> Appearance -> Secondary
    Side Bar**.
-5. Select the **VSPiLink** view in the Secondary Side Bar.
-6. Open the Command Palette and run **VSPiLink: Connect ChatGPT via MCP** to
-   start the guided connection.
+5. Open the **PiLink** view.
+6. Open the project PiLink should access and review Workspace Trust.
+7. Use the main PiLink card:
+   - **Quick start for ChatGPT** for the simplest remote setup;
+   - **Local only** when no public endpoint is needed;
+   - **Stable endpoint...** for a durable hostname.
+8. When the public endpoint is ready, select **Connect ChatGPT** in the PiLink
+   dashboard and complete the remote OAuth flow.
+
+Fresh graphical setups use Single agent and Project-folder access by default.
+Collaboration, Full access, manual OAuth registration, and the optional local
+provider-backed Pi agent are available under **Advanced**.
 
 For Remote SSH, run this installer in the remote VS Code integrated terminal.
 After the reload, open Extensions and verify that VSPiLink says **Installed on
