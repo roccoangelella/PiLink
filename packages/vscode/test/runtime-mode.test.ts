@@ -21,7 +21,7 @@ class MemoryMemento {
   }
 }
 
-test("runtime mode normalization is strict and keeps surface values separate", () => {
+test("runtime mode normalization is strict and keeps unrelated surface values out", () => {
   assert.equal(DEFAULT_RUNTIME_MODE, "single");
   assert.equal(normalizeRuntimeMode("single"), "single");
   assert.equal(normalizeRuntimeMode("collaboration"), "collaboration");
@@ -31,24 +31,32 @@ test("runtime mode normalization is strict and keeps surface values separate", (
   assert.equal(normalizeRuntimeMode({ mode: "single" }), undefined);
 });
 
-test("runtime mode store fails closed and persists the selected workflow", async () => {
+test("a fresh extension persists single-agent without asking the user", async () => {
   const memento = new MemoryMemento();
   const store = new RuntimeModeStore(memento);
   assert.equal(store.load(), undefined);
-  assert.equal(await store.migrate(), undefined);
-
-  await store.set("single");
+  assert.equal(await store.migrate(), "single");
   assert.equal(store.load(), "single");
+
   const persisted = memento.get<Record<string, unknown>>(RUNTIME_MODE_STATE_KEY);
   assert.equal(persisted?.schemaVersion, RUNTIME_MODE_SCHEMA_VERSION);
   assert.equal(persisted?.mode, "single");
   assert.equal(typeof persisted?.updatedAt, "string");
+});
+
+test("the selected advanced workflow remains durable", async () => {
+  const memento = new MemoryMemento();
+  const store = new RuntimeModeStore(memento);
+  await store.migrate();
+  await store.set("collaboration");
+  assert.equal(store.load(), "collaboration");
+  assert.equal(await store.migrate(), "collaboration");
 
   memento.values.set(RUNTIME_MODE_STATE_KEY, { schemaVersion: 99, mode: "collaboration", updatedAt: new Date().toISOString() });
   assert.equal(store.load(), undefined);
 });
 
-test("compatible pre-release runtime state migrates without accepting UI surface state", async () => {
+test("compatible pre-release runtime state migrates without accepting old UI surface state", async () => {
   const memento = new MemoryMemento();
   memento.values.set("vspilink.operationMode", { mode: "collaboration" });
   const store = new RuntimeModeStore(memento);
@@ -60,6 +68,8 @@ test("compatible pre-release runtime state migrates without accepting UI surface
   surfaceMemento.values.set("vspilink.operationMode", "local");
   const surfaceStore = new RuntimeModeStore(surfaceMemento);
   assert.equal(surfaceStore.load(), undefined);
+  assert.equal(await surfaceStore.migrate(), "single");
+  assert.equal(surfaceStore.load(), "single");
 });
 
 test("persisted runtime mode rejects malformed or secret-bearing values", () => {
