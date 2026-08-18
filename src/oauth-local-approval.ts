@@ -184,7 +184,9 @@ async function promptForApproval(request: LocalApprovalRequest): Promise<boolean
   console.error(`Access: ${terminalText(request.scope, 256)}`);
   console.error("Approve only if you just initiated this connection in ChatGPT.");
 
-  const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  // stdin is the real terminal; stderr is intentionally piped through the
+  // PiLink launcher so use plain line mode and avoid cursor-control sequences.
+  const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: false });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LOCAL_APPROVAL_TIMEOUT_MS);
   timeout.unref();
