@@ -15,7 +15,6 @@ import { effectiveProcessState } from "./dashboard-model.js";
 import {
   createOwnerPairing,
   isLoopbackPortOccupied,
-  readAdminCollaboration,
   readAdminStatus,
   readHealth,
   waitForHealth,
@@ -199,21 +198,6 @@ class ExtensionController {
     const chatGptConfigured = persistedChatGptClients.length > 0 || chatGptActive;
     const chatGptConnected = chatGptAuthorized || chatGptActive;
 
-    let activity: DashboardState["activity"] = [];
-    if (admin.online && snapshot.bootstrapSecret) {
-      try {
-        const collaboration = await readAdminCollaboration(snapshot.port, snapshot.bootstrapSecret);
-        activity = collaboration.activity.slice(-8).map((item) => ({
-          tool: item.tool,
-          startedAt: item.startedAt,
-          durationMs: item.durationMs,
-          outcome: item.outcome,
-        }));
-      } catch {
-        // Single-agent servers may not expose the collaboration projection.
-      }
-    }
-
     const processState = effectiveProcessState(
       this.supervisor.viewState,
       admin.online,
@@ -242,7 +226,6 @@ class ExtensionController {
         connected: chatGptConnected,
         activeSessions: admin.activeSessions,
       },
-      activity,
       version: String(this.context.extension.packageJSON.version || "2.2.0"),
       nodeVersion: sidecarNode.version || "not detected",
       ...(!sidecarNode.ok && !admin.online ? { error: sidecarNode.error } : {}),
