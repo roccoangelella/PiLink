@@ -39,9 +39,7 @@ private per-user PiLink data directory.
 1. Return to VS Code.
 2. Press `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS).
 3. Select **Developer: Reload Window** and press Enter.
-4. If the right sidebar is hidden, select **View -> Appearance -> Secondary
-   Side Bar**.
-5. Open the **PiLink** view.
+4. Select **PiLink** in the Activity Bar.
 6. Open the project PiLink should access and review Workspace Trust.
 7. Use the main PiLink card:
    - **Quick start for ChatGPT** for the simplest safe remote setup;

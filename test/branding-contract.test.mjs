@@ -5,7 +5,7 @@ import test from "node:test";
 
 const repositoryUrl = "https://github.com/roccoangelella/PiLink.git";
 
-test("PiLink remains the project brand and VSPiLink is scoped to the optional extension", async () => {
+test("PiLink remains the project brand and the VS Code extension stays optional", async () => {
   const [readme, rootPackageText, extensionPackageText, marketplaceText, pluginManifestText, serverSource] = await Promise.all([
     fs.readFile("README.md", "utf8"),
     fs.readFile("package.json", "utf8"),
@@ -21,7 +21,7 @@ test("PiLink remains the project brand and VSPiLink is scoped to the optional ex
 
   assert.match(readme, /^# PiLink$/mu);
   assert.match(readme, /docs\/assets\/logo\.png/u);
-  assert.match(readme, /VSPiLink.*optional|optional.*VSPiLink/su);
+  assert.match(readme, /optional\s+\*\*PiLink VS Code\s+extension\*\*/su);
   assert.doesNotMatch(readme, /From chat to code/u);
   assert.doesNotMatch(readme, /```mermaid/u);
   assert.ok(readme.split("\n").length < 240, "the root README must remain concise");
@@ -34,10 +34,14 @@ test("PiLink remains the project brand and VSPiLink is scoped to the optional ex
   }
   assert.equal(rootPackage.name, "pilink");
   assert.equal(rootPackage.repository.url, repositoryUrl);
-  assert.match(extensionPackage.displayName, /^VSPiLink/u);
-  assert.match(extensionPackage.displayName, /PiLink/u);
+  assert.match(extensionPackage.displayName, /^PiLink/u);
   assert.equal(extensionPackage.repository.url, repositoryUrl);
   assert.equal(extensionPackage.icon, "media/icon.png");
+  assert.equal(extensionPackage.contributes.viewsContainers.secondarySidebar, undefined);
+  assert.equal(extensionPackage.contributes.viewsContainers.activitybar?.[0]?.id, "vspilinkSecondaryViewContainer");
+  for (const command of ["vspilink.start", "vspilink.stop", "vspilink.restart"]) {
+    assert.ok(extensionPackage.contributes.commands.some((entry) => entry.command === command), `${command} must remain available from the installed extension`);
+  }
   assert.equal(marketplace.interface.displayName, "PiLink Repository");
   assert.equal(marketplace.plugins[0].name, "pilink");
   assert.equal(marketplace.plugins[0].source.path, "./plugins/pilink");

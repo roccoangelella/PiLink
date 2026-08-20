@@ -451,7 +451,7 @@ function inspectInstallers(expected) {
 
 function inspectReleaseGuide() {
   const guide = fs.readFileSync(path.join(releaseDirectory, "INSTALL.md"), "utf8");
-  for (const required of ["./install.sh", ".\\install.ps1", "SHA256SUMS", "Secondary Side Bar", "PiLink"]) {
+  for (const required of ["./install.sh", ".\\install.ps1", "SHA256SUMS", "Activity Bar", "PiLink"]) {
     if (!guide.includes(required)) fail(`release INSTALL.md is missing required guidance: ${required}`);
   }
 }

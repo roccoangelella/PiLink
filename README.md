@@ -77,11 +77,17 @@ Only `single` and `collaboration` are server capability modes. `vscode` is a
 handoff into the optional graphical control surface and is never stored as
 `PI_RUNTIME_MODE=vscode`.
 
+Selecting the VS Code graphical entry also bootstraps the matching PiLink
+extension when needed: the CLI verifies the installed extension version,
+installs the version-matched release VSIX after SHA-256 verification, then opens
+the project. After that, PiLink can be started, stopped, or restarted directly
+from VS Code without launching the CLI again.
+
 | Entry | Purpose |
 | --- | --- |
 | **Single agent** | Original project-tool bridge without public collaboration services |
 | **Collaboration** | Adds verified chat/tasks, memory/work-loop coordination, and remote supervised-agent controls |
-| **VS Code graphical** | Opens the focused PiLink launcher; graphical setup always writes Single agent |
+| **VS Code graphical** | Installs/verifies the focused PiLink launcher when needed, then opens it; graphical setup always writes Single agent |
 
 For a local server behind an existing reverse proxy:
 
@@ -111,7 +117,7 @@ The graphical path intentionally fixes the security/workflow policy and asks
 only for the endpoint choice:
 
 1. open the project and trust the VS Code window;
-2. open **PiLink** in the Secondary Side Bar;
+2. open **PiLink** from the Activity Bar;
 3. choose **Set up stable endpoint** (recommended), **Temporary quick start**,
    or **Local only**;
 4. every choice writes Single agent + Project-folder access;

@@ -16,8 +16,7 @@ versioned file, then run **Developer: Reload Window**.
 
 ![Open ChatGPT Work and connect PiLink through VSPiLink](assets/guide/02-connect-work.svg)
 
-Open **View -> Appearance -> Secondary Side Bar**, select **PiLink**, and use the
-main setup card.
+Select **PiLink** in the VS Code Activity Bar and use the main setup card.
 
 For the shortest remote path select **Quick start for ChatGPT**. This uses the
 single-agent workflow, Project-folder access, and a temporary HTTPS endpoint.

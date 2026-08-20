@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import dotenv from "dotenv";
 import fs from "node:fs";
 import https from "node:https";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { pipeline } from "node:stream/promises";
@@ -39,6 +40,9 @@ interface LaunchOptions {
 const MAX_DEFERRED_SERVER_OUTPUT = 64 * 1024;
 const MAX_VERIFIED_BINARY_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 const BINARY_PROBE_TIMEOUT_MS = 10_000;
+const VSCODE_EXTENSION_ID = "0xfunboy.vspilink";
+const VSCODE_EXTENSION_INSTALL_TIMEOUT_MS = 120_000;
+const MAX_RELEASE_MANIFEST_BYTES = 1024 * 1024;
 const CLOUDFLARED_VERSION = "2026.7.2";
 const CADDY_VERSION = "2.11.4";
 const CLOUDFLARED_LINUX_SHA256: Readonly<Record<"x64" | "arm64", string>> = {
@@ -545,7 +549,7 @@ function configureRuntimeMode(mode?: LaunchMode): "single" | "collaboration" | u
   return mode;
 }
 
-function launchVscodeExperience(): void {
+async function launchVscodeExperience(): Promise<void> {
   const workspace = path.resolve(process.env.PI_WORK_DIR || process.cwd());
   const configuredCommand = process.env.PI_VSCODE_COMMAND?.trim();
   const command = configuredCommand || (process.platform === "win32" ? "code.cmd" : "code");
@@ -560,9 +564,10 @@ function launchVscodeExperience(): void {
   }
 
   console.error("\n=== VS Code graphical experience ===");
+  const extensionVersion = currentPackageVersion();
+  await ensureVscodeExtensionInstalled(command, extensionVersion);
   console.error(`Opening workspace: ${workspace}`);
-  console.error("If the optional VSPiLink sidebar is not installed, run 'npm run vscode:install' from the PiLink checkout first.");
-  console.error("After VS Code opens, use the VSPiLink sidebar to choose a PiLink single-agent or collaborative workflow and start safely in workspace access.");
+  console.error("VSPiLink now owns graphical PiLink startup and shutdown. Open its VS Code view to start, stop, or restart the related PiLink session without returning to the CLI.");
   try {
     const child = spawn(command, ["--reuse-window", workspace], {
       detached: true,
@@ -577,6 +582,175 @@ function launchVscodeExperience(): void {
   } catch (error) {
     throw new Error(`Could not open VS Code: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function currentPackageVersion(): string {
+  const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  let version: unknown;
+  try {
+    version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
+  } catch {
+    throw new Error("PiLink could not read its package version while preparing the VS Code extension.");
+  }
+  if (typeof version !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new Error("PiLink's package version is invalid; VSPiLink installation was not attempted.");
+  }
+  return version;
+}
+
+function installedVscodeExtensionVersion(command: string): string | undefined {
+  const result = spawnSync(command, ["--list-extensions", "--show-versions"], {
+    encoding: "utf8",
+    timeout: BINARY_PROBE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    windowsHide: true,
+  });
+  if (result.error || result.signal || result.status !== 0) {
+    throw new Error(`VS Code could not report installed extensions through '${command}'.`);
+  }
+  const prefix = `${VSCODE_EXTENSION_ID.toLowerCase()}@`;
+  const match = result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.toLowerCase().startsWith(prefix));
+  if (!match) return undefined;
+  return match.slice(match.lastIndexOf("@") + 1);
+}
+
+interface VscodeVsixSource {
+  path: string;
+  cleanup: () => void;
+}
+
+async function ensureVscodeExtensionInstalled(command: string, expectedVersion: string): Promise<void> {
+  const installed = installedVscodeExtensionVersion(command);
+  if (installed === expectedVersion) {
+    console.error(`VSPiLink ${expectedVersion} is already installed.`);
+    return;
+  }
+
+  console.error(installed
+    ? `Updating VSPiLink from ${installed} to ${expectedVersion}...`
+    : `Installing VSPiLink ${expectedVersion}...`);
+  const source = await resolveVscodeVsix(expectedVersion);
+  try {
+    const result = spawnSync(command, ["--install-extension", source.path, "--force"], {
+      stdio: "inherit",
+      timeout: VSCODE_EXTENSION_INSTALL_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+      windowsHide: true,
+    });
+    if (result.error) throw new Error(`VS Code could not install VSPiLink: ${result.error.message}`);
+    if (result.signal) throw new Error(`VS Code extension installation was interrupted by ${result.signal}.`);
+    if (result.status !== 0) throw new Error(`VS Code rejected the VSPiLink VSIX (exit code ${result.status ?? "unknown"}).`);
+
+    const verifiedVersion = installedVscodeExtensionVersion(command);
+    if (verifiedVersion !== expectedVersion) {
+      throw new Error(
+        `VS Code reported VSPiLink ${verifiedVersion || "as missing"} after installation; expected ${expectedVersion}.`,
+      );
+    }
+    console.error(`Installed and verified: ${VSCODE_EXTENSION_ID}@${expectedVersion}`);
+  } finally {
+    source.cleanup();
+  }
+}
+
+async function resolveVscodeVsix(version: string): Promise<VscodeVsixSource> {
+  const explicit = process.env.PI_VSCODE_VSIX_PATH?.trim();
+  if (explicit) {
+    if (/[\u0000\r\n]/u.test(explicit)) throw new Error("PI_VSCODE_VSIX_PATH contains invalid characters.");
+    const resolved = path.resolve(explicit.replace(/^~(?=$|[\\/])/u, process.env.HOME || process.env.USERPROFILE || "~"));
+    const stat = fs.existsSync(resolved) ? fs.statSync(resolved) : undefined;
+    if (!stat?.isFile()) throw new Error(`PI_VSCODE_VSIX_PATH does not point to a file: ${resolved}`);
+    return { path: resolved, cleanup: () => undefined };
+  }
+
+  const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const assetName = `vspilink-${version}.vsix`;
+  for (const candidate of [
+    path.join(packageRoot, "packages", "vscode", assetName),
+    path.join(packageRoot, "release", assetName),
+  ]) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return { path: candidate, cleanup: () => undefined };
+    }
+  }
+
+  const releaseBase = `https://github.com/roccoangelella/PiLink/releases/download/v${version}`;
+  const checksumManifest = await fetchBoundedHttpsText(`${releaseBase}/SHA256SUMS`, "PiLink release checksum manifest", MAX_RELEASE_MANIFEST_BYTES);
+  const expectedSha256 = checksumForReleaseAsset(checksumManifest, assetName);
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pilink-vscode-"));
+  fs.chmodSync(temporaryDirectory, 0o700);
+  const destination = path.join(temporaryDirectory, assetName);
+  try {
+    await fetchVerifiedDownload(`${releaseBase}/${assetName}`, destination, expectedSha256, "VSPiLink VSIX");
+    return {
+      path: destination,
+      cleanup: () => fs.rmSync(temporaryDirectory, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    throw new Error(
+      `Could not download the matching VSPiLink ${version} release. ` +
+      `${error instanceof Error ? error.message : String(error)} ` +
+      "Install the release VSIX manually or set PI_VSCODE_VSIX_PATH to a trusted local copy, then try again.",
+    );
+  }
+}
+
+function checksumForReleaseAsset(manifest: string, assetName: string): string {
+  for (const line of manifest.split(/\r?\n/u)) {
+    const match = line.match(/^([0-9a-fA-F]{64})  ([A-Za-z0-9._-]+)$/u);
+    if (match?.[2] === assetName) return normalizedSha256(match[1], "VSPiLink release SHA-256");
+  }
+  throw new Error(`The PiLink release checksum manifest does not contain ${assetName}.`);
+}
+
+async function fetchBoundedHttpsText(initialUrl: string, label: string, maximumBytes: number): Promise<string> {
+  let current = new URL(initialUrl);
+  const loopbackDevelopmentDownload = current.protocol === "http:" && isLoopbackDownloadHost(current.hostname);
+  if (current.protocol !== "https:" && !loopbackDevelopmentDownload) {
+    throw new Error(`${label} must be fetched over HTTPS.`);
+  }
+  const signal = AbortSignal.timeout(60_000);
+
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const response = await fetch(current, { redirect: "manual", signal });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get("location");
+      if (!location) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`${label} redirect did not include a destination.`);
+      }
+      const next = new URL(location, current);
+      const permitted = next.protocol === "https:" ||
+        (loopbackDevelopmentDownload && next.protocol === "http:" && isLoopbackDownloadHost(next.hostname));
+      await response.body?.cancel().catch(() => undefined);
+      if (!permitted) throw new Error(`${label} redirect attempted to leave the HTTPS boundary.`);
+      current = next;
+      continue;
+    }
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`${label} request failed (${response.status}).`);
+    }
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength && /^\d+$/u.test(declaredLength) && Number(declaredLength) > maximumBytes) {
+      await response.body.cancel().catch(() => undefined);
+      throw new Error(`${label} exceeds the ${maximumBytes}-byte safety limit.`);
+    }
+    const chunks: Buffer[] = [];
+    let receivedBytes = 0;
+    for await (const chunk of Readable.fromWeb(response.body)) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      receivedBytes += buffer.length;
+      if (receivedBytes > maximumBytes) throw new Error(`${label} exceeds the ${maximumBytes}-byte safety limit.`);
+      chunks.push(buffer);
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  }
+  throw new Error(`${label} exceeded the maximum redirect count.`);
 }
 
 interface StartedServer {
@@ -636,7 +810,9 @@ async function start(options: LaunchOptions): Promise<void> {
   if (mode === "vscode") {
     // The graphical handoff does not need a server configuration yet; let the
     // VS Code wizard create or select one so it can own the first-run choices.
-    launchVscodeExperience();
+    // Selecting it also bootstraps the matching extension so future lifecycle
+    // operations can happen entirely inside VS Code.
+    await launchVscodeExperience();
     return;
   }
   if (!fs.existsSync(configPath)) initialize();

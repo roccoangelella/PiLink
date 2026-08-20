@@ -35,7 +35,9 @@ test("release publishing is OIDC-only and verifies its dependency chain", async 
   assert.match(release, /npm ci --ignore-scripts --audit=false/);
   assert.match(release, /npm audit signatures/);
   assert.match(release, /npm audit --audit-level=moderate/);
+  assert.match(release, /gh release upload \"\$RELEASE_TAG\" release\/\* --clobber/);
   assert.match(release, /npm publish/);
+  assert.ok(release.indexOf("gh release upload") < release.indexOf("npm publish"), "verified release assets must be attached before npm publication");
   assert.match(release, /release\.tag_name/);
   assert.doesNotMatch(release, /NPM_TOKEN|NODE_AUTH_TOKEN|npm[_-]?token/i);
 });

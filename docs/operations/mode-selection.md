@@ -7,8 +7,10 @@ PiLink has two core server capability modes:
 | **Single agent** | `PI_RUNTIME_MODE=single` | You want the original PiLink workspace bridge: OAuth/MCP plus project tools without the shared collaboration layer. |
 | **Collaborative public chat** | `PI_RUNTIME_MODE=collaboration` | Authenticated agents must coordinate through PiLink's durable chat, tasks, work loop, memory projections, or remote supervised-agent controls. |
 
-`pilink start --mode vscode` is not a third server capability mode. It is only a
-handoff into the optional PiLink VS Code graphical launcher.
+`pilink start --mode vscode` is not a third server capability mode. It is a
+bootstrap/handoff into the optional PiLink VS Code graphical launcher: the CLI
+installs or updates the matching verified extension when needed, then opens the
+project. Subsequent Start/Stop/Restart operations can be performed from VS Code.
 
 ## VS Code launcher behavior
 

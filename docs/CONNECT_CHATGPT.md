@@ -17,7 +17,7 @@ read its page, cookies, transcript, composer, or reasoning.
 ## Recommended path with the VS Code launcher
 
 1. Open the project folder in VS Code and trust it.
-2. Open **PiLink** in the Secondary Side Bar.
+2. Open **PiLink** from the Activity Bar.
 3. Select **Set up stable endpoint**.
 4. Choose either:
    - **Cloudflare fixed domain** — PiLink provisions a stable tunnel/DNS entry

@@ -61,6 +61,22 @@ npm run dev:server   # run the raw development server
 
 For ordinary use, prefer `pilink start` or `npm run cli -- start`.
 
+## Automatic VS Code graphical bootstrap
+
+Selecting **VS Code graphical** from `pilink start`, or running
+`pilink start --mode vscode`, checks the VS Code profile reached by the selected
+`code` command for the matching PiLink extension version. If it is missing or
+outdated, PiLink uses a matching local release VSIX when available; otherwise it
+downloads the exact versioned VSIX and `SHA256SUMS` from the corresponding
+PiLink GitHub release, verifies the SHA-256, installs the extension, verifies the
+installed version, and opens the project.
+
+After this one-time bootstrap, use the PiLink Activity Bar view or the
+**PiLink: Start PiLink**, **PiLink: Stop PiLink**, and **PiLink: Restart PiLink**
+commands for normal session lifecycle control. The CLI is not required for each
+VS Code session. For an offline/reviewed local build, `PI_VSCODE_VSIX_PATH` may
+point to a trusted local VSIX.
+
 ## Recommended VS Code release install
 
 Use the installer shipped in a release bundle. It verifies the release
@@ -89,9 +105,7 @@ After installation:
 
 1. return to VS Code;
 2. run **Developer: Reload Window**;
-3. open **View -> Appearance -> Secondary Side Bar** when the right sidebar is
-   hidden;
-4. open the **PiLink** view.
+3. select **PiLink** in the Activity Bar.
 
 The managed runtime lives in user application data, not in the system Node
 installation:
@@ -131,7 +145,7 @@ If you deliberately install a VSIX without the release installer:
 3. use **Install from VSIX...**;
 4. reload the window;
 5. open the project PiLink should access;
-6. open the **PiLink** view in the Secondary Side Bar.
+6. select **PiLink** in the Activity Bar.
 
 If several Node installations exist, set **PiLink: Node Executable** to the
 exact 24.18.0 binary.

@@ -14,7 +14,7 @@ PiLink publishes through npm trusted publishing. The GitHub Actions workflow use
 3. Add required reviewers to that environment when releases should require manual approval.
 4. After the first OIDC release succeeds, disable or revoke legacy npm automation tokens that can publish this package.
 
-The workflow grants only `contents: read` and `id-token: write`. npm automatically attaches provenance when a public package is published from a public GitHub repository through trusted publishing.
+The workflow defaults to `contents: read` and `id-token: write`. The release-publishing job additionally receives `contents: write` only so it can attach the already verified release bundle (including the VSPiLink VSIX and `SHA256SUMS`) to that exact GitHub release before npm publication. npm automatically attaches provenance when a public package is published from a public GitHub repository through trusted publishing.
 
 ## Release procedure
 
@@ -33,9 +33,10 @@ The workflow grants only `contents: read` and `id-token: write`. npm automatical
 4. Create a GitHub release whose tag is exactly `v<package version>`, such as `v1.2.0`.
 5. Publish the GitHub release. This triggers `.github/workflows/release.yml`.
 6. Approve the `npm` environment deployment when required.
-7. Confirm that the workflow completed and that npm displays provenance for the published version.
+7. Confirm that the workflow attached the verified files from `release/` to the GitHub release, including the versioned VSPiLink VSIX and `SHA256SUMS`.
+8. Confirm that the workflow completed and that npm displays provenance for the published version.
 
-The workflow checks out the release tag rather than the mutable default branch, does not persist GitHub credentials in the checkout, verifies the tag against `package.json`, uses an exact Node.js LTS release and verifies its npm CLI supports OIDC, installs the locked dependency graph with lifecycle scripts disabled, verifies registry signatures and available provenance attestations, rejects moderate-or-higher known vulnerabilities, runs the full test suite, inspects the package contents, and only then executes `npm publish`.
+The workflow checks out the release tag rather than the mutable default branch, does not persist GitHub credentials in the checkout, verifies the tag against `package.json`, uses an exact Node.js LTS release and verifies its npm CLI supports OIDC, installs the locked dependency graph with lifecycle scripts disabled, verifies registry signatures and available provenance attestations, rejects moderate-or-higher known vulnerabilities, runs the full test suite, inspects the package contents, attaches only that verified release bundle to the matching GitHub release, and only then executes `npm publish`.
 
 ## Failure behavior
 

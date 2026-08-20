@@ -22,7 +22,7 @@ ChatGPT Work -> PiLink plugin -> HTTPS OAuth/MCP -> PiLink -> project folder
 ## First run
 
 1. Open the project folder in VS Code and trust it.
-2. Open **PiLink** in the Secondary Side Bar.
+2. Open **PiLink** from the Activity Bar.
 3. Choose the endpoint you actually want:
    - **Set up stable endpoint** — recommended for ChatGPT; use a Cloudflare
      fixed domain or an existing HTTPS reverse proxy;
@@ -121,8 +121,7 @@ Windows PowerShell:
 .\install.ps1
 ```
 
-Then reload VS Code and open **View -> Appearance -> Secondary Side Bar** if the
-PiLink view is hidden.
+Then reload VS Code and select **PiLink** in the Activity Bar.
 
 For source builds, Remote SSH, and upgrade details, see
 [Installation](../../docs/INSTALLATION.md).

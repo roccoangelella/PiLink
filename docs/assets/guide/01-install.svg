@@ -20,7 +20,7 @@
   <circle cx="982" cy="351" r="62" fill="#173c30" stroke="#73e6ae" stroke-width="4"/>
   <path d="M946 351l25 25 49-58" fill="none" stroke="#73e6ae" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
   <text x="982" y="451" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="25" font-weight="700">Extension installed</text>
-  <text x="982" y="489" text-anchor="middle" fill="#a9bdaf" font-family="system-ui,sans-serif" font-size="17">Open the Secondary Side Bar</text>
-  <text x="982" y="517" text-anchor="middle" fill="#a9bdaf" font-family="system-ui,sans-serif" font-size="17">and select VSPiLink</text>
+  <text x="982" y="489" text-anchor="middle" fill="#a9bdaf" font-family="system-ui,sans-serif" font-size="17">Open VSPiLink from the Activity Bar</text>
+  <text x="982" y="517" text-anchor="middle" fill="#a9bdaf" font-family="system-ui,sans-serif" font-size="17">then start or configure PiLink</text>
   <text x="60" y="625" fill="#718396" font-family="system-ui,sans-serif" font-size="16">Illustration · VSPiLink 2.2.0 · no private data shown</text>
 </svg>

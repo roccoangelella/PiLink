@@ -9,6 +9,12 @@ bridge. Its product contract is deliberately small:
 It is not a second ChatGPT interface and it is not a general control panel for
 every PiLink subsystem.
 
+When the user selects the VS Code graphical entry from `pilink start`, PiLink
+checks for the matching installed extension version, installs the verified
+versioned VSIX when needed, and opens the project. After that one-time bootstrap,
+the extension is available directly from the VS Code Activity Bar and owns the
+normal Start/Stop/Restart session lifecycle.
+
 ```text
 You work here:
 
