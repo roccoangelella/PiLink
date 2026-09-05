@@ -6,24 +6,33 @@ export type ToolName = "read" | "bash" | "run" | "edit" | "write" | "grep" | "fi
 
 export interface HarnessPolicy {
   workspace: string;
+  /** Default base for relative tool paths and process cwd. */
+  workingDirectory?: string;
   unsafeFullAccess: boolean;
   /** Explicit opt-in for fixed profiles that execute trusted workspace code. */
   allowWorkspaceExecution?: boolean;
   /** Optional client-side elicitation gate for process execution. */
   requireExecutionApproval?: boolean;
-  maxBashTimeoutSeconds: number;
 }
 
 export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): HarnessPolicy {
   const configuredClientIds = config.fullAccessClientIds ?? [];
   const clientMayUseFullAccess = clientId === undefined || configuredClientIds.includes("*") || configuredClientIds.includes(clientId);
+  const workspace = path.resolve(config.workspace);
+  const unsafeFullAccess = config.unsafeFullAccess && clientMayUseFullAccess;
   return {
-    workspace: path.resolve(config.workspace),
-    unsafeFullAccess: config.unsafeFullAccess && clientMayUseFullAccess,
+    workspace,
+    workingDirectory: unsafeFullAccess ? path.parse(workspace).root : workspace,
+    unsafeFullAccess,
     allowWorkspaceExecution: config.allowWorkspaceExecution,
     requireExecutionApproval: config.requireExecutionApproval,
-    maxBashTimeoutSeconds: config.maxBashTimeoutSeconds,
   };
+}
+
+export function operationBase(policy: Pick<HarnessPolicy, "workspace" | "workingDirectory" | "unsafeFullAccess">): string {
+  if (policy.workingDirectory) return path.resolve(policy.workingDirectory);
+  const workspace = path.resolve(policy.workspace);
+  return policy.unsafeFullAccess ? path.parse(workspace).root : workspace;
 }
 
 export function isToolAllowed(scopes: string, tool: ToolName): boolean {
@@ -42,8 +51,12 @@ export async function sanitizeToolArguments<T extends Record<string, unknown>>(
     if (!policy.unsafeFullAccess) {
       throw new Error("bash is disabled in workspace mode. Restart with --allow-unsafe-full-access only for a trusted MCP client.");
     }
-    const timeout = typeof args.timeout === "number" ? args.timeout : policy.maxBashTimeoutSeconds;
-    return { ...args, timeout: Math.min(Math.max(1, timeout), policy.maxBashTimeoutSeconds) };
+    if (typeof args.timeout === "number") {
+      if (!Number.isFinite(args.timeout) || args.timeout <= 0) throw new Error("timeout must be a positive number");
+      return { ...args, timeout: args.timeout };
+    }
+    const { timeout: _timeout, ...withoutTimeout } = args;
+    return withoutTimeout as T;
   }
 
   const sanitized = { ...args } as Record<string, unknown>;
@@ -59,7 +72,7 @@ export async function sanitizeToolArguments<T extends Record<string, unknown>>(
 }
 
 export async function resolveWorkspacePath(policy: HarnessPolicy, suppliedPath: string): Promise<string> {
-  const candidate = path.resolve(policy.workspace, suppliedPath);
+  const candidate = path.resolve(operationBase(policy), suppliedPath);
   if (policy.unsafeFullAccess) return candidate;
 
   const workspace = await fs.realpath(policy.workspace);

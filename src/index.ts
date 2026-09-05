@@ -14,7 +14,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createMcpServer, type McpAgentServices } from "./mcp.js";
 import { createOAuthRouter } from "./oauth.js";
 import { authenticateBearer, findClient } from "./auth.js";
-import { createHarnessPolicy } from "./harness.js";
+import { createHarnessPolicy, operationBase, resolveWorkspacePath } from "./harness.js";
 import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
 import { createCorsAndOriginProtection, createRateLimiter } from "./security.js";
 import { createHealthProof, HEALTH_AUTH_SCHEME, isHealthChallenge } from "./health-proof.js";
@@ -138,7 +138,7 @@ function initializeSharedAgentRuntime(): SharedAgentRuntime {
     ];
     const manager = new AgentManager({
       adapters: [adapter],
-      allowedWorkspaceRoots: [config.workspace],
+      allowedWorkspaceRoots: [operationBase(policy)],
       allowedPermissions,
       maxConcurrentAgents: effectiveAgentConcurrency,
     });
@@ -444,7 +444,9 @@ app.post("/admin/agents/spawn", requireLocalAdmin, asyncRoute(async (req, res) =
       controllerId: LOCAL_ADMIN_AGENT_CONTROLLER_ID,
       runtimeId: "pi-sdk",
       role: { canonicalRoleId: role.canonicalRoleId, occupancyLabel: role.occupancyLabel },
-      workspace: policy.workspace,
+      workspace: input.cwd === undefined
+        ? operationBase(policy)
+        : await resolveWorkspacePath(policy, input.cwd),
       permissions: input.permissions,
       initialMessage: input.initialMessage,
       ...(input.taskId ? { taskId: input.taskId } : {}),
@@ -903,6 +905,7 @@ function requireAdminAgentManager(res: express.Response): AgentManager | undefin
 interface AdminAgentSpawnInput {
   role: string;
   initialMessage: string;
+  cwd?: string;
   permissions: readonly AgentPermission[];
   taskId?: string;
   label?: string;
@@ -931,7 +934,7 @@ const ADMIN_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u;
 const UNSAFE_ADMIN_TEXT = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 
 function parseAdminSpawnRequest(value: unknown): AdminAgentSpawnInput | undefined {
-  if (!isRecord(value) || hasUnexpectedKeys(value, ["role", "initial_message", "permissions", "task_id", "label"])) {
+  if (!isRecord(value) || hasUnexpectedKeys(value, ["role", "initial_message", "cwd", "permissions", "task_id", "label"])) {
     return undefined;
   }
   if (typeof value.role !== "string" || !value.role.trim() || Buffer.byteLength(value.role, "utf8") > 128) {
@@ -943,6 +946,8 @@ function parseAdminSpawnRequest(value: unknown): AdminAgentSpawnInput | undefine
     Buffer.byteLength(value.initial_message, "utf8") > 64 * 1024 ||
     UNSAFE_ADMIN_TEXT.test(value.initial_message)
   ) return undefined;
+  const cwd = value.cwd === undefined ? undefined : optionalAdminSingleLine(value.cwd, 4096);
+  if (value.cwd !== undefined && !cwd) return undefined;
   const permissions = value.permissions === undefined
     ? config.runtimeMode === "single"
       ? DEFAULT_SINGLE_AGENT_PERMISSIONS
@@ -956,6 +961,7 @@ function parseAdminSpawnRequest(value: unknown): AdminAgentSpawnInput | undefine
   return {
     role: value.role,
     initialMessage: value.initial_message,
+    ...(cwd ? { cwd } : {}),
     permissions,
     ...(taskId ? { taskId } : {}),
     ...(label ? { label } : {}),

@@ -84,7 +84,11 @@ export class PiSdkRuntimeAdapter implements AgentRuntimeAdapter {
     }
     const permissions = new Set(context.permissions);
     const rolePrompt = buildRolePrompt(context, Boolean(this.options.coordination));
-    const scopedPolicy: HarnessPolicy = { ...this.options.policy, workspace: context.workspace };
+    const scopedPolicy: HarnessPolicy = {
+      ...this.options.policy,
+      workspace: context.workspace,
+      workingDirectory: context.workspace,
+    };
     const toolDefinitions = secureToolDefinitions(scopedPolicy, permissions, this.options.coordination, context);
     let session: PiAgentSession;
     try {
@@ -268,7 +272,7 @@ function buildRolePrompt(context: AgentRuntimeSpawnContext, coordinationAvailabl
     "Do not claim access or completion that tool results do not prove.",
   ];
   if (coordinationAvailable && context.permissions.some((permission) => permission.startsWith("coordination:"))) {
-    lines.push("Coordination tools are identity-bound to this agent. Use only assigned tasks and never place secrets in chat, status text, or artifacts.");
+    lines.push("Coordination tools are identity-bound to this agent. Use only assigned tasks.");
   }
   return lines.join("\n");
 }

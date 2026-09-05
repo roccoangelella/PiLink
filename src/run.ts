@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { HarnessPolicy } from "./harness.js";
-import { resolveWorkspacePath } from "./harness.js";
+import { operationBase, resolveWorkspacePath } from "./harness.js";
+import { filterExecutionEnvironment } from "./execution-environment.js";
 
 /**
  * The upstream constrained runner predates the current PiLink harness type.
@@ -28,6 +29,7 @@ export type RunProfile = typeof RUN_PROFILES[number];
 
 export interface RunProfileInput {
   profile: RunProfile;
+  cwd?: string;
   paths?: string[];
   maxCount?: number;
   timeout?: number;
@@ -35,6 +37,7 @@ export interface RunProfileInput {
 
 export interface RunProfileResult {
   profile: RunProfile;
+  cwd: string;
   command: string[];
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -47,10 +50,11 @@ export interface RunProfileResult {
 }
 
 interface ResolvedRunCommand {
+  cwd: string;
   executable: string;
   args: string[];
   environment: NodeJS.ProcessEnv;
-  timeoutSeconds: number;
+  timeoutSeconds?: number;
 }
 
 const MAX_STREAM_BYTES = 64 * 1024;
@@ -62,7 +66,6 @@ export async function executeRunProfile(
   abortSignal?: AbortSignal,
 ): Promise<RunProfileResult> {
   if (abortSignal?.aborted) throw new Error("Constrained command execution was cancelled before it started");
-  const workspace = await fs.realpath(policy.workspace);
   const command = await resolveRunCommand(policy, input);
   if (abortSignal?.aborted) throw new Error("Constrained command execution was cancelled before process creation");
   const startedAt = Date.now();
@@ -72,7 +75,7 @@ export async function executeRunProfile(
   let cancelled = false;
 
   const child = spawn(command.executable, command.args, {
-    cwd: workspace,
+    cwd: command.cwd,
     env: command.environment,
     shell: false,
     windowsHide: true,
@@ -83,18 +86,22 @@ export async function executeRunProfile(
   child.stdout.on("data", (chunk: Buffer | string) => stdout.append(chunk));
   child.stderr.on("data", (chunk: Buffer | string) => stderr.append(chunk));
 
-  const timeoutTimer = setTimeout(() => {
-    timedOut = true;
-    terminateProcessTree(child, "SIGTERM");
-  }, command.timeoutSeconds * 1_000);
-  timeoutTimer.unref();
+  let timeoutTimer: NodeJS.Timeout | undefined;
+  let forceKillTimer: NodeJS.Timeout | undefined;
+  if (command.timeoutSeconds !== undefined) {
+    timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      terminateProcessTree(child, "SIGTERM");
+    }, command.timeoutSeconds * 1_000);
+    timeoutTimer.unref();
 
-  const forceKillTimer = setTimeout(() => {
-    if (timedOut && child.exitCode === null && child.signalCode === null) {
-      terminateProcessTree(child, "SIGKILL");
-    }
-  }, command.timeoutSeconds * 1_000 + FORCE_KILL_DELAY_MS);
-  forceKillTimer.unref();
+    forceKillTimer = setTimeout(() => {
+      if (timedOut && child.exitCode === null && child.signalCode === null) {
+        terminateProcessTree(child, "SIGKILL");
+      }
+    }, command.timeoutSeconds * 1_000 + FORCE_KILL_DELAY_MS);
+    forceKillTimer.unref();
+  }
 
   let cancellationForceKillTimer: NodeJS.Timeout | undefined;
   const onAbort = () => {
@@ -111,14 +118,15 @@ export async function executeRunProfile(
     child.once("error", reject);
     child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
   }).finally(() => {
-    clearTimeout(timeoutTimer);
-    clearTimeout(forceKillTimer);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (forceKillTimer) clearTimeout(forceKillTimer);
     if (cancellationForceKillTimer) clearTimeout(cancellationForceKillTimer);
     abortSignal?.removeEventListener("abort", onAbort);
   });
 
   return {
     profile: input.profile,
+    cwd: command.cwd,
     command: [command.executable, ...command.args],
     exitCode: outcome.exitCode,
     signal: outcome.signal,
@@ -135,8 +143,9 @@ async function resolveRunCommand(
   policy: RunHarnessPolicy,
   input: RunProfileInput,
 ): Promise<ResolvedRunCommand> {
-  const timeoutSeconds = clampTimeout(input.timeout, policy.maxBashTimeoutSeconds);
-  const relativePaths = await normalizePaths(policy, input.paths);
+  const timeoutSeconds = resolveTimeout(input.timeout);
+  const cwd = await resolveRunDirectory(policy, input.cwd);
+  const relativePaths = await normalizePaths(policy, cwd, input.paths);
   const gitBase = [
     "--no-pager",
     "-c", "core.fsmonitor=false",
@@ -148,6 +157,7 @@ async function resolveRunCommand(
   switch (input.profile) {
     case "git_status":
       return {
+        cwd,
         executable: "git",
         args: [...gitBase, "status", "--porcelain=v1", "--branch", "--untracked-files=all", ...pathspec(relativePaths)],
         environment: gitEnvironment(),
@@ -155,6 +165,7 @@ async function resolveRunCommand(
       };
     case "git_diff":
       return {
+        cwd,
         executable: "git",
         args: [...gitBase, "diff", "--no-ext-diff", "--no-textconv", ...pathspec(relativePaths)],
         environment: gitEnvironment(),
@@ -162,6 +173,7 @@ async function resolveRunCommand(
       };
     case "git_diff_staged":
       return {
+        cwd,
         executable: "git",
         args: [...gitBase, "diff", "--cached", "--no-ext-diff", "--no-textconv", ...pathspec(relativePaths)],
         environment: gitEnvironment(),
@@ -173,6 +185,7 @@ async function resolveRunCommand(
         throw new Error("maxCount must be an integer between 1 and 100");
       }
       return {
+        cwd,
         executable: "git",
         args: [...gitBase, "log", "--oneline", "--decorate=short", `--max-count=${maxCount}`, ...pathspec(relativePaths)],
         environment: gitEnvironment(),
@@ -182,6 +195,7 @@ async function resolveRunCommand(
     case "npm_build":
       requireWorkspaceExecution(policy, input);
       return {
+        cwd,
         executable: npmExecutable(),
         args: ["run", "build", "--if-present"],
         environment: workspaceExecutionEnvironment(),
@@ -190,6 +204,7 @@ async function resolveRunCommand(
     case "npm_test":
       requireWorkspaceExecution(policy, input);
       return {
+        cwd,
         executable: npmExecutable(),
         args: ["test"],
         environment: workspaceExecutionEnvironment(),
@@ -200,18 +215,34 @@ async function resolveRunCommand(
   }
 }
 
-async function normalizePaths(policy: RunHarnessPolicy, suppliedPaths: string[] | undefined): Promise<string[]> {
+async function resolveRunDirectory(policy: RunHarnessPolicy, suppliedCwd: string | undefined): Promise<string> {
+  const requested = suppliedCwd ?? operationBase(policy);
+  if (typeof requested !== "string" || requested.length === 0 || requested.includes("\0")) {
+    throw new Error("cwd must be a non-empty path without NUL bytes");
+  }
+  const resolved = await resolveWorkspacePath(policy, requested);
+  let canonical: string;
+  try {
+    canonical = await fs.realpath(resolved);
+  } catch {
+    throw new Error(`cwd does not exist: ${requested}`);
+  }
+  if (!(await fs.stat(canonical)).isDirectory()) throw new Error(`cwd is not a directory: ${requested}`);
+  return canonical;
+}
+
+async function normalizePaths(policy: RunHarnessPolicy, cwd: string, suppliedPaths: string[] | undefined): Promise<string[]> {
   if (!suppliedPaths) return [];
   if (suppliedPaths.length > 50) throw new Error("paths may contain at most 50 entries");
 
-  const confinedPolicy: RunHarnessPolicy = { ...policy, unsafeFullAccess: false };
   const normalized: string[] = [];
   for (const suppliedPath of suppliedPaths) {
     if (typeof suppliedPath !== "string" || suppliedPath.length === 0 || suppliedPath.includes("\0")) {
       throw new Error("Every path must be a non-empty string without NUL bytes");
     }
-    const absolutePath = await resolveWorkspacePath(confinedPolicy, suppliedPath);
-    const relativePath = path.relative(policy.workspace, absolutePath);
+    const candidate = path.isAbsolute(suppliedPath) ? suppliedPath : path.resolve(cwd, suppliedPath);
+    const absolutePath = await resolveWorkspacePath(policy, candidate);
+    const relativePath = path.relative(cwd, absolutePath);
     normalized.push(relativePath === "" ? "." : relativePath.split(path.sep).join("/"));
   }
   return normalized;
@@ -224,7 +255,7 @@ function pathspec(paths: string[]): string[] {
 function requireWorkspaceExecution(policy: RunHarnessPolicy, input: RunProfileInput): void {
   if (input.paths && input.paths.length > 0) {
     throw new Error(
-      `paths cannot be used with ${input.profile}. Remove paths; this profile runs the package script for the configured workspace.`,
+      `paths cannot be used with ${input.profile}. Remove paths; this profile runs the package script in cwd.`,
     );
   }
   if (!policy.allowWorkspaceExecution && !policy.unsafeFullAccess) {
@@ -235,10 +266,10 @@ function requireWorkspaceExecution(policy: RunHarnessPolicy, input: RunProfileIn
   }
 }
 
-function clampTimeout(timeout: number | undefined, maximum: number): number {
-  const selected = timeout ?? maximum;
-  if (!Number.isFinite(selected) || selected <= 0) throw new Error("timeout must be a positive number");
-  return Math.min(Math.max(1, selected), maximum);
+function resolveTimeout(timeout: number | undefined): number | undefined {
+  if (timeout === undefined) return undefined;
+  if (!Number.isFinite(timeout) || timeout <= 0) throw new Error("timeout must be a positive number");
+  return timeout;
 }
 
 function gitEnvironment(): NodeJS.ProcessEnv {
@@ -256,11 +287,12 @@ function gitEnvironment(): NodeJS.ProcessEnv {
 }
 
 function workspaceExecutionEnvironment(): NodeJS.ProcessEnv {
-  return minimalEnvironment({
+  return {
+    ...filterExecutionEnvironment(process.env),
     CI: "1",
     NO_COLOR: "1",
     FORCE_COLOR: "0",
-  });
+  };
 }
 
 function minimalEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

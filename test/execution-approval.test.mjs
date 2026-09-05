@@ -61,7 +61,7 @@ test("approved unrestricted bash executes only after exact form elicitation", as
   const connection = await connected(value, { action: "accept", content: { approved: true } });
   t.after(() => connection.close());
   const marker = path.join(value.workspace, "approved.txt");
-  const command = `node -e "require('node:fs').writeFileSync('approved.txt','yes')"`;
+  const command = `node -e "require('node:fs').writeFileSync(process.argv[1],'yes')" ${JSON.stringify(marker)}`;
 
   const result = await connection.client.callTool({ name: "bash", arguments: { command } });
   assert.notEqual(result.isError, true);
@@ -83,15 +83,15 @@ test("decline, cancel, and unchecked acceptance fail closed without execution", 
     ["unchecked", { action: "accept", content: { approved: false } }, /not explicitly approved/],
   ]) {
     const connection = await connected(value, response);
-    const marker = `${name}.txt`;
+    const marker = path.join(value.workspace, `${name}.txt`);
     try {
       const result = await connection.client.callTool({
         name: "bash",
-        arguments: { command: `node -e "require('node:fs').writeFileSync('${marker}','bad')"` },
+        arguments: { command: `node -e "require('node:fs').writeFileSync(process.argv[1],'bad')" ${JSON.stringify(marker)}` },
       });
       assert.equal(result.isError, true, name);
       assert.match(resultText(result), expected, name);
-      await assert.rejects(fs.access(path.join(value.workspace, marker)), undefined, name);
+      await assert.rejects(fs.access(marker), undefined, name);
     } finally {
       await connection.close();
     }
@@ -142,11 +142,11 @@ test("approval is limited to code execution profiles, not read-only Git inspecti
   const connection = await connected(value, { action: "accept", content: { approved: true } });
   t.after(() => connection.close());
 
-  const git = await connection.client.callTool({ name: "run", arguments: { profile: "git_status" } });
+  const git = await connection.client.callTool({ name: "run", arguments: { profile: "git_status", cwd: value.workspace } });
   assert.equal(connection.requests.length, 0);
   assert.equal(git.isError, true); // The temporary directory is intentionally not a Git repository.
 
-  const npm = await connection.client.callTool({ name: "run", arguments: { profile: "npm_test" } });
+  const npm = await connection.client.callTool({ name: "run", arguments: { profile: "npm_test", cwd: value.workspace } });
   assert.notEqual(npm.isError, true);
   assert.equal(connection.requests.length, 1);
   assert.match(connection.requests[0].params.message, /Repository-code profile npm_test/);
@@ -182,7 +182,7 @@ test("approval mode rejects shell commands too large for meaningful review", asy
   assert.equal(connection.requests.length, 0);
 });
 
-test("direct MCP bash receives operational variables without inheriting server secrets", async (t) => {
+test("direct MCP bash inherits server credentials and operational variables", async (t) => {
   const value = await fixture(t);
   value.policy.requireExecutionApproval = false;
   const connection = await connected(value, undefined, false);
@@ -204,10 +204,16 @@ test("direct MCP bash receives operational variables without inheriting server s
   const result = await connection.client.callTool({
     name: "bash",
     arguments: {
-      command: `node -e "process.stdout.write(JSON.stringify({safe:process.env.LC_VSPILINK_TEST,jwt:process.env.JWT_SECRET,bootstrap:process.env.PI_BOOTSTRAP_SECRET,provider:process.env.OPENAI_API_KEY}))"`,
+      command: `node -e "process.stdout.write(JSON.stringify({cwd:process.cwd(),safe:process.env.LC_VSPILINK_TEST,jwt:process.env.JWT_SECRET,bootstrap:process.env.PI_BOOTSTRAP_SECRET,provider:process.env.OPENAI_API_KEY}))"`,
     },
   });
 
   assert.notEqual(result.isError, true);
-  assert.deepEqual(JSON.parse(resultText(result)), { safe: "preserved" });
+  assert.deepEqual(JSON.parse(resultText(result)), {
+    cwd: path.parse(path.resolve(value.workspace)).root,
+    safe: "preserved",
+    jwt: "mcp-jwt-secret",
+    bootstrap: "mcp-bootstrap-secret",
+    provider: "mcp-provider-key",
+  });
 });

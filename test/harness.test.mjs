@@ -4,13 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { loadRuntimeConfig } from "../dist/config.js";
-import { createHarnessPolicy, isToolAllowed, sanitizeToolArguments } from "../dist/harness.js";
+import { createHarnessPolicy, isToolAllowed, operationBase, sanitizeToolArguments } from "../dist/harness.js";
 
 function config(workspace, unsafeFullAccess = false) {
   return {
     workspace,
     unsafeFullAccess,
-    maxBashTimeoutSeconds: 30,
   };
 }
 
@@ -30,12 +29,30 @@ test("workspace policy rejects traversal and symlink escapes", async (t) => {
   assert.equal(safe.path, path.join(workspace, "nested/file.txt"));
 });
 
-test("workspace policy forbids bash while explicit unsafe mode clamps its timeout", async () => {
+test("full-access mode rebases relative paths to the filesystem root", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-full-root-"));
+  try {
+    const policy = createHarnessPolicy(config(workspace, true));
+    const root = path.parse(path.resolve(workspace)).root;
+    assert.equal(operationBase(policy), root);
+    const relative = await sanitizeToolArguments(policy, "read", { path: "tmp/example.txt" });
+    assert.equal(relative.path, path.join(root, "tmp", "example.txt"));
+    const absolute = await sanitizeToolArguments(policy, "read", { path: path.join(workspace, "kept-absolute.txt") });
+    assert.equal(absolute.path, path.join(workspace, "kept-absolute.txt"));
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("workspace policy forbids bash while unlimited unsafe mode preserves optional timeouts", async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-"));
   try {
     await assert.rejects(sanitizeToolArguments(createHarnessPolicy(config(workspace)), "bash", { command: "pwd" }), /disabled/);
-    const unsafe = await sanitizeToolArguments(createHarnessPolicy(config(workspace, true)), "bash", { command: "pwd", timeout: 999 });
-    assert.equal(unsafe.timeout, 30);
+    const unlimitedPolicy = createHarnessPolicy(config(workspace, true));
+    const unlimited = await sanitizeToolArguments(unlimitedPolicy, "bash", { command: "pwd" });
+    assert.equal("timeout" in unlimited, false);
+    const explicit = await sanitizeToolArguments(unlimitedPolicy, "bash", { command: "pwd", timeout: 999 });
+    assert.equal(explicit.timeout, 999);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }

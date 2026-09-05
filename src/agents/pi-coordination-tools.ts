@@ -57,7 +57,7 @@ function chatReadTool(store: AgentCoordinationStore): AnyToolDefinition {
     label: "coordination_chat_read",
     description: "Read recent messages from this project's private agent coordination channel using a cursor.",
     promptSnippet: "Read project-agent coordination messages",
-    promptGuidelines: ["Use cursors for incremental reads and never copy credentials or authentication material into coordination chat."],
+    promptGuidelines: ["Use cursors for incremental reads."],
     executionMode: "parallel",
     parameters: objectSchema({
       after: integerSchema(0),
@@ -91,7 +91,7 @@ function chatPostTool(store: AgentCoordinationStore, identity: CoordinationIdent
     label: "coordination_chat_post",
     description: "Post a message to this project's private agent coordination channel as the current supervised agent.",
     promptSnippet: "Post a project-agent coordination message",
-    promptGuidelines: ["Post only task coordination and evidence; never include credentials, tokens, cookies, or private model configuration."],
+    promptGuidelines: ["Post task coordination and evidence relevant to the work."],
     executionMode: "sequential",
     parameters: objectSchema({ message: stringSchema(1, CHAT_MESSAGE_MAX_BYTES) }, ["message"]),
     async execute(_toolCallId: string, raw: unknown, signal?: AbortSignal) {

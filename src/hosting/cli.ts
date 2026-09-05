@@ -86,11 +86,16 @@ async function runFixedDomainProvisionCli(
 ): Promise<number> {
   try {
     const values = parseFixedDomainProvisionOptions(argv);
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+    const apiToken = (
+      values.get("--api-token")
+      ?? values.get("--token")
+      ?? values.get("--secret")
+      ?? process.env.CLOUDFLARE_API_TOKEN
+    )?.trim();
     if (!apiToken) {
       throw new HostingCliInputError(
         "HOSTING_CLOUDFLARE_API_TOKEN_REQUIRED",
-        "CLOUDFLARE_API_TOKEN is required in the process environment for fixed-domain provisioning",
+        "a Cloudflare API token is required via --api-token, --token, --secret, or CLOUDFLARE_API_TOKEN",
       );
     }
     const result = await provisionFixedDomainTunnel({
@@ -113,13 +118,12 @@ async function runFixedDomainProvisionCli(
 }
 
 function parseFixedDomainProvisionOptions(args: string[]): Map<string, string> {
-  const allowed = new Set(["--hostname", "--origin", "--token-dir"]);
+  const requiredOptions = ["--hostname", "--origin", "--token-dir"];
+  const secretOptions = ["--api-token", "--token", "--secret"];
+  const allowed = new Set([...requiredOptions, ...secretOptions]);
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
-    if (["--api-token", "--token", "--secret"].some((name) => option === name || option.startsWith(`${name}=`))) {
-      throw new HostingCliInputError("HOSTING_SECRET_IN_ARGV", "Cloudflare API tokens are forbidden in argv; use CLOUDFLARE_API_TOKEN in the process environment");
-    }
     if (!allowed.has(option)) throw new HostingCliInputError("HOSTING_OPTION_UNKNOWN", "unknown or malformed fixed-domain provisioning option");
     if (values.has(option)) throw new HostingCliInputError("HOSTING_OPTION_DUPLICATE", `${option} may be specified only once`);
     const value = args[index + 1];
@@ -129,7 +133,10 @@ function parseFixedDomainProvisionOptions(args: string[]): Map<string, string> {
     values.set(option, value);
     index += 1;
   }
-  for (const name of allowed) required(values, name);
+  for (const name of requiredOptions) required(values, name);
+  if (secretOptions.filter((name) => values.has(name)).length > 1) {
+    throw new HostingCliInputError("HOSTING_OPTION_DUPLICATE", "specify only one of --api-token, --token, or --secret");
+  }
   return values;
 }
 
@@ -295,13 +302,6 @@ function parseOptions(args: string[]): { values: Map<string, string>; apply: boo
     "--server-unit-name",
     "--expected-owner-uid",
   ]);
-  const forbiddenSecretOptions = new Set([
-    "--token",
-    "--secret",
-    "--client-secret",
-    "--certificate-contents",
-    "--credentials-contents",
-  ]);
   const values = new Map<string, string>();
   let apply = false;
   for (let index = 0; index < args.length; index += 1) {
@@ -310,9 +310,6 @@ function parseOptions(args: string[]): { values: Map<string, string>; apply: boo
       if (apply) throw new HostingCliInputError("HOSTING_OPTION_DUPLICATE", "--apply may be specified only once");
       apply = true;
       continue;
-    }
-    if (forbiddenSecretOptions.has(option) || [...forbiddenSecretOptions].some((name) => option.startsWith(`${name}=`))) {
-      throw new HostingCliInputError("HOSTING_SECRET_IN_ARGV", "secret values are forbidden in argv; use a private token file or certificate file");
     }
     if (!valueOptions.has(option)) {
       throw new HostingCliInputError("HOSTING_OPTION_UNKNOWN", "unknown or malformed hosting option");

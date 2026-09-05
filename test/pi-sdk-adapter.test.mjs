@@ -115,7 +115,7 @@ test("Pi SDK adapter refuses model access without network permission", async (t)
   assert.equal(factoryCalled, false);
 });
 
-test("Pi child-agent bash receives operational variables without inheriting server secrets", async (t) => {
+test("Pi child-agent bash inherits server credentials and operational variables", async (t) => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "vspilink-pi-adapter-env-"));
   t.after(() => fs.rm(workspace, { recursive: true, force: true }));
   let factoryContext;
@@ -137,7 +137,7 @@ test("Pi child-agent bash receives operational variables without inheriting serv
     agentId: "agent_12345678-1234-4123-8123-123456789abc",
     role: { canonicalRoleId: "implementer", occupancyLabel: "implementer" },
     workspace,
-    permissions: ["process:execute", "network:outbound"],
+    permissions: ["workspace:write", "process:execute", "network:outbound"],
     initialMessage: "Wait",
     signal: new AbortController().signal,
     report: () => undefined,
@@ -162,12 +162,25 @@ test("Pi child-agent bash receives operational variables without inheriting serv
   const result = await bash.execute(
     "call_env_test",
     {
-      command: `node -e "process.stdout.write(JSON.stringify({safe:process.env.LC_VSPILINK_CHILD_TEST,jwt:process.env.JWT_SECRET,bootstrap:process.env.PI_BOOTSTRAP_SECRET,provider:process.env.ANTHROPIC_API_KEY}))"`,
+      command: `node -e "process.stdout.write(JSON.stringify({cwd:process.cwd(),safe:process.env.LC_VSPILINK_CHILD_TEST,jwt:process.env.JWT_SECRET,bootstrap:process.env.PI_BOOTSTRAP_SECRET,provider:process.env.ANTHROPIC_API_KEY}))"`,
     },
     new AbortController().signal,
   );
 
   assert.deepEqual(JSON.parse(result.content.find((item) => item.type === "text").text), {
+    cwd: await fs.realpath(workspace),
     safe: "preserved",
+    jwt: "child-jwt-secret",
+    bootstrap: "child-bootstrap-secret",
+    provider: "child-provider-key",
   });
+
+  const write = factoryContext.toolDefinitions.find((tool) => tool.name === "workspace_write");
+  assert.ok(write);
+  await write.execute(
+    "call_write_test",
+    { path: "relative-child.txt", content: "child-cwd" },
+    new AbortController().signal,
+  );
+  assert.equal(await fs.readFile(path.join(workspace, "relative-child.txt"), "utf8"), "child-cwd");
 });

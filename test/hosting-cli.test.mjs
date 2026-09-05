@@ -80,12 +80,12 @@ test("production hosting CLI performs an explicit JSON dry-run/apply cutover wit
   assert.equal(disabled.json.result.state, "disabled");
 });
 
-test("hosting CLI rejects secret values in argv and apply on read-only commands", async (t) => {
+test("hosting CLI treats unsupported auth options normally and rejects apply on read-only commands", async (t) => {
   const fixture = await createFixture(t);
   const secret = "argv-secret-must-not-echo";
   const secretResult = await runRaw(fixture, ["hosting", "inspect", "--token", secret]);
   assert.equal(secretResult.code, 1);
-  assert.equal(secretResult.json.error.code, "HOSTING_SECRET_IN_ARGV");
+  assert.equal(secretResult.json.error.code, "HOSTING_OPTION_UNKNOWN");
   assert.doesNotMatch(`${secretResult.stdout}\n${secretResult.stderr}`, new RegExp(secret));
 
   const applyResult = await runHosting(fixture, "status", ["--apply"]);

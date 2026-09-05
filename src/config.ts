@@ -27,7 +27,6 @@ export interface RuntimeConfig {
   fullAccessClientIds: readonly string[];
   allowWorkspaceExecution: boolean;
   requireExecutionApproval: boolean;
-  maxBashTimeoutSeconds: number;
   maxMcpSessionsTotal: number;
   maxMcpSessionsPerClient: number;
   mcpSessionIdleTimeoutSeconds: number;
@@ -81,7 +80,6 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   if (oauthConsentMode !== "browser" && oauthConsentMode !== "paired") {
     throw new Error("PI_OAUTH_CONSENT_MODE must be 'browser' or 'paired'");
   }
-  const maxBashTimeoutSeconds = positiveInteger(env.PI_MAX_BASH_TIMEOUT, 120, "PI_MAX_BASH_TIMEOUT");
   const maxMcpSessionsTotal = positiveInteger(env.PI_MAX_MCP_SESSIONS_TOTAL, 64, "PI_MAX_MCP_SESSIONS_TOTAL");
   const maxMcpSessionsPerClient = positiveInteger(env.PI_MAX_MCP_SESSIONS_PER_CLIENT, 16, "PI_MAX_MCP_SESSIONS_PER_CLIENT");
   const mcpSessionIdleTimeoutSeconds = positiveInteger(env.PI_MCP_SESSION_IDLE_TIMEOUT, 10 * 60, "PI_MCP_SESSION_IDLE_TIMEOUT");
@@ -158,7 +156,6 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     fullAccessClientIds,
     allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
     requireExecutionApproval: env.PI_REQUIRE_EXECUTION_APPROVAL === "true",
-    maxBashTimeoutSeconds,
     maxMcpSessionsTotal,
     maxMcpSessionsPerClient,
     mcpSessionIdleTimeoutSeconds,

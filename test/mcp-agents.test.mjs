@@ -27,7 +27,7 @@ const AGENT_TOOLS = [
   "coordination_agent_task_update",
 ];
 
-async function fixture(t, scopes, withAgents = true, withCoordination = true) {
+async function fixture(t, scopes, withAgents = true, withCoordination = true, unsafeFullAccess = false) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "vspilink-mcp-agents-"));
   const workspace = path.join(root, "workspace");
   await fs.mkdir(workspace);
@@ -47,13 +47,14 @@ async function fixture(t, scopes, withAgents = true, withCoordination = true) {
   let sequence = 0;
   const manager = new AgentManager({
     adapters: [adapter],
-    allowedWorkspaceRoots: [workspace],
+    allowedWorkspaceRoots: [unsafeFullAccess ? path.parse(path.resolve(workspace)).root : workspace],
     allowedPermissions: [
       "coordination:read",
       "coordination:write",
       "workspace:read",
       "workspace:write",
       "network:outbound",
+      ...(unsafeFullAccess ? ["process:execute"] : []),
     ],
     maxConcurrentAgents: 3,
     idFactory: () => `agent_00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`,
@@ -79,8 +80,7 @@ async function fixture(t, scopes, withAgents = true, withCoordination = true) {
   } : undefined;
   const server = createMcpServer({
     workspace,
-    unsafeFullAccess: false,
-    maxBashTimeoutSeconds: 30,
+    unsafeFullAccess,
   }, scopes, services);
   const client = new Client({ name: "mcp-agent-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -92,7 +92,7 @@ async function fixture(t, scopes, withAgents = true, withCoordination = true) {
     await manager.dispose().catch(() => undefined);
     await fs.rm(root, { recursive: true, force: true });
   });
-  return { workspace: await fs.realpath(workspace), adapterState, client };
+  return { root, workspace: await fs.realpath(workspace), adapterState, client };
 }
 
 function responseText(result) {
@@ -137,7 +137,7 @@ test("agent MCP reads require mcp:read and mutations require mcp:write", async (
   assert.match(responseText(deniedRead), /does not permit agent read operations/u);
 });
 
-test("MCP spawn is workspace-fixed, defaults to bounded permissions, and filters private runtime data", async (t) => {
+test("MCP spawn defaults to the configured workspace in safe mode and filters private runtime data", async (t) => {
   const value = await fixture(t, "mcp:tools");
   const secretPrompt = "private instruction bearer-secret-123";
   const spawnedResult = await value.client.callTool({
@@ -187,6 +187,34 @@ test("MCP spawn is workspace-fixed, defaults to bounded permissions, and filters
   assert.equal(deniedExecution.isError, true);
   assert.equal(responseText(deniedExecution), "Error: agent_spawn_failed");
   assert.equal(value.adapterState.contexts.length, 1);
+});
+
+test("full-access MCP spawn defaults to filesystem root and accepts arbitrary cwd", async (t) => {
+  const value = await fixture(t, "mcp:tools", true, true, true);
+  const filesystemRoot = path.parse(path.resolve(value.workspace)).root;
+  const external = path.join(value.root, "external-agent-work");
+  await fs.mkdir(external);
+
+  const defaultSpawn = responseJson(await value.client.callTool({
+    name: "agent_spawn",
+    arguments: { role: "researcher", initial_message: "Inspect machine root" },
+  })).agent;
+  assert.equal(defaultSpawn.status, "running");
+  assert.equal(value.adapterState.contexts[0].workspace, filesystemRoot);
+  assert.notEqual(value.adapterState.contexts[0].workspace, value.workspace);
+
+  const customSpawn = responseJson(await value.client.callTool({
+    name: "agent_spawn",
+    arguments: {
+      role: "implementer",
+      initial_message: "Work in the requested directory",
+      cwd: external,
+      permissions: ["workspace:read", "workspace:write", "process:execute"],
+    },
+  })).agent;
+  assert.equal(customSpawn.status, "running");
+  assert.equal(value.adapterState.contexts[1].workspace, await fs.realpath(external));
+  assert.deepEqual(value.adapterState.contexts[1].permissions, ["workspace:read", "workspace:write", "process:execute"]);
 });
 
 test("MCP task/chat bridge binds authenticated identity and managed-agent assignment", async (t) => {

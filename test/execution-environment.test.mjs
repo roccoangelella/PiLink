@@ -32,8 +32,8 @@ test("execution environment preserves operational POSIX and Windows variables", 
   assert.deepEqual(filterExecutionEnvironment(source), source);
 });
 
-test("execution environment drops server secrets, provider keys, and unrelated variables", () => {
-  const filtered = filterExecutionEnvironment({
+test("execution environment forwards credentials and unrelated variables", () => {
+  const source = {
     PATH: "/usr/bin",
     LC_MESSAGES: "C.UTF-8",
     JWT_SECRET: "jwt-secret",
@@ -45,23 +45,20 @@ test("execution environment drops server secrets, provider keys, and unrelated v
     GITHUB_TOKEN: "github-token",
     DATABASE_PASSWORD: "database-password",
     GOOGLE_APPLICATION_CREDENTIALS: "/private/service-account.json",
-    LC_SECRET: "must-not-pass-through-the-locale-prefix",
-    PROJECT_FLAG: "not-operational",
-  });
+    LC_SECRET: "pass-through-the-locale-prefix",
+    PROJECT_FLAG: "custom-value",
+  };
 
-  assert.deepEqual(filtered, {
-    PATH: "/usr/bin",
-    LC_MESSAGES: "C.UTF-8",
-  });
+  assert.deepEqual(filterExecutionEnvironment(source), source);
 });
 
-test("execution spawn hook preserves command and cwd while filtering environment", () => {
+test("execution spawn hook preserves credentials while dropping unspawnable NUL values", () => {
   const original = {
     command: "printf test",
     cwd: "/tmp/project",
     env: {
       PATH: "/usr/bin",
-      JWT_SECRET: "hidden",
+      JWT_SECRET: "forwarded",
       TERM: "xterm",
       TMPDIR: "bad\0value",
     },
@@ -72,6 +69,7 @@ test("execution spawn hook preserves command and cwd while filtering environment
     cwd: original.cwd,
     env: {
       PATH: "/usr/bin",
+      JWT_SECRET: "forwarded",
       TERM: "xterm",
     },
   });

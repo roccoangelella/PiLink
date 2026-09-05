@@ -328,7 +328,6 @@ function initialize(portOverride?: number): void {
     `PORT=${portOverride ?? 3200}`,
     `JWT_SECRET=${secret()}`,
     `PI_BOOTSTRAP_SECRET=${secret()}`,
-    "PI_MAX_BASH_TIMEOUT=120",
     "PI_MAX_MCP_SESSIONS_TOTAL=64",
     "PI_MAX_MCP_SESSIONS_PER_CLIENT=16",
     "PI_MCP_SESSION_IDLE_TIMEOUT=600",
