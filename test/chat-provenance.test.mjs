@@ -22,7 +22,7 @@ test("verified author snapshots map canonical roles without inspecting message t
     canonicalRoleId: "implementer",
     occupancyLabel: "dev",
     contractId: "pilink-collaboration/implementer",
-    contractVersion: "1.1.0",
+    contractVersion: "1.2.0",
     displayRoleId: "dev",
     displayRoleLabel: "DEV",
   });

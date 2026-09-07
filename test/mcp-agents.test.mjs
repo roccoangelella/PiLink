@@ -76,6 +76,14 @@ async function fixture(t, scopes, withAgents = true, withCoordination = true, un
       actorName: "Test controller",
       authority: "controller",
     },
+    allowedPermissions: [
+      "coordination:read",
+      "coordination:write",
+      "workspace:read",
+      "workspace:write",
+      "network:outbound",
+      ...(unsafeFullAccess ? ["process:execute"] : []),
+    ],
     defaultRuntimeId: "test-runtime",
   } : undefined;
   const server = createMcpServer({
@@ -156,6 +164,7 @@ test("MCP spawn defaults to the configured workspace in safe mode and filters pr
     "coordination:write",
     "workspace:read",
     "network:outbound",
+    "workspace:write",
   ]);
   assert.equal(value.adapterState.contexts[0].workspace, value.workspace);
   assert.equal(value.adapterState.contexts[0].initialMessage, secretPrompt);
@@ -185,23 +194,21 @@ test("MCP spawn defaults to the configured workspace in safe mode and filters pr
     },
   });
   assert.equal(deniedExecution.isError, true);
-  assert.equal(responseText(deniedExecution), "Error: agent_spawn_failed");
+  assert.equal(responseText(deniedExecution), "Error: agent_permission_not_authorized_for_client");
   assert.equal(value.adapterState.contexts.length, 1);
 });
 
-test("full-access MCP spawn defaults to filesystem root and accepts arbitrary cwd", async (t) => {
+test("full-access MCP spawn defaults to the project and accepts arbitrary cwd", async (t) => {
   const value = await fixture(t, "mcp:tools", true, true, true);
-  const filesystemRoot = path.parse(path.resolve(value.workspace)).root;
   const external = path.join(value.root, "external-agent-work");
   await fs.mkdir(external);
 
   const defaultSpawn = responseJson(await value.client.callTool({
     name: "agent_spawn",
-    arguments: { role: "researcher", initial_message: "Inspect machine root" },
+    arguments: { role: "researcher", initial_message: "Inspect the project" },
   })).agent;
   assert.equal(defaultSpawn.status, "running");
-  assert.equal(value.adapterState.contexts[0].workspace, filesystemRoot);
-  assert.notEqual(value.adapterState.contexts[0].workspace, value.workspace);
+  assert.equal(value.adapterState.contexts[0].workspace, value.workspace);
 
   const customSpawn = responseJson(await value.client.callTool({
     name: "agent_spawn",

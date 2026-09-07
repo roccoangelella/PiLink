@@ -210,7 +210,7 @@ test("direct MCP bash inherits server credentials and operational variables", as
 
   assert.notEqual(result.isError, true);
   assert.deepEqual(JSON.parse(resultText(result)), {
-    cwd: path.parse(path.resolve(value.workspace)).root,
+    cwd: await fs.realpath(value.workspace),
     safe: "preserved",
     jwt: "mcp-jwt-secret",
     bootstrap: "mcp-bootstrap-secret",

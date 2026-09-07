@@ -137,7 +137,7 @@ test("verified assignment composes base, trusted metadata, shared loop, and role
   assert.ok(assignmentIndex > baseIndex);
   assert.ok(sharedIndex > assignmentIndex);
   assert.ok(roleIndex > sharedIndex);
-  assert.match(prompt, /Contract: pilink-collaboration\/ai-engineer@1\.1\.0/);
+  assert.match(prompt, /Contract: pilink-collaboration\/ai-engineer@1\.2\.0/);
   assert.match(prompt, /never grants capabilities/i);
   assert.match(prompt, /prompt composition and precedence/i);
   assert.match(prompt, /durable agent-memory and documentation schemas/i);
@@ -234,10 +234,10 @@ test("role contract content changes require an explicit golden digest update", (
       .digest("hex"),
   ]));
   assert.deepEqual(actual, {
-    "pilink-collaboration/manager@1.1.0": "66b85075d51ec0aa7ab1035d2325a3dd6495cd4ada11327e8045de86add904b0",
-    "pilink-collaboration/researcher@1.1.0": "6276a746fe9fa29875e7e45416c19bcbac48ec90ee15e2eb33fb494560887443",
-    "pilink-collaboration/implementer@1.1.0": "695d79120a1a951cfbcd2f9ea0a1ed438ca06e70e4d9dcdf02a035f226a1261d",
-    "pilink-collaboration/ai-engineer@1.1.0": "045691cc804e1dfb0a12e46f63030b95ce645b40a90eef585e732700ba2470a6",
-    "pilink-collaboration/collaborator@1.1.0": "f38705096b836ef87bdd7c143b5ed172c6744b06b8eb81e8d5953016c97f753a",
+    "pilink-collaboration/manager@1.2.0": "8299d7c6553b115b8b2fbd42d6a62d323b5bdd26471f42fd75ea1d3ec56b4663",
+    "pilink-collaboration/researcher@1.2.0": "eba89e3abbfcc1ac8f8b6e4ce353a5313540ddc2b29d5cb6b676c46cedc1e5be",
+    "pilink-collaboration/implementer@1.2.0": "7930994fce6829f434ab11b21caaff89d6cf4582074d6d5d07db2fd0679bf39e",
+    "pilink-collaboration/ai-engineer@1.2.0": "c2b690069c069c2a7468dd0d8c6c3852d0478d99d0a628adefd1ad0b7fcec3b6",
+    "pilink-collaboration/collaborator@1.2.0": "bffa42d68199b19eea7ba5e07c7e088add5fe029a3f5de0c123b953a5cf1b525",
   });
 });

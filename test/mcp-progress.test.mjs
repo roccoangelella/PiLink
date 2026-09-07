@@ -20,7 +20,7 @@ test("run sends ordered progress when the MCP client requests it", async (t) => 
 
   const handle = createMcpServer(
     { workspace, unsafeFullAccess: false, allowWorkspaceExecution: false, maxBashTimeoutSeconds: 10 },
-    "mcp:write",
+    "mcp:tools",
   );
   const client = new Client({ name: "mcp-progress-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

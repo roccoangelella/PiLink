@@ -1,6 +1,15 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  evaluateTaskReadiness,
+  normalizeTaskScheduling,
+  selectNextReadyTask,
+  type NormalizedTaskScheduling,
+  type SchedulingDecision,
+  type SchedulingSnapshot,
+  type VerifiedSchedulingContext,
+} from "./scheduling.js";
 
 export const AGENT_TASK_LIMIT = 200;
 export const AGENT_TASK_TITLE_MAX_BYTES = 256;
@@ -38,6 +47,7 @@ export interface AgentTask {
   taskId: string;
   title: string;
   details?: string;
+  scheduling: NormalizedTaskScheduling;
   status: AgentTaskStatus;
   statusMessage?: string;
   artifact?: string;
@@ -64,6 +74,7 @@ export interface AgentTaskStoreOptions {
 export interface AgentTaskCreateInput extends AgentTaskIdentity {
   title: string;
   details?: string;
+  scheduling?: unknown;
 }
 
 export interface AgentTaskMutationInput extends AgentTaskIdentity {
@@ -73,6 +84,17 @@ export interface AgentTaskMutationInput extends AgentTaskIdentity {
 
 export interface AgentTaskClaimInput extends AgentTaskMutationInput {
   leaseSeconds?: number;
+  schedulingContext?: VerifiedSchedulingContext;
+}
+
+export interface AgentTaskClaimNextInput extends AgentTaskIdentity {
+  leaseSeconds?: number;
+  schedulingContext: VerifiedSchedulingContext;
+}
+
+export interface AgentTaskClaimNextResult {
+  task?: AgentTask;
+  decision: SchedulingDecision;
 }
 
 export interface AgentTaskUpdateInput extends AgentTaskMutationInput {
@@ -93,7 +115,7 @@ export interface AgentTaskListOptions {
 }
 
 interface StoredAgentTaskState {
-  version: 3;
+  version: 4;
   projectKey: string;
   tasks: AgentTask[];
 }
@@ -141,6 +163,7 @@ export class AgentTaskStore {
     const identity = validateIdentity(input);
     const title = validateRequiredText(input.title, "title", AGENT_TASK_TITLE_MAX_BYTES);
     const details = validateOptionalText(input.details, "details", AGENT_TASK_DETAILS_MAX_BYTES);
+    const scheduling = normalizeTaskScheduling(input.scheduling);
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
@@ -149,6 +172,7 @@ export class AgentTaskStore {
         taskId: randomUUID(),
         title,
         details,
+        scheduling,
         status: "open",
         createdByAgentId: identity.agentId,
         createdByAgentName: identity.agentName,
@@ -201,6 +225,7 @@ export class AgentTaskStore {
     const taskId = validateTaskId(input.taskId);
     const expectedRevision = validateExpectedRevision(input.expectedRevision);
     const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
+    if (input.schedulingContext) assertSchedulingIdentity(identity, input.schedulingContext);
 
     return this.enqueueMutation(async () => {
       const state = await this.loadFreshState();
@@ -214,6 +239,17 @@ export class AgentTaskStore {
 
       const now = this.nowIso();
       const isNewClaim = task.status === "open";
+      if (isNewClaim && input.schedulingContext) {
+        const evaluation = evaluateTaskReadiness(
+          task.taskId,
+          this.schedulingSnapshot(state),
+          input.schedulingContext,
+          { now },
+        );
+        if (!evaluation.ready) {
+          throw new Error(`Task is not ready for this agent: ${evaluation.reasonCodes.join(",") || "policy_mismatch"}`);
+        }
+      }
       const updated: AgentTask = {
         ...task,
         status: "working",
@@ -235,6 +271,41 @@ export class AgentTaskStore {
       const next = replaceTask(state, updated);
       await this.persistAndCache(next);
       return copyTask(updated);
+    });
+  }
+
+  /** Select and claim the highest-ranked ready task under the same cross-process lock. */
+  public async claimNext(input: AgentTaskClaimNextInput): Promise<AgentTaskClaimNextResult> {
+    const identity = validateIdentity(input);
+    const leaseSeconds = validateLeaseSeconds(input.leaseSeconds);
+    assertSchedulingIdentity(identity, input.schedulingContext);
+
+    return this.enqueueMutation(async () => {
+      const state = await this.loadFreshState();
+      const now = this.nowIso();
+      const decision = selectNextReadyTask(
+        this.schedulingSnapshot(state),
+        input.schedulingContext,
+        { now },
+      );
+      if (decision.outcome === "no_ready_work") return { decision };
+
+      const task = requireTask(state, decision.task.taskId);
+      if (task.status !== "open") throw new Error("Selected task is no longer open");
+      const updated: AgentTask = {
+        ...task,
+        status: "working",
+        statusMessage: undefined,
+        ownerAgentId: identity.agentId,
+        ownerAgentName: identity.agentName,
+        ownerCollaborationSessionId: identity.collaborationSessionId,
+        ownerScope: authorityScope(identity.collaborationSessionId),
+        leaseExpiresAt: this.leaseExpiryIso(leaseSeconds),
+        updatedAt: now,
+        revision: task.revision + 1,
+      };
+      await this.persistAndCache(replaceTask(state, updated));
+      return { task: copyTask(updated), decision };
     });
   }
 
@@ -425,7 +496,30 @@ export class AgentTaskStore {
   }
 
   private withTasks(tasks: AgentTask[]): StoredAgentTaskState {
-    return { version: 3, projectKey: this.projectKey, tasks };
+    return { version: 4, projectKey: this.projectKey, tasks };
+  }
+
+  private schedulingSnapshot(state: StoredAgentTaskState): SchedulingSnapshot {
+    return {
+      projectId: this.projectKey,
+      revision: state.tasks.reduce((total, task) => total + task.revision, 0),
+      projectPolicy: { version: 1, state: "running" },
+      tasks: state.tasks.map((task) => ({
+        taskId: task.taskId,
+        projectId: this.projectKey,
+        status: task.status,
+        revision: task.revision,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        title: task.title,
+        details: task.details,
+        scheduling: task.scheduling,
+        ownerAgentId: task.ownerAgentId,
+        ownerCollaborationSessionId: task.ownerCollaborationSessionId,
+        ownerScope: task.ownerScope,
+        leaseExpiresAt: task.leaseExpiresAt,
+      })),
+    };
   }
 
   private async enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
@@ -517,7 +611,7 @@ export class AgentTaskStore {
       throw new Error("Malformed agent task state: invalid JSON");
     }
     const state = validateState(parsed, this.projectKey);
-    if (isRecord(parsed) && parsed.version !== 3) await this.persistState(state);
+    if (isRecord(parsed) && parsed.version !== 4) await this.persistState(state);
     return state;
   }
 
@@ -656,22 +750,22 @@ function isTaskOwner(task: AgentTask, identity: AgentTaskIdentity): boolean {
 }
 
 function validateState(value: unknown, expectedProjectKey: string): StoredAgentTaskState {
-  if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4) ||
       value.projectKey !== expectedProjectKey || !Array.isArray(value.tasks)) {
     throw new Error("Malformed or mismatched agent task state");
   }
   if (value.tasks.length > AGENT_TASK_LIMIT) throw new Error("Malformed agent task state: task limit exceeded");
 
-  const stateVersion = value.version as 1 | 2 | 3;
+  const stateVersion = value.version as 1 | 2 | 3 | 4;
   const taskIds = new Set<string>();
   const tasks = value.tasks.map((candidate) => validateStoredTask(candidate, taskIds, stateVersion));
-  return { version: 3, projectKey: expectedProjectKey, tasks };
+  return { version: 4, projectKey: expectedProjectKey, tasks };
 }
 
 function validateStoredTask(
   value: unknown,
   taskIds: Set<string>,
-  stateVersion: 1 | 2 | 3,
+  stateVersion: 1 | 2 | 3 | 4,
 ): AgentTask {
   if (!isRecord(value)) throw new Error("Malformed agent task state: invalid task");
   const taskId = validateTaskId(value.taskId);
@@ -704,6 +798,7 @@ function validateStoredTask(
     taskId,
     title: validateRequiredText(value.title, "title", AGENT_TASK_TITLE_MAX_BYTES),
     details: validateOptionalText(value.details, "details", AGENT_TASK_DETAILS_MAX_BYTES),
+    scheduling: normalizeTaskScheduling(value.scheduling),
     status,
     statusMessage: validateOptionalText(value.statusMessage, "statusMessage", AGENT_TASK_MESSAGE_MAX_BYTES),
     artifact: validateOptionalText(value.artifact, "artifact", AGENT_TASK_ARTIFACT_MAX_BYTES),
@@ -762,6 +857,14 @@ function validateIdentity(value: AgentTaskIdentity): AgentTaskIdentity {
     agentName: validateRequiredText(value.agentName, "agentName", 100),
     collaborationSessionId: validateOptionalCollaborationSessionId(value.collaborationSessionId),
   };
+}
+
+function assertSchedulingIdentity(identity: AgentTaskIdentity, context: VerifiedSchedulingContext): void {
+  if (context.agentId !== identity.agentId ||
+      context.agentName !== identity.agentName ||
+      context.collaborationSessionId !== identity.collaborationSessionId) {
+    throw new Error("Scheduling context does not match the authenticated task identity");
+  }
 }
 
 function validateAgentId(value: unknown): string {
@@ -873,11 +976,22 @@ function requireExpectedRevision(task: AgentTask, expectedRevision: number): voi
 }
 
 function emptyState(projectKey: string): StoredAgentTaskState {
-  return { version: 3, projectKey, tasks: [] };
+  return { version: 4, projectKey, tasks: [] };
 }
 
 function copyTask(task: AgentTask): AgentTask {
-  return { ...task };
+  return {
+    ...task,
+    scheduling: {
+      ...task.scheduling,
+      eligibleRoleIds: [...task.scheduling.eligibleRoleIds],
+      requiredCapabilities: [...task.scheduling.requiredCapabilities],
+      dependencies: task.scheduling.dependencies.map((dependency) => ({ ...dependency })),
+      scopes: task.scheduling.scopes.map((scope) => ({ ...scope })),
+      ...(task.scheduling.paused ? { paused: { ...task.scheduling.paused } } : {}),
+      conflictOverrides: task.scheduling.conflictOverrides.map((override) => ({ ...override })),
+    },
+  };
 }
 
 function isWithin(root: string, candidate: string): boolean {

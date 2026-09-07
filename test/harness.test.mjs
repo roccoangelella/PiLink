@@ -29,16 +29,16 @@ test("workspace policy rejects traversal and symlink escapes", async (t) => {
   assert.equal(safe.path, path.join(workspace, "nested/file.txt"));
 });
 
-test("full-access mode rebases relative paths to the filesystem root", async () => {
+test("full-access mode keeps relative paths project-centric while permitting arbitrary absolute paths", async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-full-root-"));
   try {
     const policy = createHarnessPolicy(config(workspace, true));
-    const root = path.parse(path.resolve(workspace)).root;
-    assert.equal(operationBase(policy), root);
+    assert.equal(operationBase(policy), path.resolve(workspace));
     const relative = await sanitizeToolArguments(policy, "read", { path: "tmp/example.txt" });
-    assert.equal(relative.path, path.join(root, "tmp", "example.txt"));
-    const absolute = await sanitizeToolArguments(policy, "read", { path: path.join(workspace, "kept-absolute.txt") });
-    assert.equal(absolute.path, path.join(workspace, "kept-absolute.txt"));
+    assert.equal(relative.path, path.join(workspace, "tmp", "example.txt"));
+    const machineAbsolute = path.join(path.parse(path.resolve(workspace)).root, "tmp", "pilink-machine-absolute.txt");
+    const absolute = await sanitizeToolArguments(policy, "read", { path: machineAbsolute });
+    assert.equal(absolute.path, machineAbsolute);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }

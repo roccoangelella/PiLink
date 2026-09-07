@@ -137,6 +137,92 @@ test("persists a typed task lifecycle with private project-scoped state", async 
   assert.equal((await fs.stat(path.dirname(store.statePath))).mode & 0o777, 0o700);
 });
 
+test("scheduler-backed claimNext selects compatible priority and direct claims enforce verified readiness", async (t) => {
+  const value = await fixture("pilink-tasks-scheduler-");
+  t.after(() => fs.rm(value.root, { recursive: true, force: true }));
+  const store = value.store();
+  const schedulingContext = (identity, roleIds, capabilities) => ({
+    agentId: identity.agentId,
+    agentName: identity.agentName,
+    collaborationSessionId: identity.collaborationSessionId,
+    projectId: store.projectKey,
+    roleIds,
+    capabilities,
+    workspaceIds: [store.projectKey],
+    credentialBinding: "server_session",
+  });
+
+  const researcherOnly = await store.create({
+    ...aliceSessionOne,
+    title: "Research architecture",
+    scheduling: {
+      schemaVersion: 1,
+      priority: "P0",
+      eligibleRoleIds: ["researcher"],
+      requiredCapabilities: ["workspace-read"],
+      dependencies: [],
+      scopes: [{ kind: "component", value: "architecture", mode: "read_interest" }],
+      risk: "low",
+      startGate: "none",
+      completionReview: "none",
+      workspaceRequirement: "authorized",
+      conflictOverrides: [],
+      scopeRevision: 1,
+      legacyDefaultsApplied: false,
+    },
+  });
+  const implementable = await store.create({
+    ...aliceSessionOne,
+    title: "Implement scheduler bridge",
+    scheduling: {
+      schemaVersion: 1,
+      priority: "P1",
+      eligibleRoleIds: ["implementer"],
+      requiredCapabilities: ["workspace-write"],
+      dependencies: [],
+      scopes: [{ kind: "file", value: "src/tasks.ts", mode: "exclusive_write" }],
+      risk: "medium",
+      startGate: "none",
+      completionReview: "none",
+      workspaceRequirement: "authorized",
+      conflictOverrides: [],
+      scopeRevision: 1,
+      legacyDefaultsApplied: false,
+    },
+  });
+
+  const implementerContext = schedulingContext(
+    bobSessionOne,
+    ["implementer"],
+    ["workspace-read", "workspace-write"],
+  );
+  await assert.rejects(
+    store.claim({ ...bobSessionOne, ...mutation(researcherOnly), schedulingContext: implementerContext }),
+    /role_mismatch/,
+  );
+
+  const selected = await store.claimNext({
+    ...bobSessionOne,
+    schedulingContext: implementerContext,
+    leaseSeconds: 60,
+  });
+  assert.equal(selected.decision.outcome, "selected");
+  assert.equal(selected.task.taskId, implementable.taskId);
+  assert.equal(selected.task.status, "working");
+
+  const researcherContext = schedulingContext(
+    aliceSessionTwo,
+    ["researcher"],
+    ["workspace-read"],
+  );
+  const researchSelected = await store.claimNext({
+    ...aliceSessionTwo,
+    schedulingContext: researcherContext,
+    leaseSeconds: 60,
+  });
+  assert.equal(researchSelected.task.taskId, researcherOnly.taskId);
+});
+
 test("leases prevent duplicate work and expired claims can be reclaimed", async (t) => {
   const value = await fixture("pilink-tasks-lease-");
   t.after(() => fs.rm(value.root, { recursive: true, force: true }));
@@ -337,7 +423,7 @@ test("migrates legacy actor-scoped tasks without narrowing their owner", async (
   assert.equal(renewed.ownerScope, "actor");
 
   const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
-  assert.equal(persisted.version, 3);
+  assert.equal(persisted.version, 4);
   assert.equal(persisted.tasks[0].createdByScope, "actor");
   assert.equal(persisted.tasks[0].ownerCollaborationSessionId, undefined);
   assert.equal(persisted.tasks[0].ownerScope, "actor");
@@ -381,7 +467,7 @@ test("migrates version-2 session provenance into explicit authority scopes", asy
   );
 
   const persisted = JSON.parse(await fs.readFile(store.statePath, "utf8"));
-  assert.equal(persisted.version, 3);
+  assert.equal(persisted.version, 4);
   assert.equal(persisted.tasks[0].createdByScope, "actor");
   assert.equal(persisted.tasks[0].ownerScope, "collaboration_session");
 });

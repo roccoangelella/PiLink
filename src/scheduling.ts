@@ -1266,7 +1266,7 @@ function pathContains(directory: string, candidate: string): boolean {
 
 function validateIdentifier(value: unknown, field: string): string {
   const text = validateText(value, field, 256);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(text) || text.includes("..")) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/_-]{0,255}$/.test(text) || text.includes("..")) {
     throw new Error(`${field} must be a stable identifier`);
   }
   return text;

@@ -346,6 +346,13 @@ test("paired CLI setup uses secretless DCR plus a local verification code", asyn
 
   const verificationCode = output.match(/Local verification code: ([A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4})/u)?.[1];
   assert.ok(verificationCode);
+  await waitFor(async () => {
+    try {
+      return (await fs.readFile(browserLog, "utf8")).trim().length > 0;
+    } catch {
+      return false;
+    }
+  });
   const pairingUrl = (await fs.readFile(browserLog, "utf8")).trim();
   const parsedPairing = new URL(pairingUrl);
   assert.equal(parsedPairing.origin, "https://cli-test.trycloudflare.com");
@@ -766,7 +773,10 @@ async function runCli(args, cwd, overrides) {
 function cliEnvironment(overrides) {
   const env = { ...process.env };
   for (const name of Object.keys(env)) {
-    if (name.startsWith("PI_") || name.startsWith("PILINK_") || name === "SERVER_URL") delete env[name];
+    if (name.startsWith("PI_") || name.startsWith("PILINK_") ||
+        ["SERVER_URL", "PORT", "HOST", "JWT_SECRET", "TRUST_PROXY"].includes(name)) {
+      delete env[name];
+    }
   }
   return { ...env, PI_BROWSER_OPEN: "never", ...overrides };
 }

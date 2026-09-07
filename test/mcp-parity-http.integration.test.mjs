@@ -28,6 +28,7 @@ test("HTTP MCP wiring exposes verified roles, scope-pinned sessions, shared chat
       SERVER_URL: serverUrl,
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
+      PI_RUNTIME_MODE: "collaboration",
       JWT_SECRET: "a".repeat(32),
       PI_BOOTSTRAP_SECRET: "b".repeat(32),
       PI_LAUNCH_EVENT_FD: "3",

@@ -118,7 +118,7 @@ Agent chat uses the same configured `PI_WORK_DIR` as the project scope. It is st
 | Mode | Command | Capabilities |
 | --- | --- | --- |
 | Safe workspace mode | `node /path/to/PiLink/dist/cli.js start` | File tools are restricted to `PI_WORK_DIR`; `bash` is disabled. |
-| Full coding-agent mode | `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access` | The machine is the operating universe: relative file paths, shell commands, `run`, and default child-agent cwd start at the filesystem root; `PI_WORK_DIR` is not a privileged default. |
+| Full coding-agent mode | `node /path/to/PiLink/dist/cli.js start --allow-unsafe-full-access` | The machine is the operating universe, but ordinary relative file paths, shell commands, `run`, and default child-agent cwd remain project-centric at `PI_WORK_DIR`. Absolute paths and explicit `cwd` values may target any machine location. |
 
 Use full mode only with a private, trusted client. Anyone able to obtain an authorized OAuth token can execute commands as your local user.
 
@@ -211,7 +211,7 @@ After authorization, ask ChatGPT to inspect the workspace first, then make focus
 - `npm_build` and `npm_test` through `run` only when `PI_ALLOW_WORKSPACE_EXECUTION=true` or full-access mode is enabled
 - `bash` only in `--allow-unsafe-full-access` mode
 
-The `run` tool never parses a shell command, bounds stdout/stderr, respects MCP cancellation, and accepts an optional `cwd`. In workspace mode, `cwd` and Git paths remain confined to `PI_WORK_DIR`; in Full-access mode, `cwd` may be any existing directory and defaults to the filesystem root. A per-call timeout is optional; omitting it means PiLink does not impose an execution deadline. Git profiles disable external diff/text-conversion hooks, pagers, prompts, and system/global Git configuration. Build and test profiles are arbitrary repository code, not a sandbox. Workspace execution inherits the PiLink process environment, including credentials.
+The `run` tool never parses a shell command, bounds stdout/stderr, respects MCP cancellation, and accepts an optional `cwd`. In workspace mode, `cwd` and Git paths remain confined to `PI_WORK_DIR`; in Full Access mode, `cwd` defaults to `PI_WORK_DIR` but may explicitly select any existing directory. A per-call timeout is optional; omitting it means PiLink does not impose an execution deadline. Git profiles disable external diff/text-conversion hooks, pagers, prompts, and system/global Git configuration. Build and test profiles are arbitrary repository code, not a sandbox. Workspace-mode repository execution receives a sanitized operational environment; Full Access intentionally preserves the PiLink process environment, including credentials.
 
 The server limits request bodies, tool input sizes, OAuth rate, and access-token lifetime. `mcp:read` gives inspection-only access; `mcp:write` gives write and constrained-execution access; `mcp:tools` gives all tool permissions subject to the selected server mode.
 

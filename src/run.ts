@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HarnessPolicy } from "./harness.js";
 import { operationBase, resolveWorkspacePath } from "./harness.js";
-import { filterExecutionEnvironment } from "./execution-environment.js";
+import { filterExecutionEnvironment, filterWorkspaceExecutionEnvironment } from "./execution-environment.js";
 
 /**
  * The upstream constrained runner predates the current PiLink harness type.
@@ -198,7 +198,7 @@ async function resolveRunCommand(
         cwd,
         executable: npmExecutable(),
         args: ["run", "build", "--if-present"],
-        environment: workspaceExecutionEnvironment(),
+        environment: workspaceExecutionEnvironment(policy),
         timeoutSeconds,
       };
     case "npm_test":
@@ -207,7 +207,7 @@ async function resolveRunCommand(
         cwd,
         executable: npmExecutable(),
         args: ["test"],
-        environment: workspaceExecutionEnvironment(),
+        environment: workspaceExecutionEnvironment(policy),
         timeoutSeconds,
       };
     default:
@@ -286,9 +286,11 @@ function gitEnvironment(): NodeJS.ProcessEnv {
   });
 }
 
-function workspaceExecutionEnvironment(): NodeJS.ProcessEnv {
+function workspaceExecutionEnvironment(policy: RunHarnessPolicy): NodeJS.ProcessEnv {
   return {
-    ...filterExecutionEnvironment(process.env),
+    ...(policy.unsafeFullAccess
+      ? filterExecutionEnvironment(process.env)
+      : filterWorkspaceExecutionEnvironment(process.env)),
     CI: "1",
     NO_COLOR: "1",
     FORCE_COLOR: "0",

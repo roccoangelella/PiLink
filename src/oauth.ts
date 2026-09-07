@@ -473,7 +473,10 @@ export function createOAuthRouter(): Router {
         return;
       }
       const rotated = await rotateRefreshToken(presentedToken, currentClient);
-      if (!rotated) {
+      if (rotated.status !== "rotated") {
+        if (rotated.status === "replay") {
+          log(`Refresh token replay detected for '${maskClientId(clientId)}'; token family revoked`);
+        }
         res.status(400).json({ error: "invalid_grant", error_description: "Invalid, expired, or already-used refresh token" });
         return;
       }

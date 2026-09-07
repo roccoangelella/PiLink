@@ -65,6 +65,7 @@ test("advertises a compact namespaced coordination-task surface", async (t) => {
   const taskTools = tools.filter((tool) => tool.name.startsWith("agent_task_"));
   assert.deepEqual(taskTools.map((tool) => tool.name).sort(), [
     "agent_task_claim",
+    "agent_task_claim_next",
     "agent_task_create",
     "agent_task_finish",
     "agent_task_provide_input",

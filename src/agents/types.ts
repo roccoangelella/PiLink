@@ -5,6 +5,7 @@ export const AGENT_PERMISSIONS = [
   "coordination:write",
   "workspace:read",
   "workspace:write",
+  "workspace:execute",
   "process:execute",
   "network:outbound",
 ] as const;

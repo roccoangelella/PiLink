@@ -28,6 +28,7 @@ test("real HTTP server exposes role bootstrap and isolates same-OAuth conversati
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
       PI_COORDINATION_DATA_DIR: dataDir,
+      PI_RUNTIME_MODE: "collaboration",
       PI_OAUTH_CONSENT_MODE: "browser",
       JWT_SECRET: "r".repeat(32),
       PI_BOOTSTRAP_SECRET: "s".repeat(32),
@@ -70,7 +71,7 @@ test("real HTTP server exposes role bootstrap and isolates same-OAuth conversati
   assert.equal(firstResult.occupancy_label, "dev1");
   assert.equal(secondResult.occupancy_label, "dev2");
   assert.equal(firstResult.contract_id, "pilink-collaboration/implementer");
-  assert.equal(secondResult.contract_version, "1.1.0");
+  assert.equal(secondResult.contract_version, "1.2.0");
 
   const visible = JSON.stringify({ firstResult, secondResult });
   assert.equal(visible.includes("Software Engineer 1"), false);
@@ -207,7 +208,7 @@ test("trusted private binding preserves verified collaboration across fresh HTTP
     canonical_role_id: "implementer",
     occupancy_label: "dev",
     contract_id: "pilink-collaboration/implementer",
-    contract_version: "1.1.0",
+    contract_version: "1.2.0",
     display_role_id: "dev",
     display_role_label: "DEV",
   });
@@ -433,6 +434,7 @@ async function launchTestServer(t, { prefix, dataDirInsideWorkspace = false, ext
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
       PI_COORDINATION_DATA_DIR: dataDir,
+      PI_RUNTIME_MODE: "collaboration",
       PI_OAUTH_CONSENT_MODE: "browser",
       JWT_SECRET: "r".repeat(32),
       PI_BOOTSTRAP_SECRET: "s".repeat(32),

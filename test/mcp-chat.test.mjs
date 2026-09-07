@@ -226,7 +226,7 @@ test("verified parallel sessions snapshot immutable author roles without text in
       canonical_role_id: "implementer",
       occupancy_label: "dev",
       contract_id: "pilink-collaboration/implementer",
-      contract_version: "1.1.0",
+      contract_version: "1.2.0",
       display_role_id: "dev",
       display_role_label: "DEV",
     });
@@ -237,7 +237,7 @@ test("verified parallel sessions snapshot immutable author roles without text in
       canonical_role_id: "ai-engineer",
       occupancy_label: "ai-engineer",
       contract_id: "pilink-collaboration/ai-engineer",
-      contract_version: "1.1.0",
+      contract_version: "1.2.0",
       display_role_id: "ai-engineer",
       display_role_label: "AI ENGINEER",
     });

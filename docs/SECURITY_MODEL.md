@@ -111,7 +111,7 @@ OAuth requirements include:
 - exact registered redirect URIs;
 - expected resource/audience propagation;
 - issuer, signature, time, generation, client status, and scope validation;
-- refresh rotation and revocation;
+- rotating refresh-token families with hashed consumed-token replay detection; a detected replay revokes that family while leaving independently authorized sibling families intact;
 - session invalidation after client disable or secret rotation;
 - rate and body-size limits;
 - no public OAuth client administration API.

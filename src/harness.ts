@@ -22,7 +22,10 @@ export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): H
   const unsafeFullAccess = config.unsafeFullAccess && clientMayUseFullAccess;
   return {
     workspace,
-    workingDirectory: unsafeFullAccess ? path.parse(workspace).root : workspace,
+    // Full Access broadens authority, not the default point of reference.
+    // Keep ordinary relative operations project-centric while absolute paths
+    // and explicit cwd values remain unrestricted for authorized clients.
+    workingDirectory: workspace,
     unsafeFullAccess,
     allowWorkspaceExecution: config.allowWorkspaceExecution,
     requireExecutionApproval: config.requireExecutionApproval,
@@ -31,8 +34,7 @@ export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): H
 
 export function operationBase(policy: Pick<HarnessPolicy, "workspace" | "workingDirectory" | "unsafeFullAccess">): string {
   if (policy.workingDirectory) return path.resolve(policy.workingDirectory);
-  const workspace = path.resolve(policy.workspace);
-  return policy.unsafeFullAccess ? path.parse(workspace).root : workspace;
+  return path.resolve(policy.workspace);
 }
 
 export function isToolAllowed(scopes: string, tool: ToolName): boolean {

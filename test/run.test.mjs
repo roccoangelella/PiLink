@@ -78,7 +78,7 @@ test("read-only git profiles inspect only the configured workspace", async (t) =
   );
 });
 
-test("workspace execution is explicit and inherits credentials", async (t) => {
+test("workspace execution is explicit and strips ambient credentials", async (t) => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-run-npm-"));
   t.after(() => fs.rm(workspace, { recursive: true, force: true }));
   await fs.writeFile(path.join(workspace, "package.json"), JSON.stringify({
@@ -96,11 +96,11 @@ test("workspace execution is explicit and inherits credentials", async (t) => {
   );
 
   const previousSecret = process.env.JWT_SECRET;
-  process.env.JWT_SECRET = "must-reach-workspace-code";
+  process.env.JWT_SECRET = "must-not-reach-workspace-code";
   try {
     const build = await executeRunProfile(policy(workspace, true), { profile: "npm_build" });
     assert.equal(build.exitCode, 0);
-    assert.equal(await fs.readFile(path.join(workspace, "built.txt"), "utf8"), "must-reach-workspace-code");
+    assert.equal(await fs.readFile(path.join(workspace, "built.txt"), "utf8"), "clean");
 
     const noisy = await executeRunProfile(policy(workspace, true), { profile: "npm_test" });
     assert.equal(noisy.exitCode, 0);
@@ -113,7 +113,7 @@ test("workspace execution is explicit and inherits credentials", async (t) => {
   }
 });
 
-test("full-access run profiles default to filesystem root and accept arbitrary cwd", async (t) => {
+test("full-access run profiles default to the project and accept arbitrary cwd", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-run-full-"));
   const workspace = path.join(root, "workspace");
   const external = path.join(root, "external");
@@ -124,19 +124,26 @@ test("full-access run profiles default to filesystem root and accept arbitrary c
     name: "pilink-run-full-test",
     version: "1.0.0",
     scripts: {
-      test: "node -e \"require('node:fs').writeFileSync('ran.txt', process.cwd())\"",
+      test: "node -e \"require('node:fs').writeFileSync('ran.txt', JSON.stringify({cwd:process.cwd(),secret:process.env.JWT_SECRET}))\"",
     },
   }));
 
   const full = policy(workspace, false, true);
+  await initializeRepository(workspace);
   const defaultRun = await executeRunProfile(full, { profile: "git_status" });
-  assert.equal(defaultRun.cwd, path.parse(path.resolve(workspace)).root);
-  assert.notEqual(defaultRun.cwd, await fs.realpath(workspace));
+  assert.equal(defaultRun.cwd, await fs.realpath(workspace));
 
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "full-access-secret";
   const externalRun = await executeRunProfile(full, { profile: "npm_test", cwd: external });
+  if (previousSecret === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = previousSecret;
   assert.equal(externalRun.exitCode, 0);
   assert.equal(externalRun.cwd, await fs.realpath(external));
-  assert.equal(await fs.readFile(path.join(external, "ran.txt"), "utf8"), await fs.realpath(external));
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(external, "ran.txt"), "utf8")), {
+    cwd: await fs.realpath(external),
+    secret: "full-access-secret",
+  });
 
   await assert.rejects(
     executeRunProfile(policy(workspace), { profile: "git_status", cwd: external }),

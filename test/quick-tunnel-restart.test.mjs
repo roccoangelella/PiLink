@@ -55,7 +55,7 @@ test("quick tunnel restart registers a new OAuth client without --setup", {
   const cliProcess = spawn(process.execPath, [cliPath, "start"], {
     cwd: root,
     env: {
-      ...process.env,
+      ...cleanRuntimeEnvironment(),
       PILINK_CONFIG: configPath,
       PI_CLOUDFLARED_PATH: fakeCloudflared,
       PI_BROWSER_OPEN: "never",
@@ -91,6 +91,17 @@ test("quick tunnel restart registers a new OAuth client without --setup", {
   cliProcess.kill("SIGINT");
   await once(cliProcess, "exit");
 });
+
+function cleanRuntimeEnvironment() {
+  const env = { ...process.env };
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("PI_") || name.startsWith("PILINK_") ||
+        ["SERVER_URL", "PORT", "HOST", "JWT_SECRET", "TRUST_PROXY"].includes(name)) {
+      delete env[name];
+    }
+  }
+  return env;
+}
 
 async function availablePort() {
   const server = net.createServer();

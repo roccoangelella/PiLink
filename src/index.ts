@@ -15,7 +15,7 @@ import { createMcpServer, type McpAgentServices } from "./mcp.js";
 import { createOAuthRouter } from "./oauth.js";
 import { authenticateBearer, findClient } from "./auth.js";
 import { createHarnessPolicy, operationBase, resolveWorkspacePath } from "./harness.js";
-import { loadEnvironment, loadRuntimeConfig, VERSION } from "./config.js";
+import { loadEnvironment, loadRuntimeConfig, MCP_TOOL_CATALOG_REVISION, VERSION } from "./config.js";
 import { createCorsAndOriginProtection, createRateLimiter } from "./security.js";
 import { createHealthProof, HEALTH_AUTH_SCHEME, isHealthChallenge } from "./health-proof.js";
 import { assertRequiredNodeVersion } from "./runtime.js";
@@ -133,12 +133,17 @@ function initializeSharedAgentRuntime(): SharedAgentRuntime {
       ] : []),
       "workspace:read",
       "workspace:write",
+      ...(config.allowWorkspaceExecution ? ["workspace:execute" as const] : []),
       "network:outbound",
       ...(policy.unsafeFullAccess ? ["process:execute" as const] : []),
     ];
     const manager = new AgentManager({
       adapters: [adapter],
-      allowedWorkspaceRoots: [operationBase(policy)],
+      // Full Access may explicitly select any cwd, but ordinary agent spawns
+      // still default to the project working directory via operationBase().
+      allowedWorkspaceRoots: [policy.unsafeFullAccess
+        ? path.parse(path.resolve(policy.workspace)).root
+        : operationBase(policy)],
       allowedPermissions,
       maxConcurrentAgents: effectiveAgentConcurrency,
     });
@@ -237,6 +242,7 @@ app.get("/health", (req, res) => {
     status: "ok",
     server: "pilink",
     version: VERSION,
+    tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
     runtime_mode: config.runtimeMode,
     harness: "pi-agent",
     // Keep the legacy health payload for existing browser-mode installs, while
@@ -254,6 +260,7 @@ app.get("/admin/status", requireLocalAdmin, (_req, res) => {
     status: "ok",
     server: "pilink",
     version: VERSION,
+    tool_catalog_revision: MCP_TOOL_CATALOG_REVISION,
     runtime_mode: config.runtimeMode,
     server_url: SERVER_URL,
     sessions: publicSessionStatus(),
@@ -863,6 +870,7 @@ function mcpAgentServices(clientId: string, connectionPolicy = policy): McpAgent
       "coordination:write",
       "workspace:read",
       "workspace:write",
+      ...(config.allowWorkspaceExecution ? ["workspace:execute" as const] : []),
       "network:outbound",
       ...(connectionPolicy.unsafeFullAccess ? ["process:execute" as const] : []),
     ],

@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 export const VERSION = "2.2.0";
+/** Increment whenever the externally advertised MCP tool contract changes. */
+export const MCP_TOOL_CATALOG_REVISION = 3;
 export const RUNTIME_MODES = ["single", "collaboration"] as const;
 export type RuntimeMode = typeof RUNTIME_MODES[number];
 

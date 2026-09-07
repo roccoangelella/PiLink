@@ -94,6 +94,7 @@ test("pilink chat is a real CLI command and reports a missing Textual runtime cl
   await fs.writeFile(configPath, [
     `PI_WORK_DIR=${workspace}`,
     `PI_DATA_DIR=${dataDir}`,
+    "PI_RUNTIME_MODE=collaboration",
     "PORT=3200",
     `JWT_SECRET=${"j".repeat(32)}`,
     `PI_BOOTSTRAP_SECRET=${"b".repeat(32)}`,
@@ -104,7 +105,7 @@ test("pilink chat is a real CLI command and reports a missing Textual runtime cl
 
   const result = spawnSync(process.execPath, [path.resolve("dist/cli.js"), "chat"], {
     cwd: workspace,
-    env: { ...process.env, PILINK_CONFIG: configPath, PATH: root, PI_CHAT_CLI_PYTHON: path.join(root, "missing-python") },
+    env: { ...process.env, PILINK_CONFIG: configPath, PI_RUNTIME_MODE: "collaboration", PATH: root, PI_CHAT_CLI_PYTHON: path.join(root, "missing-python") },
     encoding: "utf8",
   });
   assert.equal(result.status, 1);

@@ -9,7 +9,15 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import type { Request, Response, NextFunction } from "express";
-import type { OAuthClient, AuthorizationCode, TokenPayload, ClientStore, RefreshTokenRecord, RefreshTokenStore } from "./types.js";
+import type {
+  OAuthClient,
+  AuthorizationCode,
+  TokenPayload,
+  ClientStore,
+  ConsumedRefreshTokenRecord,
+  RefreshTokenRecord,
+  RefreshTokenStore,
+} from "./types.js";
 import { loadRuntimeConfig } from "./config.js";
 import {
   classifyPersistedRuntimeOwner,
@@ -20,6 +28,8 @@ import {
 const authCodes = new Map<string, AuthorizationCode>();
 const MAX_AUTHORIZATION_CODES = 256;
 const MAX_REFRESH_TOKENS = 512;
+const MAX_CONSUMED_REFRESH_TOKENS = 1_024;
+const REFRESH_FAMILY_ID_PATTERN = /^[A-Za-z0-9_-]{32}$/u;
 const OAUTH_STATE_LOCK_TIMEOUT_MS = 5_000;
 const OAUTH_STATE_STALE_LOCK_MS = 30_000;
 const OAUTH_STATE_LOCK_RETRY_MS = 25;
@@ -46,7 +56,8 @@ type ClientLifecycleAction =
   | "enabled"
   | "secret_rotated"
   | "deleted"
-  | "token_revoked";
+  | "token_revoked"
+  | "refresh_replay_revoked";
 
 function clientStorePath(): string {
   return path.join(loadRuntimeConfig().dataDir, "clients.json");
@@ -486,6 +497,8 @@ export async function createRefreshToken(
     created_at: new Date(now).toISOString(),
     expires_at: now + config.refreshTokenExpirySeconds * 1000,
     client_version: effectiveClientTokenVersion(client),
+    family_id: createRefreshFamilyId(),
+    generation: 1,
   };
   await withOAuthStateLock(() => {
     const current = loadClients().find((candidate) => candidate.client_id === client.client_id);
@@ -493,18 +506,25 @@ export async function createRefreshToken(
         effectiveClientTokenVersion(current) !== record.client_version) {
       throw new Error("OAuth client credentials changed");
     }
-    const tokens = loadRefreshTokens().filter((candidate) => candidate.expires_at > now);
+    const state = loadRefreshTokenState();
+    const tokens = state.tokens.filter((candidate) => candidate.expires_at > now);
+    const consumedTokens = state.consumedTokens.filter((candidate) => candidate.expires_at > now);
     tokens.push(record);
-    saveRefreshTokens(tokens.slice(-MAX_REFRESH_TOKENS));
+    saveRefreshTokenState(tokens.slice(-MAX_REFRESH_TOKENS), consumedTokens.slice(-MAX_CONSUMED_REFRESH_TOKENS));
   });
   return { refresh_token: refreshToken, expires_in: config.refreshTokenExpirySeconds };
 }
 
+export type RefreshTokenRotationResult =
+  | { status: "rotated"; refresh_token: string; expires_in: number; scope: string }
+  | { status: "replay" }
+  | { status: "invalid" };
+
 export async function rotateRefreshToken(
   refreshToken: string,
   client: OAuthClient,
-): Promise<{ refresh_token: string; expires_in: number; scope: string } | null> {
-  if (!refreshToken || !client.client_id) return null;
+): Promise<RefreshTokenRotationResult> {
+  if (!refreshToken || !client.client_id) return { status: "invalid" };
   const presentedHash = hashRefreshToken(refreshToken);
   const config = loadRuntimeConfig();
   const replacement = crypto.randomBytes(48).toString("base64url");
@@ -512,69 +532,142 @@ export async function rotateRefreshToken(
     const now = Date.now();
     const current = loadClients().find((candidate) => candidate.client_id === client.client_id);
     if (!current || !isClientActive(current) ||
-        effectiveClientTokenVersion(current) !== effectiveClientTokenVersion(client)) return null;
-    const tokens = loadRefreshTokens();
+        effectiveClientTokenVersion(current) !== effectiveClientTokenVersion(client)) {
+      return { status: "invalid" } as const;
+    }
+
+    const state = loadRefreshTokenState();
+    const currentVersion = effectiveClientTokenVersion(current);
+    const tokens = state.tokens.filter((candidate) => candidate.expires_at > now);
+    const consumedTokens = state.consumedTokens.filter((candidate) => candidate.expires_at > now);
+    const stateWasPruned = tokens.length !== state.tokens.length || consumedTokens.length !== state.consumedTokens.length;
     const index = tokens.findIndex((candidate) => (
       candidate.client_id === client.client_id &&
-      (candidate.client_version ?? 1) === effectiveClientTokenVersion(current) &&
-      candidate.expires_at > now &&
+      (candidate.client_version ?? 1) === currentVersion &&
       safeHashEqual(candidate.token_hash, presentedHash)
     ));
+
     if (index < 0) {
-      const active = tokens.filter((candidate) => candidate.expires_at > now);
-      if (active.length !== tokens.length) saveRefreshTokens(active);
-      return null;
+      const replay = consumedTokens.find((candidate) => (
+        candidate.client_id === client.client_id &&
+        candidate.client_version === currentVersion &&
+        safeHashEqual(candidate.token_hash, presentedHash)
+      ));
+      if (!replay) {
+        if (stateWasPruned) {
+          saveRefreshTokenState(tokens.slice(-MAX_REFRESH_TOKENS), consumedTokens.slice(-MAX_CONSUMED_REFRESH_TOKENS));
+        }
+        return { status: "invalid" } as const;
+      }
+
+      const remaining = tokens.filter((candidate) => !(
+        candidate.client_id === replay.client_id &&
+        (candidate.client_version ?? 1) === replay.client_version &&
+        candidate.family_id === replay.family_id
+      ));
+      saveRefreshTokenState(remaining.slice(-MAX_REFRESH_TOKENS), consumedTokens.slice(-MAX_CONSUMED_REFRESH_TOKENS));
+      appendClientLifecycleAudit("refresh_replay_revoked", current);
+      return { status: "replay" } as const;
     }
+
     const [consumed] = tokens.splice(index, 1);
+    const familyId = consumed.family_id ?? createRefreshFamilyId();
+    const generation = consumed.generation ?? 1;
+    consumedTokens.push({
+      token_hash: consumed.token_hash,
+      client_id: consumed.client_id,
+      expires_at: consumed.expires_at,
+      client_version: currentVersion,
+      family_id: familyId,
+      generation,
+    });
     tokens.push({
       token_hash: hashRefreshToken(replacement),
       client_id: consumed.client_id,
       scope: consumed.scope,
       created_at: new Date(now).toISOString(),
       expires_at: now + config.refreshTokenExpirySeconds * 1000,
-      client_version: effectiveClientTokenVersion(current),
+      client_version: currentVersion,
+      family_id: familyId,
+      generation: generation + 1,
     });
-    saveRefreshTokens(tokens.filter((candidate) => candidate.expires_at > now).slice(-MAX_REFRESH_TOKENS));
+    saveRefreshTokenState(tokens.slice(-MAX_REFRESH_TOKENS), consumedTokens.slice(-MAX_CONSUMED_REFRESH_TOKENS));
     return {
+      status: "rotated",
       refresh_token: replacement,
       expires_in: config.refreshTokenExpirySeconds,
       scope: consumed.scope,
-    };
+    } as const;
   });
 }
 
-function loadRefreshTokens(): RefreshTokenRecord[] {
+function loadRefreshTokenState(): { tokens: RefreshTokenRecord[]; consumedTokens: ConsumedRefreshTokenRecord[] } {
   ensureDataDir();
   const storePath = refreshTokenStorePath();
-  if (!fs.existsSync(storePath)) return [];
+  if (!fs.existsSync(storePath)) return { tokens: [], consumedTokens: [] };
   const parsed = parsePrivateJson<RefreshTokenStore>(storePath, "Refresh token store is malformed");
-  if (!parsed || !Array.isArray(parsed.tokens)) throw new Error("Refresh token store is malformed");
-  if (parsed.tokens.some((candidate) => !(
-    candidate &&
-    typeof candidate.token_hash === "string" && /^[a-f0-9]{64}$/.test(candidate.token_hash) &&
-    typeof candidate.client_id === "string" && CLIENT_ID_PATTERN.test(candidate.client_id) &&
-    typeof candidate.scope === "string" &&
-    typeof candidate.created_at === "string" &&
-    Number.isSafeInteger(candidate.expires_at) && candidate.expires_at > 0 &&
-    (candidate.client_version === undefined ||
-      (Number.isSafeInteger(candidate.client_version) && candidate.client_version > 0))
-  ))) throw new Error("Refresh token store is malformed");
-  return parsed.tokens;
+  if (!parsed || !Array.isArray(parsed.tokens) ||
+      (parsed.consumed_tokens !== undefined && !Array.isArray(parsed.consumed_tokens))) {
+    throw new Error("Refresh token store is malformed");
+  }
+  if (parsed.tokens.some((candidate) => !isStoredRefreshToken(candidate)) ||
+      (parsed.consumed_tokens ?? []).some((candidate) => !isStoredConsumedRefreshToken(candidate))) {
+    throw new Error("Refresh token store is malformed");
+  }
+  return { tokens: parsed.tokens, consumedTokens: parsed.consumed_tokens ?? [] };
 }
 
-function saveRefreshTokens(tokens: RefreshTokenRecord[]): void {
-  writePrivateJsonAtomically(refreshTokenStorePath(), { tokens } satisfies RefreshTokenStore);
+function isStoredRefreshToken(candidate: unknown): candidate is RefreshTokenRecord {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+  const token = candidate as Partial<RefreshTokenRecord>;
+  const hasFamilyMetadata = token.family_id !== undefined || token.generation !== undefined;
+  return typeof token.token_hash === "string" && /^[a-f0-9]{64}$/u.test(token.token_hash) &&
+    typeof token.client_id === "string" && CLIENT_ID_PATTERN.test(token.client_id) &&
+    typeof token.scope === "string" &&
+    typeof token.created_at === "string" &&
+    Number.isSafeInteger(token.expires_at) && (token.expires_at as number) > 0 &&
+    (token.client_version === undefined ||
+      (Number.isSafeInteger(token.client_version) && (token.client_version as number) > 0)) &&
+    (!hasFamilyMetadata || (
+      typeof token.family_id === "string" && REFRESH_FAMILY_ID_PATTERN.test(token.family_id) &&
+      Number.isSafeInteger(token.generation) && (token.generation as number) > 0
+    ));
+}
+
+function isStoredConsumedRefreshToken(candidate: unknown): candidate is ConsumedRefreshTokenRecord {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+  const token = candidate as Partial<ConsumedRefreshTokenRecord>;
+  return typeof token.token_hash === "string" && /^[a-f0-9]{64}$/u.test(token.token_hash) &&
+    typeof token.client_id === "string" && CLIENT_ID_PATTERN.test(token.client_id) &&
+    Number.isSafeInteger(token.expires_at) && (token.expires_at as number) > 0 &&
+    Number.isSafeInteger(token.client_version) && (token.client_version as number) > 0 &&
+    typeof token.family_id === "string" && REFRESH_FAMILY_ID_PATTERN.test(token.family_id) &&
+    Number.isSafeInteger(token.generation) && (token.generation as number) > 0;
+}
+
+function saveRefreshTokenState(tokens: RefreshTokenRecord[], consumedTokens: ConsumedRefreshTokenRecord[]): void {
+  writePrivateJsonAtomically(refreshTokenStorePath(), {
+    tokens,
+    ...(consumedTokens.length > 0 ? { consumed_tokens: consumedTokens } : {}),
+  } satisfies RefreshTokenStore);
 }
 
 function removeRefreshTokensUnlocked(clientId: string): void {
-  const tokens = loadRefreshTokens();
-  const remaining = tokens.filter((candidate) => candidate.client_id !== clientId);
-  if (remaining.length !== tokens.length) saveRefreshTokens(remaining);
+  const state = loadRefreshTokenState();
+  const tokens = state.tokens.filter((candidate) => candidate.client_id !== clientId);
+  const consumedTokens = state.consumedTokens.filter((candidate) => candidate.client_id !== clientId);
+  if (tokens.length !== state.tokens.length || consumedTokens.length !== state.consumedTokens.length) {
+    saveRefreshTokenState(tokens, consumedTokens);
+  }
 }
 
 export async function revokeRefreshTokens(clientId: string): Promise<void> {
   if (!CLIENT_ID_PATTERN.test(clientId)) return;
   await withOAuthStateLock(() => removeRefreshTokensUnlocked(clientId));
+}
+
+function createRefreshFamilyId(): string {
+  return crypto.randomBytes(24).toString("base64url");
 }
 
 function hashRefreshToken(token: string): string {

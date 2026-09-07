@@ -52,6 +52,10 @@ test("Pi SDK adapter starts a real session contract with explicit bounded permis
   assert.match(factories[0].rolePrompt, /Role: researcher/);
   assert.match(prompts[0], /Task:\nInspect the project/);
   assert.ok(events.some((event) => event.type === "output" && event.text === "Child result"));
+  listener({ type: "compaction_start", reason: "threshold" });
+  listener({ type: "compaction_end", reason: "threshold", result: {}, aborted: false, willRetry: false });
+  assert.ok(events.some((event) => event.type === "output" && event.channel === "status" && event.text === "Context compaction started (threshold)"));
+  assert.ok(events.some((event) => event.type === "output" && event.channel === "status" && event.text === "Context compaction completed (threshold)"));
   assert.ok(events.some((event) => event.type === "status" && event.status === "waiting"));
   assert.equal(events.some((event) => event.type === "completed"), false);
   assert.match(handle.runtimeAgentId, /^pi-/);
@@ -183,4 +187,65 @@ test("Pi child-agent bash inherits server credentials and operational variables"
     new AbortController().signal,
   );
   assert.equal(await fs.readFile(path.join(workspace, "relative-child.txt"), "utf8"), "child-cwd");
+});
+
+test("Pi child-agent workspace_run verifies repository code without inheriting server secrets", async (t) => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "vspilink-pi-adapter-workspace-run-"));
+  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  await fs.writeFile(path.join(workspace, "package.json"), JSON.stringify({
+    name: "workspace-run-child-test",
+    version: "1.0.0",
+    scripts: {
+      test: "node -e \"require('node:fs').writeFileSync('env.json', JSON.stringify({cwd:process.cwd(),secret:process.env.JWT_SECRET||null,path:Boolean(process.env.PATH)}))\"",
+    },
+  }));
+
+  let factoryContext;
+  const session = {
+    isStreaming: false,
+    async prompt() {},
+    async abort() {},
+    async waitForIdle() {},
+    dispose() {},
+    subscribe() { return () => undefined; },
+  };
+  const adapter = new PiSdkRuntimeAdapter({
+    policy: { workspace, unsafeFullAccess: false, allowWorkspaceExecution: true },
+    providerId: "test-provider",
+    modelId: "test-model",
+    sessionFactory: async (context) => { factoryContext = context; return session; },
+  });
+  const handle = await adapter.spawn({
+    agentId: "agent_12345678-1234-4123-8123-123456789abc",
+    role: { canonicalRoleId: "implementer", occupancyLabel: "implementer" },
+    workspace,
+    permissions: ["workspace:read", "workspace:write", "workspace:execute", "network:outbound"],
+    initialMessage: "Verify the repository",
+    signal: new AbortController().signal,
+    report: () => undefined,
+  });
+  t.after(() => handle.stop({ signal: new AbortController().signal }));
+
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "must-not-reach-workspace-child";
+  t.after(() => {
+    if (previousSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+  });
+
+  assert.equal(factoryContext.toolDefinitions.some((tool) => tool.name === "workspace_bash"), false);
+  const run = factoryContext.toolDefinitions.find((tool) => tool.name === "workspace_run");
+  assert.ok(run);
+  const result = await run.execute(
+    "call_workspace_run_test",
+    { profile: "npm_test", timeout: 10 },
+    new AbortController().signal,
+  );
+  const execution = JSON.parse(result.content.find((item) => item.type === "text").text);
+  assert.equal(execution.exitCode, 0);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(workspace, "env.json"), "utf8")), {
+    cwd: await fs.realpath(workspace),
+    secret: null,
+    path: true,
+  });
 });

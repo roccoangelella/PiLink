@@ -45,8 +45,20 @@ export interface RefreshTokenRecord {
   created_at: string;
   expires_at: number;
   client_version?: number;
+  family_id?: string;
+  generation?: number;
+}
+
+export interface ConsumedRefreshTokenRecord {
+  token_hash: string;
+  client_id: string;
+  expires_at: number;
+  client_version: number;
+  family_id: string;
+  generation: number;
 }
 
 export interface RefreshTokenStore {
   tokens: RefreshTokenRecord[];
+  consumed_tokens?: ConsumedRefreshTokenRecord[];
 }

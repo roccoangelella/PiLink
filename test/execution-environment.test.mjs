@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   filterExecutionEnvironment,
+  filterWorkspaceExecutionEnvironment,
   sanitizeExecutionSpawnContext,
+  sanitizeWorkspaceExecutionSpawnContext,
 } from "../dist/execution-environment.js";
 
 test("execution environment preserves operational POSIX and Windows variables", () => {
@@ -32,7 +34,7 @@ test("execution environment preserves operational POSIX and Windows variables", 
   assert.deepEqual(filterExecutionEnvironment(source), source);
 });
 
-test("execution environment forwards credentials and unrelated variables", () => {
+test("full-access execution environment forwards credentials and unrelated variables", () => {
   const source = {
     PATH: "/usr/bin",
     LC_MESSAGES: "C.UTF-8",
@@ -52,7 +54,29 @@ test("execution environment forwards credentials and unrelated variables", () =>
   assert.deepEqual(filterExecutionEnvironment(source), source);
 });
 
-test("execution spawn hook preserves credentials while dropping unspawnable NUL values", () => {
+test("workspace execution keeps operational variables but strips ambient credentials and unrelated values", () => {
+  const source = {
+    PATH: "/usr/bin",
+    HOME: "/home/tester",
+    LC_MESSAGES: "C.UTF-8",
+    JWT_SECRET: "jwt-secret",
+    PI_BOOTSTRAP_SECRET: "bootstrap-secret",
+    PI_AGENT_API_KEY: "agent-key",
+    OPENAI_API_KEY: "openai-key",
+    AWS_SECRET_ACCESS_KEY: "aws-key",
+    GITHUB_TOKEN: "github-token",
+    DATABASE_PASSWORD: "database-password",
+    PROJECT_FLAG: "custom-value",
+  };
+
+  assert.deepEqual(filterWorkspaceExecutionEnvironment(source), {
+    PATH: "/usr/bin",
+    HOME: "/home/tester",
+    LC_MESSAGES: "C.UTF-8",
+  });
+});
+
+test("full-access execution spawn hook preserves credentials while dropping unspawnable NUL values", () => {
   const original = {
     command: "printf test",
     cwd: "/tmp/project",
@@ -70,6 +94,15 @@ test("execution spawn hook preserves credentials while dropping unspawnable NUL 
     env: {
       PATH: "/usr/bin",
       JWT_SECRET: "forwarded",
+      TERM: "xterm",
+    },
+  });
+
+  assert.deepEqual(sanitizeWorkspaceExecutionSpawnContext(original), {
+    command: original.command,
+    cwd: original.cwd,
+    env: {
+      PATH: "/usr/bin",
       TERM: "xterm",
     },
   });

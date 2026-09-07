@@ -228,6 +228,7 @@ async function startServer(t, dataInsideWorkspace, coordinationDataInsideWorkspa
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
       PI_COORDINATION_DATA_DIR: coordinationDataDir,
+      PI_RUNTIME_MODE: "collaboration",
       JWT_SECRET: "j".repeat(32),
       PI_BOOTSTRAP_SECRET: BOOTSTRAP_SECRET,
       PI_OAUTH_CONSENT_MODE: "browser",

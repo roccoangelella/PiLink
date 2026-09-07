@@ -25,6 +25,7 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
       JWT_SECRET: "a".repeat(32),
       PI_BOOTSTRAP_SECRET: "b".repeat(32),
       PI_OAUTH_CONSENT_MODE: "browser",
+      PI_OAUTH_PUBLIC_CHATGPT_DCR: "false",
       PI_LANDING_HOSTNAME: "landing.example.test",
     },
     stdio: "ignore",
@@ -166,6 +167,68 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
   assert.ok(pkceToken.refresh_token);
   assert.equal(pkceToken.refresh_token_expires_in, 30 * 24 * 60 * 60);
 
+  // A second authorization creates an independent refresh-token family for the
+  // same OAuth client. Replay revocation must not destroy sibling families.
+  const siblingAuthorization = new URL(`${serverUrl}/oauth/authorize`);
+  siblingAuthorization.search = new URLSearchParams({
+    response_type: "code",
+    client_id: authClient.client_id,
+    redirect_uri: redirectUri,
+    scope: chatGptScopes,
+    state: "sibling-family",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  const siblingConsentPage = await fetch(siblingAuthorization);
+  assert.equal(siblingConsentPage.status, 200);
+  const siblingConsentToken = (await siblingConsentPage.text()).match(/name="consent_token" value="([^"]+)"/)?.[1];
+  assert.ok(siblingConsentToken);
+  const siblingConsent = await fetch(`${serverUrl}/oauth/authorize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    redirect: "manual",
+    body: new URLSearchParams({
+      action: "approve",
+      client_id: authClient.client_id,
+      redirect_uri: redirectUri,
+      scope: chatGptScopes,
+      state: "sibling-family",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      consent_token: siblingConsentToken,
+    }),
+  });
+  assert.equal(siblingConsent.status, 303);
+  const siblingCode = new URL(siblingConsent.headers.get("location")).searchParams.get("code");
+  assert.ok(siblingCode);
+  const siblingExchange = await fetch(`${serverUrl}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      client_id: authClient.client_id,
+      client_secret: authClient.client_secret,
+      redirect_uri: redirectUri,
+      code: siblingCode,
+      code_verifier: verifier,
+    }),
+  });
+  assert.equal(siblingExchange.status, 200);
+  const siblingFamily = await siblingExchange.json();
+  assert.ok(siblingFamily.refresh_token);
+  assert.notEqual(siblingFamily.refresh_token, pkceToken.refresh_token);
+
+  // Simulate a pre-family-schema refresh-token record. Existing installations
+  // must migrate it on first rotation rather than losing durable OAuth access.
+  const legacyStatePath = path.join(cwd, "refresh-tokens.json");
+  const legacyState = JSON.parse(await fs.readFile(legacyStatePath, "utf8"));
+  const siblingHash = crypto.createHash("sha256").update(siblingFamily.refresh_token).digest("hex");
+  const legacySibling = legacyState.tokens.find((entry) => entry.token_hash === siblingHash);
+  assert.ok(legacySibling);
+  delete legacySibling.family_id;
+  delete legacySibling.generation;
+  await fs.writeFile(legacyStatePath, JSON.stringify(legacyState, null, 2), "utf8");
+
   const refreshRequest = () => fetch(`${serverUrl}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -188,11 +251,50 @@ test("OAuth registration is bootstrap-protected and issued scopes are retained",
   assert.notEqual(refreshed.refresh_token, pkceToken.refresh_token);
   assert.equal(refreshed.scope, chatGptScopes);
 
-  assert.equal((await replayResponse.json()).error, "invalid_grant");
+  const replayBody = await replayResponse.json();
+  assert.equal(replayBody.error, "invalid_grant");
+  assert.equal(replayBody.error_description, "Invalid, expired, or already-used refresh token");
+
+  // The successful racing response is intentionally unusable after the replay
+  // is observed: the entire compromised refresh-token family has been revoked.
+  const revokedFamily = await fetch(`${serverUrl}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: authClient.client_id,
+      client_secret: authClient.client_secret,
+      refresh_token: refreshed.refresh_token,
+    }),
+  });
+  assert.equal(revokedFamily.status, 400);
+  assert.equal((await revokedFamily.json()).error, "invalid_grant");
+
+  const siblingRefresh = await fetch(`${serverUrl}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: authClient.client_id,
+      client_secret: authClient.client_secret,
+      refresh_token: siblingFamily.refresh_token,
+    }),
+  });
+  assert.equal(siblingRefresh.status, 200, "replay revocation must be scoped to one refresh-token family");
+  assert.ok((await siblingRefresh.json()).refresh_token);
 
   const refreshStore = await fs.readFile(path.join(cwd, "refresh-tokens.json"), "utf8");
   assert.doesNotMatch(refreshStore, new RegExp(pkceToken.refresh_token));
   assert.doesNotMatch(refreshStore, new RegExp(refreshed.refresh_token));
+  assert.doesNotMatch(refreshStore, new RegExp(siblingFamily.refresh_token));
+  const refreshState = JSON.parse(refreshStore);
+  assert.ok(refreshState.consumed_tokens.length >= 2);
+  assert.ok(refreshState.consumed_tokens.every((entry) => /^[A-Za-z0-9_-]{32}$/u.test(entry.family_id)));
+  assert.ok(refreshState.consumed_tokens.every((entry) => Number.isSafeInteger(entry.generation) && entry.generation > 0));
+
+  const replayAudit = await fs.readFile(path.join(cwd, "oauth-client-audit.jsonl"), "utf8");
+  assert.match(replayAudit, /"action":"refresh_replay_revoked"/u);
+  assert.doesNotMatch(replayAudit, new RegExp(pkceToken.refresh_token));
 
   const publicRegistration = await fetch(`${serverUrl}/oauth/register`, {
     method: "POST",
@@ -535,6 +637,8 @@ test("paired consent requires a one-use owner session and protects the local adm
       JWT_SECRET: "o".repeat(32),
       PI_BOOTSTRAP_SECRET: bootstrapSecret,
       PI_OAUTH_CONSENT_MODE: "paired",
+      PI_OAUTH_PUBLIC_CHATGPT_DCR: "false",
+      PI_RUNTIME_MODE: "collaboration",
     },
     stdio: "ignore",
   });
