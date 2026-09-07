@@ -62,8 +62,7 @@ test("gateway connector setup opens the loopback owner DCR window even with an e
     "",
   ].join("\n"), { mode: 0o600 });
 
-  const previousConfig = process.env.PILINK_CONFIG;
-  const previousGatewayPort = process.env.PI_LLM_GATEWAY_PORT;
+  const previousEnvironment = { ...process.env };
   process.env.PILINK_CONFIG = configPath;
   process.env.PI_LLM_GATEWAY_PORT = "45678";
   try {
@@ -74,10 +73,10 @@ test("gateway connector setup opens the loopback owner DCR window even with an e
     assert.equal(info.verificationCode, "ABCD-EFGH");
     assert.match(info.apiKey, /^plg_[A-Za-z0-9_-]+$/u);
   } finally {
-    if (previousConfig === undefined) delete process.env.PILINK_CONFIG;
-    else process.env.PILINK_CONFIG = previousConfig;
-    if (previousGatewayPort === undefined) delete process.env.PI_LLM_GATEWAY_PORT;
-    else process.env.PI_LLM_GATEWAY_PORT = previousGatewayPort;
+    for (const key of Object.keys(process.env)) {
+      if (!(key in previousEnvironment)) delete process.env[key];
+    }
+    Object.assign(process.env, previousEnvironment);
     await close(server);
     fs.rmSync(root, { recursive: true, force: true });
   }
