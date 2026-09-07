@@ -2,7 +2,7 @@
 
 PiLink can run a ChatGPT conversation as a local OpenAI-compatible completion worker without scraping or browser automation. The ChatGPT conversation communicates only through the ordinary OAuth-protected PiLink MCP connection.
 
-This is an explicit operator mode. It does not add a third `PI_RUNTIME_MODE`; the normal Single/Collaboration capability choice remains separate. While gateway mode is enabled, the MCP catalog presented by PiLink is intentionally reduced to one tool: `gateway_exchange`.
+This is an explicit operator mode. It does not add a third `PI_RUNTIME_MODE`; `pilink gateway start` pins the underlying core runtime to the least-privileged `single` mode and replaces the ordinary MCP catalog with one tool: `gateway_exchange`. The normal `pilink start` Single/Collaboration/VS Code chooser is therefore skipped for gateway launches.
 
 ## Start
 
@@ -21,6 +21,17 @@ The OpenAI-compatible API is always bound to loopback. Its default port is the P
 ```text
 http://127.0.0.1:3210/v1
 ```
+
+Before a gateway launch, PiLink probes both the configured MCP port and its local API port. If the pair is unavailable, it selects the next free pair. For example, if MCP port `3200` is already occupied, the normal fallback is:
+
+```text
+MCP:        127.0.0.1:3201
+OpenAI API: 127.0.0.1:3211
+```
+
+The selected MCP fallback is saved as `PORT` in the active PiLink private configuration so subsequent launches and managed hosting stay consistent. PiLink continues scanning upward if `3201` or `3211` is also occupied. An explicitly configured `PI_LLM_GATEWAY_PORT` is never silently changed; startup fails if that exact API port is unavailable.
+
+For a Cloudflare fixed domain, the public tunnel configuration must target the same local MCP port. When a fallback changes the MCP port, PiLink safely repoints only the already configured PiLink tunnel and exact hostname to the new loopback origin. This requires the same scoped Cloudflare API token used for provisioning. In an interactive terminal PiLink requests it with hidden input; in non-interactive launches set `CLOUDFLARE_API_TOKEN` for that launch. The account token is not persisted. PiLink refuses to create a replacement tunnel or overwrite unrelated ingress rules during this fallback.
 
 PiLink prints the derived gateway API key once when the local endpoint starts. The key is derived from PiLink private secret material with a domain-separated HMAC; it is not the OAuth bootstrap secret and does not grant MCP/admin authority. `PI_LLM_GATEWAY_API_KEY` may be set in the private PiLink environment when an explicit independent key is preferred.
 
@@ -76,7 +87,7 @@ curl http://127.0.0.1:3210/v1/chat/completions \
   }'
 ```
 
-The selected ChatGPT conversation decides the actual model. PiLink echoes the supplied `model` field in the OpenAI-compatible response and does not attempt to control ChatGPT model selection, temperature, reasoning effort, sampling parameters, or token streaming.
+Use the endpoint printed at startup if PiLink selected a fallback port. The selected ChatGPT conversation decides the actual model. PiLink echoes the supplied `model` field in the OpenAI-compatible response and does not attempt to control ChatGPT model selection, temperature, reasoning effort, sampling parameters, or token streaming.
 
 Unsupported Chat Completions fields are rejected instead of silently pretending that PiLink can enforce them.
 
