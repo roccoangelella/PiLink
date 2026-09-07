@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { VERSION } from "./config.js";
@@ -33,14 +33,11 @@ Security and determinism:
 
 const workerConnections = new WeakMap<LlmGatewayJobStore, Map<string, number>>();
 
-export function gatewayWorkerSessionId(oauthClientId: string, jwtSecret: string): string {
+export function gatewayWorkerSessionId(oauthClientId: string): string {
   if (typeof oauthClientId !== "string" || !oauthClientId.trim() || Buffer.byteLength(oauthClientId, "utf8") > 512) {
     throw new Error("Gateway OAuth client id is invalid");
   }
-  if (typeof jwtSecret !== "string" || jwtSecret.length < 32) {
-    throw new Error("Gateway worker identity secret is unavailable");
-  }
-  const digest = createHmac("sha256", jwtSecret)
+  const digest = createHash("sha256")
     .update("pilink/llm-gateway/oauth-worker/v1\0", "utf8")
     .update(oauthClientId, "utf8")
     .digest("base64url");
