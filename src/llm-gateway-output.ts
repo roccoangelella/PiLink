@@ -1,15 +1,25 @@
 let installed = false;
 let originalWrite: typeof process.stderr.write | undefined;
 let pending = "";
+let compactMode = false;
 
 const INTERACTIVE_PROMPTS = [
   "Cloudflare API token required",
   "Allow this ChatGPT connection?",
+  "Approve this ChatGPT connection?",
 ];
+const ACTIONABLE = /\b(?:error|failed|failure|rejected|denied|expired|unavailable|invalid|refused|could not|cannot|unable)\b/iu;
+
+export function gatewayLogsAreVerbose(value = process.env.PILINK_TERMINAL_LOGS): boolean {
+  return /^(?:1|true|yes|on|verbose|debug)$/iu.test(value?.trim() ?? "");
+}
 
 export function installGatewayCompactOutput(): void {
   if (installed) return;
   installed = true;
+  if (gatewayLogsAreVerbose()) return;
+
+  compactMode = true;
   originalWrite = process.stderr.write.bind(process.stderr);
 
   const filteredWrite = function (
@@ -29,13 +39,15 @@ export function installGatewayCompactOutput(): void {
 }
 
 export function writeGatewayCompactLine(message = ""): void {
-  const write = originalWrite ?? process.stderr.write.bind(process.stderr);
-  write(`${message}\n`);
+  rawWrite(`${message}\n`);
 }
 
 export function writeGatewayCompactBlock(lines: readonly string[]): void {
-  const write = originalWrite ?? process.stderr.write.bind(process.stderr);
-  write(`${lines.join("\n")}\n`);
+  rawWrite(`${lines.join("\n")}\n`);
+}
+
+export function gatewayCompactOutputEnabled(): boolean {
+  return compactMode;
 }
 
 function consume(text: string): void {
@@ -45,7 +57,8 @@ function consume(text: string): void {
     if (newline === -1) break;
     const line = pending.slice(0, newline).replace(/\r$/u, "");
     pending = pending.slice(newline + 1);
-    if (!suppress(line)) rawWrite(`${line}\n`);
+    const selected = filterGatewayTerminalLine(line);
+    if (selected !== undefined) rawWrite(`${selected}\n`);
   }
 
   if (pending && INTERACTIVE_PROMPTS.some((prompt) => pending.startsWith(prompt))) {
@@ -59,31 +72,40 @@ function rawWrite(text: string): void {
   write(text);
 }
 
-function suppress(line: string): boolean {
+export function filterGatewayTerminalLine(line: string): string | undefined {
   const trimmed = line.trim();
-  if (!trimmed) return true;
+  if (!trimmed) return undefined;
 
-  // cloudflared raw diagnostics are deliberately hidden in gateway mode. Its
-  // process error/exit handlers still surface actionable failures.
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s/u.test(trimmed)) return true;
-  if (/^\d{4}\/\d{2}\/\d{2}\s/u.test(trimmed)) return true;
+  // Managed edge runtimes are silent in compact mode. Their process-level
+  // failures are surfaced by PiLink's own error/exit handlers instead.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s/u.test(trimmed)) return undefined;
+  if (/^\d{4}\/\d{2}\/\d{2}\s/u.test(trimmed)) return undefined;
 
-  // Suppress the ordinary server box and routine per-request/session chatter.
-  if (/^[╔╠╚║]/u.test(trimmed)) return true;
-  if (trimmed.startsWith("[HTTP]")) return true;
-  if (trimmed.startsWith("[MCP]") && !/\b(?:error|failed|rejected|unavailable)\b/iu.test(trimmed)) return true;
-  if (trimmed === "[OAuth] Registration request received") return true;
+  // Hide the ordinary server banner and request/session traces. Operators can
+  // restore them with PILINK_TERMINAL_LOGS=verbose.
+  if (/^[╔╠╚║]/u.test(trimmed)) return undefined;
+  if (trimmed.startsWith("[HTTP]")) return undefined;
+  if (trimmed.startsWith("[MCP]")) return ACTIONABLE.test(trimmed) ? cleanActionableLine(trimmed) : undefined;
+  if (trimmed.startsWith("[OAuth]")) return ACTIONABLE.test(trimmed) ? cleanActionableLine(trimmed) : undefined;
+  if (trimmed.startsWith("[Gateway]")) return ACTIONABLE.test(trimmed) ? cleanActionableLine(trimmed) : undefined;
 
-  if (trimmed === "=== Cloudflare fixed domain started ===") return true;
-  if (/^[1-4]\. (?:Your persistent public address|Use this MCP server URL|Keep the Cloudflare Published application route|This URL remains the same)/u.test(trimmed)) return true;
-  if (trimmed === "=== Connect ChatGPT ===" || trimmed === "=== First-time ChatGPT setup (safe DCR) ===") return true;
-  if (/^[1-4]\. (?:In ChatGPT|Set the MCP server URL|Select Authentication|Select Dynamic Client Registration)/u.test(trimmed)) return true;
-  if (trimmed.startsWith("Waiting for ChatGPT.")) return true;
-  if (trimmed.startsWith("An OAuth client is already configured.")) return true;
+  // These setup blocks are replaced by one stable footer after the MCP server
+  // and local OAuth setup endpoint are actually ready.
+  if (trimmed === "=== Cloudflare fixed domain started ===") return undefined;
+  if (/^[1-4]\. (?:Your persistent public address|Use this MCP server URL|Keep the Cloudflare Published application route|This URL remains the same)/u.test(trimmed)) return undefined;
+  if (trimmed === "=== Cloudflare Quick Tunnel started ===") return undefined;
+  if (/^[1-3]\. (?:Keep this terminal open|Use this MCP server URL|Continue with the ChatGPT OAuth setup below)/u.test(trimmed)) return undefined;
+  if (trimmed.startsWith("Important: this Quick Tunnel URL changes")) return undefined;
+  if (trimmed === "=== Connect ChatGPT ===" || trimmed === "=== First-time ChatGPT setup (safe DCR) ===") return undefined;
+  if (/^[1-4]\. (?:In ChatGPT|Set the MCP server URL|Select Authentication|Select Dynamic Client Registration)/u.test(trimmed)) return undefined;
+  if (trimmed.startsWith("Waiting for ChatGPT.")) return undefined;
+  if (trimmed.startsWith("An OAuth client is already configured.")) return undefined;
 
-  if (trimmed.startsWith("[Gateway]")) {
-    return /(?:OpenAI-compatible endpoint|Model field|API key|Send the wake command|Repointing the existing Cloudflare|Cloudflare fixed-domain ingress now targets|MCP port .* is unavailable|Saved PORT=)/iu.test(trimmed);
-  }
+  if (trimmed === "Shutting down...") return "PiLink Gateway stopped.";
 
-  return false;
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+function cleanActionableLine(line: string): string {
+  return line.replace(/^\[(?:HTTP|MCP|OAuth|Gateway)\]\s*/u, "");
 }
