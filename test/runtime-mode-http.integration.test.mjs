@@ -8,7 +8,23 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const CLASSIC_TOOLS = ["bash", "edit", "find", "get_system_prompt", "grep", "ls", "read", "run", "write"];
+const CLASSIC_TOOLS = [
+  "bash",
+  "edit",
+  "exec_cancel",
+  "exec_output",
+  "exec_start",
+  "exec_status",
+  "exec_wait",
+  "find",
+  "get_system_prompt",
+  "grep",
+  "ls",
+  "read",
+  "repo_snapshot",
+  "run",
+  "write",
+];
 
 test("single runtime mode exposes only the classic agent harness", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-single-mode-http-"));
@@ -25,6 +41,8 @@ test("single runtime mode exposes only the classic agent harness", async (t) => 
       HOST: "127.0.0.1",
       SERVER_URL: serverUrl,
       PI_RUNTIME_MODE: "single",
+      PI_UNSAFE_FULL_ACCESS: "true",
+      PI_FULL_ACCESS_CLIENT_IDS: "*",
       PI_WORK_DIR: workspace,
       PI_DATA_DIR: dataDir,
       PI_AGENT_PROVIDER: "missing-provider",

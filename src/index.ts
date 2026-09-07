@@ -35,6 +35,7 @@ import { CollaborationBootstrap } from "./collaboration-bootstrap.js";
 import { CollaborationContextRegistry } from "./collaboration-context-registry.js";
 import { AgentMemoryStore } from "./memory.js";
 import { AgentWorkLoopStore } from "./work-loop.js";
+import { ExecutionJobStore } from "./execution-jobs.js";
 
 assertRequiredNodeVersion();
 loadEnvironment();
@@ -575,6 +576,7 @@ let collaborationSessionStore: CollaborationSessionStore | undefined;
 let collaborationContextRegistry: CollaborationContextRegistry | undefined;
 let agentMemoryStore: AgentMemoryStore | undefined;
 let agentWorkLoopStore: AgentWorkLoopStore | undefined;
+let executionJobStore: ExecutionJobStore | undefined;
 
 function getAgentChatBroker(): AgentChatBroker {
   if (!agentChatBroker) {
@@ -631,6 +633,16 @@ function getCollaborationSessionStore(): CollaborationSessionStore {
     });
   }
   return collaborationSessionStore;
+}
+
+function getExecutionJobStore(): ExecutionJobStore {
+  if (!executionJobStore) {
+    executionJobStore = new ExecutionJobStore({
+      workspace: config.workspace,
+      dataDir: config.dataDir,
+    });
+  }
+  return executionJobStore;
 }
 
 function getAgentWorkLoopStore(): AgentWorkLoopStore {
@@ -708,6 +720,11 @@ function createConnectionMcpServer(
   const granted = new Set(scopes.split(/\s+/u).filter(Boolean));
   const canRead = granted.has("mcp:read") || granted.has("mcp:tools");
   const canBootstrap = granted.has("mcp:write") || granted.has("mcp:tools");
+  const executionServices = {
+    store: getExecutionJobStore(),
+    ownerId: clientId,
+    ownerName: identity.agentName,
+  };
   try {
     if (config.runtimeMode === "single") {
       return createMcpServer(
@@ -716,6 +733,13 @@ function createConnectionMcpServer(
         undefined,
         undefined,
         getToolAuditLog(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        executionServices,
       );
     }
     const bootstrap = canBootstrap
@@ -739,12 +763,26 @@ function createConnectionMcpServer(
       canRead ? getAgentMemoryStore() : undefined,
       bootstrap ? getAgentWorkLoopStore() : undefined,
       mcpAgentServices(clientId, connectionPolicy),
+      executionServices,
     );
   } catch {
     // A deliberately unsafe or unavailable private data directory must not
     // disable the supervised runtime or the basic workspace harness.
     console.error("[COLLABORATION] Durable upstream services are unavailable; continuing with the supervised runtime only.");
-    return createMcpServer(connectionPolicy, scopes, mcpAgentServices(clientId, connectionPolicy));
+    return createMcpServer(
+      connectionPolicy,
+      scopes,
+      mcpAgentServices(clientId, connectionPolicy),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      executionServices,
+    );
   }
 }
 

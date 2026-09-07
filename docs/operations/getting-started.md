@@ -208,10 +208,14 @@ After authorization, ask ChatGPT to inspect the workspace first, then make focus
 - `read`, `grep`, `find`, `ls` for inspection
 - `edit`, `write` for file changes
 - `run` for fixed argv-based profiles: `git_status`, `git_diff`, `git_diff_staged`, and `git_log`
+- `repo_snapshot` for one-call bounded Git status, unstaged diff, staged diff, and recent log inspection
 - `npm_build` and `npm_test` through `run` only when `PI_ALLOW_WORKSPACE_EXECUTION=true` or full-access mode is enabled
 - `bash` only in `--allow-unsafe-full-access` mode
+- `exec_start`, `exec_status`, `exec_wait`, `exec_output`, and `exec_cancel` in full-access mode for detached durable commands that may outlive one MCP request
 
 The `run` tool never parses a shell command, bounds stdout/stderr, respects MCP cancellation, and accepts an optional `cwd`. In workspace mode, `cwd` and Git paths remain confined to `PI_WORK_DIR`; in Full Access mode, `cwd` defaults to `PI_WORK_DIR` but may explicitly select any existing directory. A per-call timeout is optional; omitting it means PiLink does not impose an execution deadline. Git profiles disable external diff/text-conversion hooks, pagers, prompts, and system/global Git configuration. Build and test profiles are arbitrary repository code, not a sandbox. Workspace-mode repository execution receives a sanitized operational environment; Full Access intentionally preserves the PiLink process environment, including credentials.
+
+Durable execution jobs are the preferred path for long-running Full Access commands. `exec_start` writes a private job specification, launches a detached worker, deletes the command specification once the worker has read it, and returns a job ID immediately. Stdout/stderr are spooled under PiLink's private data directory rather than accumulated in model context. `exec_wait` long-polls for at most 60 seconds per MCP request, `exec_status` returns the current durable state, `exec_output` pages logs by byte offset, and `exec_cancel` terminates the detached process group. Job ownership is bound to the OAuth client that created it.
 
 The server limits request bodies, tool input sizes, OAuth rate, and access-token lifetime. `mcp:read` gives inspection-only access; `mcp:write` gives write and constrained-execution access; `mcp:tools` gives all tool permissions subject to the selected server mode.
 
