@@ -45,6 +45,22 @@ test("gateway_exchange atomically completes one request and keeps waiting", asyn
   assert.equal(completed.response, "pong");
 });
 
+test("a distinct fresh gateway worker cannot take over the active worker", async (t) => {
+  const { store } = await fixture(t);
+  const waiting = store.exchange("session-primary", undefined, 5);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await store.isAvailable(), true);
+
+  await assert.rejects(
+    store.exchange("session-other-client", undefined, 1),
+    /another ChatGPT gateway MCP session is already active/i,
+  );
+
+  await store.release("test cleanup");
+  const released = await waiting;
+  assert.equal(released.state, "released");
+});
+
 test("release is the only terminal gateway lifecycle state", async (t) => {
   const { store } = await fixture(t);
   const waiting = store.exchange("session-release", undefined, 5);
