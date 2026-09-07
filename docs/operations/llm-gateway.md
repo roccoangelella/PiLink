@@ -10,11 +10,21 @@ This is an explicit operator mode. It does not add a third `PI_RUNTIME_MODE`; `p
 pilink gateway start
 ```
 
-This reuses the normal PiLink hosting and OAuth setup. For an operator-managed HTTPS reverse proxy, use:
+This reuses the normal PiLink hosting and OAuth configuration. A gateway launch is also an explicit local owner action, so it opens a short five-minute ChatGPT Dynamic Client Registration (DCR) window even when another OAuth client is already stored. Existing clients are not deleted, replaced, or weakened. The registration window only permits the bounded ChatGPT DCR shape and the subsequent authorization still requires local owner approval.
+
+If the DCR window expires before a new ChatGPT app is created, reopen it without restarting PiLink:
+
+```bash
+pilink gateway connect
+```
+
+For an operator-managed HTTPS reverse proxy, use:
 
 ```bash
 pilink gateway serve
 ```
+
+Gateway launches use compact terminal output. Raw cloudflared diagnostics, the ordinary PiLink server box, routine HTTP request logs, and routine MCP session chatter are hidden. Actionable process errors and the local `Allow this ChatGPT connection? [y/N]` approval prompt remain visible. Once startup is ready, PiLink leaves one stable footer at the bottom of the CLI containing the ChatGPT MCP URL, local OpenAI-compatible API URL, API key, `pilink gateway connect`, and the wake command.
 
 The OpenAI-compatible API is always bound to loopback. Its default port is the PiLink MCP port plus 10, so the normal `PORT=3200` configuration produces:
 
@@ -33,11 +43,29 @@ The selected MCP fallback is saved as `PORT` in the active PiLink private config
 
 For a Cloudflare fixed domain, the public tunnel configuration must target the same local MCP port. When a fallback changes the MCP port, PiLink safely repoints only the already configured PiLink tunnel and exact hostname to the new loopback origin. This requires the same scoped Cloudflare API token used for provisioning. In an interactive terminal PiLink requests it with hidden input; in non-interactive launches set `CLOUDFLARE_API_TOKEN` for that launch. The account token is not persisted. PiLink refuses to create a replacement tunnel or overwrite unrelated ingress rules during this fallback.
 
-PiLink prints the derived gateway API key once when the local endpoint starts. The key is derived from PiLink private secret material with a domain-separated HMAC; it is not the OAuth bootstrap secret and does not grant MCP/admin authority. `PI_LLM_GATEWAY_API_KEY` may be set in the private PiLink environment when an explicit independent key is preferred.
+PiLink prints the derived gateway API key in the compact startup footer. The key is derived from PiLink private secret material with a domain-separated HMAC; it is not the OAuth bootstrap secret and does not grant MCP/admin authority. `PI_LLM_GATEWAY_API_KEY` may be set in the private PiLink environment when an explicit independent key is preferred.
+
+## Connect ChatGPT
+
+Create a custom ChatGPT MCP app/connection using the MCP URL printed in the gateway footer, for example:
+
+```text
+https://mcp.example.com/sse
+```
+
+Choose OAuth and Dynamic Client Registration (DCR). PiLink accepts the secretless ChatGPT registration only while the short owner-opened DCR window is active. When ChatGPT reaches the authorization step, the terminal running PiLink displays the exact client/callback/scope and asks:
+
+```text
+Allow this ChatGPT connection? [y/N]:
+```
+
+Approve only a connection you just initiated yourself. Stopping another PiLink process does not open this registration window, and an already stored OAuth client does not automatically authorize a new ChatGPT app. Use `pilink gateway connect` whenever a fresh DCR window is needed.
+
+In a non-interactive launch where terminal approval is unavailable, PiLink prints the one-use owner pairing URL and local verification code in the compact footer; complete that pairing in the same browser used for ChatGPT before OAuth authorization.
 
 ## Wake the ChatGPT conversation
 
-After connecting the same PiLink MCP endpoint to the intended ChatGPT conversation, send a short explicit wake message such as:
+After connecting the PiLink MCP endpoint to the intended ChatGPT conversation, send a short explicit wake message such as:
 
 ```text
 @PiLink wake
@@ -120,7 +148,7 @@ GET  /v1/gateway/status
 POST /v1/gateway/release
 ```
 
-They are operational controls, not part of the OpenAI compatibility contract.
+They are operational controls, not part of the OpenAI compatibility contract. `pilink gateway connect` uses the separate existing PiLink loopback admin boundary and bootstrap credential only to open the short owner registration window; it does not expose an additional public control endpoint.
 
 ## Configuration
 
