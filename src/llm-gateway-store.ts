@@ -143,6 +143,7 @@ export class LlmGatewayJobStore {
   private mutationQueue: Promise<void> = Promise.resolve();
   private cachedState?: StoredGatewayState;
   private readonly changes = new EventEmitter();
+  private readonly sessionGenerations = new Map<string, number>();
 
   constructor(options: LlmGatewayStoreOptions) {
     this.workspace = path.resolve(options.workspace);
@@ -289,8 +290,12 @@ export class LlmGatewayJobStore {
 
   async disconnectSession(sessionId: string): Promise<void> {
     const selectedSessionId = validateSessionId(sessionId);
+    this.sessionGenerations.set(selectedSessionId, (this.sessionGenerations.get(selectedSessionId) ?? 0) + 1);
     await this.mutate(async (state) => {
-      if (state.activeSessionId !== selectedSessionId) return;
+      if (state.activeSessionId !== selectedSessionId) {
+        this.emitChange();
+        return;
+      }
       for (const job of state.jobs) {
         if (job.status !== "claimed" || job.claimedBy !== selectedSessionId) continue;
         job.status = "queued";
@@ -313,6 +318,7 @@ export class LlmGatewayJobStore {
     signal?: AbortSignal,
   ): Promise<GatewayExchangeResult> {
     const selectedSessionId = validateSessionId(sessionId);
+    const sessionGeneration = this.sessionGenerations.get(selectedSessionId) ?? 0;
     const selectedCompletion = completion ? validateCompletion(completion) : undefined;
     if (!Number.isSafeInteger(maximumWaitSeconds) || maximumWaitSeconds < 1 || maximumWaitSeconds > GATEWAY_MAX_WAIT_SECONDS) {
       throw new Error(`maximumWaitSeconds must be an integer from 1 through ${GATEWAY_MAX_WAIT_SECONDS}`);
@@ -323,7 +329,15 @@ export class LlmGatewayJobStore {
 
     while (true) {
       if (signal?.aborted) throw new Error("Gateway exchange was cancelled");
+      if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) {
+        return {
+          state: "idle",
+          continue: true,
+          waited_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+        };
+      }
       const selected = await this.mutate(async (state): Promise<GatewayExchangeResult | undefined> => {
+        if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) return undefined;
         const nowMs = this.now().getTime();
         let changed = reclaimExpiredClaims(state, nowMs);
         changed = bindSession(state, selectedSessionId, nowMs, this.staleAfterMs) || changed;
@@ -370,6 +384,13 @@ export class LlmGatewayJobStore {
         return undefined;
       });
       if (selected) return selected;
+      if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) {
+        return {
+          state: "idle",
+          continue: true,
+          waited_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+        };
+      }
 
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
