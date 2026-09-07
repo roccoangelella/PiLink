@@ -161,7 +161,6 @@ export class LlmGatewayJobStore {
 
   async activate(): Promise<void> {
     await this.mutate(async (state) => {
-      const now = this.now().toISOString();
       for (const job of state.jobs) {
         if (job.status !== "claimed") continue;
         job.status = "queued";
@@ -177,7 +176,6 @@ export class LlmGatewayJobStore {
       pruneJobs(state);
       await this.persist(state);
       this.emitChange();
-      void now;
     });
   }
 
@@ -188,6 +186,7 @@ export class LlmGatewayJobStore {
       state.released = true;
       state.releaseReason = selectedReason;
       delete state.activeSessionId;
+      delete state.lastExchangeAt;
       for (const job of state.jobs) {
         if (job.status !== "queued" && job.status !== "claimed") continue;
         job.status = "failed";
@@ -292,7 +291,16 @@ export class LlmGatewayJobStore {
     const selectedSessionId = validateSessionId(sessionId);
     await this.mutate(async (state) => {
       if (state.activeSessionId !== selectedSessionId) return;
-      state.lastExchangeAt = new Date(0).toISOString();
+      for (const job of state.jobs) {
+        if (job.status !== "claimed" || job.claimedBy !== selectedSessionId) continue;
+        job.status = "queued";
+        delete job.claimedAt;
+        delete job.claimedBy;
+        delete job.claimToken;
+        delete job.leaseExpiresAt;
+      }
+      delete state.activeSessionId;
+      delete state.lastExchangeAt;
       await this.persist(state);
       this.emitChange();
     });
@@ -709,7 +717,7 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
 }
 
 async function syncDirectory(directory: string): Promise<void> {
-  let handle: fs.FileHandle | undefined;
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     handle = await fs.open(directory, "r");
     await handle.sync();
