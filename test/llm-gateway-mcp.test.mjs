@@ -52,10 +52,10 @@ test("gateway OAuth worker identity is stable without exposing the client id", (
   assert.doesNotMatch(first, /pi_client_alpha/u);
 });
 
-test("gateway MCP catalog exposes only gateway_exchange", async (t) => {
+test("gateway MCP catalog exposes exchange plus the local-tool dispatcher", async (t) => {
   const { client, store } = await connected(t);
-  const tools = (await client.listTools()).tools.map((tool) => tool.name);
-  assert.deepEqual(tools, ["gateway_exchange"]);
+  const tools = (await client.listTools()).tools.map((tool) => tool.name).sort();
+  assert.deepEqual(tools, ["gateway_call_local_tool", "gateway_exchange"]);
 
   const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -90,7 +90,7 @@ test("gateway MCP catalog exposes only gateway_exchange", async (t) => {
   assert.deepEqual(completed.response, { content: "world" });
 });
 
-test("gateway_exchange carries harness tools and returns typed tool calls", async (t) => {
+test("gateway_call_local_tool converts a real MCP call into an OpenAI tool call", async (t) => {
   const { client, store } = await connected(t);
   const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -104,8 +104,69 @@ test("gateway_exchange carries harness tools and returns typed tool calls", asyn
   const claimed = JSON.parse((await wait).content[0].text);
   assert.equal(claimed.state, "request");
   assert.deepEqual(claimed.request.tools, [bashTool()]);
-  assert.equal(claimed.request.tool_choice, "auto");
-  assert.equal(claimed.request.parallel_tool_calls, false);
+
+  const submit = await client.callTool({
+    name: "gateway_call_local_tool",
+    arguments: {
+      request_id: claimed.request.request_id,
+      claim_token: claimed.request.claim_token,
+      calls: [{
+        name: "bash",
+        arguments: { command: "ls /home/ubuntu/Projects" },
+      }],
+      maximum_wait_seconds: 1,
+    },
+  });
+  assert.equal(JSON.parse(submit.content[0].text).state, "idle");
+
+  const completed = await store.job(queued.requestId);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.response.content, null);
+  assert.equal(completed.response.tool_calls.length, 1);
+  assert.match(completed.response.tool_calls[0].id, /^call_[0-9a-f-]{36}$/u);
+  assert.equal(completed.response.tool_calls[0].type, "function");
+  assert.equal(completed.response.tool_calls[0].function.name, "bash");
+  assert.deepEqual(JSON.parse(completed.response.tool_calls[0].function.arguments), {
+    command: "ls /home/ubuntu/Projects",
+  });
+});
+
+test("gateway_call_local_tool rejects a function not advertised by the harness", async (t) => {
+  const { client, store } = await connected(t);
+  const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "Do something" }],
+    tools: [bashTool()],
+  });
+  const claimed = JSON.parse((await wait).content[0].text);
+  const result = await client.callTool({
+    name: "gateway_call_local_tool",
+    arguments: {
+      request_id: claimed.request.request_id,
+      claim_token: claimed.request.claim_token,
+      calls: [{ name: "delete_everything", arguments: {} }],
+      maximum_wait_seconds: 1,
+    },
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /unavailable function/i);
+  await store.release("test cleanup");
+});
+
+test("gateway_exchange keeps backward-compatible typed tool_calls", async (t) => {
+  const { client, store } = await connected(t);
+  const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "List /home/ubuntu/Projects" }],
+    tools: [bashTool()],
+    toolChoice: "auto",
+    parallelToolCalls: false,
+  });
+  const claimed = JSON.parse((await wait).content[0].text);
 
   const submit = client.callTool({
     name: "gateway_exchange",
@@ -136,34 +197,6 @@ test("gateway_exchange carries harness tools and returns typed tool calls", asyn
       function: { name: "bash", arguments: "{\"command\":\"ls /home/ubuntu/Projects\"}" },
     }],
   });
-});
-
-test("gateway_exchange rejects a tool call for an unadvertised function", async (t) => {
-  const { client, store } = await connected(t);
-  const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  await store.enqueueRequest({
-    model: "pilink",
-    messages: [{ role: "user", content: "Do something" }],
-    tools: [bashTool()],
-  });
-  const claimed = JSON.parse((await wait).content[0].text);
-  const result = await client.callTool({
-    name: "gateway_exchange",
-    arguments: {
-      request_id: claimed.request.request_id,
-      claim_token: claimed.request.claim_token,
-      tool_calls: [{
-        id: "call_bad",
-        type: "function",
-        function: { name: "delete_everything", arguments: "{}" },
-      }],
-      maximum_wait_seconds: 1,
-    },
-  });
-  assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /unavailable function/i);
-  await store.release("test cleanup");
 });
 
 test("same OAuth worker survives ChatGPT MCP transport replacement", async (t) => {
