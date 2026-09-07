@@ -103,6 +103,43 @@ test("fixed-domain API provisioning reuses an exact existing tunnel and refuses 
   assert.equal(mutations, 0);
 });
 
+test("fixed-domain API provisioning safely repoints the configured PiLink tunnel to a new loopback port", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-cf-api-repoint-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const tunnelName = "pilink-mcp-example-com-" + (await import("node:crypto")).createHash("sha256").update(hostname).digest("hex").slice(0, 10);
+  const newOrigin = "http://127.0.0.1:3201";
+  const calls = [];
+  const fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    calls.push({ method, pathname: url.pathname, body: init.body ? JSON.parse(String(init.body)) : undefined });
+    if (method === "GET" && url.pathname === "/client/v4/zones" && url.searchParams.get("name") === "mcp.example.com") return response([]);
+    if (method === "GET" && url.pathname === "/client/v4/zones" && url.searchParams.get("name") === "example.com") return response([{ id: zoneId, name: "example.com", status: "active", account: { id: accountId } }]);
+    if (method === "GET" && url.pathname === `/client/v4/accounts/${accountId}/cfd_tunnel`) return response([{ id: tunnelId, name: tunnelName }]);
+    if (method === "GET" && url.pathname.endsWith(`/${tunnelId}/configurations`)) return response(exactTunnelConfig());
+    if (method === "PUT" && url.pathname.endsWith(`/${tunnelId}/configurations`)) return response({});
+    if (method === "GET" && url.pathname === `/client/v4/zones/${zoneId}/dns_records`) return response([{ id: recordId, name: hostname, type: "CNAME", content: `${tunnelId}.cfargotunnel.com`, proxied: true }]);
+    if (method === "GET" && url.pathname.endsWith(`/${tunnelId}/token`)) return response(tunnelToken);
+    throw new Error(`unexpected Cloudflare API call: ${method} ${url.pathname}${url.search}`);
+  };
+
+  const result = await provisionFixedDomainTunnel({
+    hostname,
+    origin: newOrigin,
+    apiToken,
+    tokenDirectory: path.join(root, "cloudflare"),
+    expectedTunnelId: tunnelId,
+    fetch,
+  });
+
+  assert.equal(result.createdTunnel, false);
+  assert.equal(result.updatedTunnelConfiguration, true);
+  const update = calls.find((call) => call.method === "PUT" && call.pathname.endsWith(`/${tunnelId}/configurations`));
+  assert.equal(update.body.config.ingress[0].hostname, hostname);
+  assert.equal(update.body.config.ingress[0].service, newOrigin);
+  assert.ok(!calls.some((call) => call.method === "POST" && call.pathname.endsWith("/cfd_tunnel")));
+});
+
 test("fixed-domain API provisioning rejects an occupied hostname without modifying DNS", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-cf-api-conflict-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
