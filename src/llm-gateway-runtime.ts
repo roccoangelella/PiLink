@@ -1,5 +1,6 @@
 import { loadRuntimeConfig } from "./config.js";
 import { deriveGatewayApiKey, startGatewayApi, type StartedGatewayApi } from "./llm-gateway-api.js";
+import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import {
   GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS,
   GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -40,7 +41,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
     "PI_LLM_GATEWAY_REQUEST_TIMEOUT_SECONDS",
   );
-  const defaultGatewayPort = config.port <= 65525 ? config.port + 10 : 3210;
+  const defaultGatewayPort = gatewayApiPortForMcp(config.port);
   const gatewayPort = gatewayPortValue(process.env.PI_LLM_GATEWAY_PORT, defaultGatewayPort);
   const apiKey = process.env.PI_LLM_GATEWAY_API_KEY?.trim() || deriveGatewayApiKey(config.jwtSecret);
   const store = new LlmGatewayJobStore({
