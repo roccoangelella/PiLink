@@ -9,7 +9,7 @@ const manifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.me
   contributes?: {
     commands?: Array<{ command?: string; title?: string; category?: string }>;
     configuration?: { title?: string; properties?: Record<string, unknown> };
-    viewsContainers?: { secondarySidebar?: Array<{ title?: string }> };
+    viewsContainers?: { activitybar?: Array<{ title?: string }> };
     views?: Record<string, Array<{ name?: string }>>;
     mcpServerDefinitionProviders?: unknown[];
   };
@@ -21,7 +21,7 @@ const commandIds = commands.map((entry) => entry.command);
 test("the extension presents itself as PiLink's MCP bridge", () => {
   assert.equal(manifest.displayName, "PiLink — MCP Bridge");
   assert.match(manifest.description || "", /Start, connect, and monitor the PiLink MCP bridge/);
-  assert.equal(manifest.contributes?.viewsContainers?.secondarySidebar?.[0]?.title, "PiLink");
+  assert.equal(manifest.contributes?.viewsContainers?.activitybar?.[0]?.title, "PiLink");
   assert.equal(manifest.contributes?.views?.vspilinkSecondaryViewContainer?.[0]?.name, "PiLink");
   assert.equal(manifest.contributes?.configuration?.title, "PiLink");
   for (const command of commands) assert.equal(command.category, "PiLink");
@@ -44,6 +44,7 @@ test("the command palette exposes only ordinary recovery and navigation entry po
 test("state-sensitive, dangerous and specialist commands are not promoted into the palette", () => {
   const hidden = [
     "vspilink.start",
+    "vspilink.restart",
     "vspilink.startUnsafe",
     "vspilink.selectRuntimeMode",
     "vspilink.registerClient",
