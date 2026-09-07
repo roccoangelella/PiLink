@@ -24,7 +24,15 @@ For an operator-managed HTTPS reverse proxy, use:
 pilink gateway serve
 ```
 
-Gateway launches use compact terminal output. Raw cloudflared diagnostics, the ordinary PiLink server box, routine HTTP request logs, and routine MCP session chatter are hidden. Actionable process errors and the local `Allow this ChatGPT connection? [y/N]` approval prompt remain visible. Once startup is ready, PiLink leaves one stable footer at the bottom of the CLI containing the ChatGPT MCP URL, local OpenAI-compatible API URL, API key, `pilink gateway connect`, and the wake command.
+Gateway launches use compact terminal output by default. Raw cloudflared diagnostics, the ordinary PiLink server box, per-request HTTP logs, routine MCP session chatter, routine OAuth lifecycle messages, and duplicate gateway startup lines are hidden. Actionable failures remain visible with their technical prefix removed so they read as normal CLI errors. The ChatGPT authorization request is rendered as one compact block with client, access scope, callback, and a single `y/N` prompt.
+
+Once startup is ready, PiLink leaves one stable `Connection details` block at the bottom of the CLI. The ChatGPT MCP URL, local OpenAI-compatible API URL, API key, OAuth reopen command, wake command, and verbose-debug command are always kept together there instead of being scattered through startup logs.
+
+For troubleshooting, restore the complete raw runtime stream for that launch with:
+
+```bash
+PILINK_TERMINAL_LOGS=verbose pilink gateway start
+```
 
 The OpenAI-compatible API is always bound to loopback. Its default port is the PiLink MCP port plus 10, so the normal `PORT=3200` configuration produces:
 
@@ -53,10 +61,14 @@ Create a custom ChatGPT MCP app/connection using the MCP URL printed in the gate
 https://mcp.example.com/sse
 ```
 
-Choose OAuth and Dynamic Client Registration (DCR). PiLink accepts the secretless ChatGPT registration only while the short owner-opened DCR window is active. When ChatGPT reaches the authorization step, the terminal running PiLink displays the exact client/callback/scope and asks:
+Choose OAuth and Dynamic Client Registration (DCR). PiLink accepts the secretless ChatGPT registration only while the short owner-opened DCR window is active. When ChatGPT reaches the authorization step, compact gateway output shows:
 
 ```text
-Allow this ChatGPT connection? [y/N]:
+ChatGPT connection request
+  Client   ChatGPT
+  Access   mcp:tools offline_access
+  Callback https://chatgpt.com/connector/oauth/...
+Approve this ChatGPT connection? [y/N]:
 ```
 
 Approve only a connection you just initiated yourself. Stopping another PiLink process does not open this registration window, and an already stored OAuth client does not automatically authorize a new ChatGPT app. Use `pilink gateway connect` whenever a fresh DCR window is needed.
@@ -160,6 +172,7 @@ PI_LLM_GATEWAY_API_KEY=<independent-local-key>
 PI_LLM_GATEWAY_STALE_SECONDS=120
 PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS=600
 PI_LLM_GATEWAY_REQUEST_TIMEOUT_SECONDS=600
+PILINK_TERMINAL_LOGS=verbose
 ```
 
 `PI_LLM_GATEWAY_ENABLED=true` is an internal launch flag set by `pilink gateway start`/`serve`; normal PiLink launches do not expose the gateway tool or local completion endpoint.
