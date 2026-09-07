@@ -9,7 +9,7 @@ import { AgentCoordinationStore } from "../dist/agents/coordination.js";
 import { AgentManager } from "../dist/agents/manager.js";
 import { createMcpServer } from "../dist/mcp.js";
 
-const LEGACY_TOOLS = ["bash", "edit", "find", "get_system_prompt", "grep", "ls", "read", "run", "write"];
+const LEGACY_TOOLS = ["bash", "edit", "find", "get_system_prompt", "grep", "ls", "read", "repo_snapshot", "run", "write"];
 const AGENT_TOOLS = [
   "agent_cancel",
   "coordination_agent_chat_post",
