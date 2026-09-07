@@ -47,6 +47,8 @@ if (command !== "gateway") {
       printGatewayUsage();
       process.exitCode = 1;
     } else {
+      const { installGatewayCompactOutput } = await import("./llm-gateway-output.js");
+      installGatewayCompactOutput();
       const { runGatewayConnect } = await import("./llm-gateway-connect.js");
       process.exitCode = await runGatewayConnect();
     }
@@ -78,6 +80,7 @@ function printGatewayUsage(): void {
   console.error("  pilink gateway status             Read local gateway lifecycle and queue status");
   console.error("  pilink gateway release [reason]   Permanently end the active gateway loop until the server is restarted");
   console.error("");
+  console.error("Gateway terminal output is compact by default. Set PILINK_TERMINAL_LOGS=verbose to restore raw diagnostics.");
   console.error("The gateway pins the underlying core runtime to single mode because the ordinary MCP catalog is replaced by gateway_exchange.");
   console.error("If the configured MCP port is busy, gateway start/serve selects the next free MCP/API loopback pair (3200 -> 3201, API 3210 -> 3211).");
   console.error("The selected fallback MCP port is saved so managed hosting and subsequent launches stay consistent.");
