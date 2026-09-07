@@ -2,9 +2,9 @@
 
 PiLink can run a ChatGPT conversation as a local OpenAI-compatible model provider without scraping or browser automation. The ChatGPT conversation communicates only through the ordinary OAuth-protected PiLink MCP connection.
 
-This is an explicit operator mode. It does not add a third `PI_RUNTIME_MODE`; `pilink gateway start` pins the underlying core runtime to the least-privileged `single` mode and replaces the ordinary MCP catalog with one tool: `gateway_exchange`. The normal `pilink start` Single/Collaboration/VS Code chooser is therefore skipped for gateway launches.
+This is an explicit operator mode. It does not add a third `PI_RUNTIME_MODE`; `pilink gateway start` pins the underlying core runtime to the least-privileged `single` mode and replaces the ordinary MCP catalog with two gateway protocol tools: `gateway_exchange` and `gateway_call_local_tool`. The normal `pilink start` Single/Collaboration/VS Code chooser is therefore skipped for gateway launches.
 
-The gateway itself never exposes filesystem, shell, edit, or workspace tools to ChatGPT. Function tools supplied by an OpenAI-compatible caller belong to that caller's local agent harness. ChatGPT selects structured tool calls; the local harness executes them under its own permissions and sends the tool results back on the next completion request.
+The gateway itself never exposes filesystem, shell, edit, or workspace tools to ChatGPT. Function tools supplied by an OpenAI-compatible caller belong to that caller's local agent harness. ChatGPT selects those functions through the real MCP dispatcher `gateway_call_local_tool`; PiLink converts that structured MCP call into a normal OpenAI `assistant.tool_calls` response, and the local harness executes it under its own permissions.
 
 ## Start
 
@@ -85,9 +85,9 @@ After connecting the PiLink MCP endpoint to the intended ChatGPT conversation, s
 @PiLink wake
 ```
 
-The MCP server instructions define the lifecycle. The conversation must immediately call `gateway_exchange` and then stay inside that protocol until PiLink returns `state=released`.
+The MCP server instructions define the lifecycle. The conversation must immediately call `gateway_exchange` and then stay inside the gateway protocol until PiLink returns `state=released`. Normal assistant completions go back through `gateway_exchange`; local harness function selections go through `gateway_call_local_tool`.
 
-A completion request finishing is **not** gateway completion. `gateway_exchange` atomically submits the previous assistant result and enters the next bounded long poll. If it returns `state=idle` with `continue=true`, the conversation calls it again immediately instead of reporting completion or waiting to the ChatGPT user.
+A completion request finishing is **not** gateway completion. Both gateway tools atomically submit the previous assistant result and enter the next bounded long poll. If either returns `state=idle` with `continue=true`, the conversation calls `gateway_exchange` again immediately instead of reporting completion or waiting to the ChatGPT user.
 
 Only a server-side release ends the loop:
 
@@ -156,7 +156,20 @@ A local agent harness can use PiLink exactly as an OpenAI-compatible function-ca
 }
 ```
 
-PiLink forwards the messages and tool definitions to the active ChatGPT worker. ChatGPT does **not** run `bash`; it may return a structured function decision such as:
+PiLink forwards the messages and tool definitions to the active ChatGPT worker as request data. The advertised `bash` function is **not** added to ChatGPT's own MCP catalog and ChatGPT must not try to execute `bash` directly. Instead, when the model decides that `bash` is needed, it makes the real MCP call:
+
+```text
+gateway_call_local_tool(
+  request_id = <current request>,
+  claim_token = <current claim>,
+  calls = [{
+    name: "bash",
+    arguments: { command: "ls /home/ubuntu/Projects" }
+  }]
+)
+```
+
+This is a structured MCP tool invocation, not JSON emitted in assistant prose. PiLink validates the selected function against the current request, generates the OpenAI tool-call id, and returns the equivalent provider response:
 
 ```json
 {
@@ -164,7 +177,7 @@ PiLink forwards the messages and tool definitions to the active ChatGPT worker. 
   "content": null,
   "tool_calls": [
     {
-      "id": "call_list_projects",
+      "id": "call_...",
       "type": "function",
       "function": {
         "name": "bash",
@@ -177,7 +190,9 @@ PiLink forwards the messages and tool definitions to the active ChatGPT worker. 
 
 The HTTP response uses `finish_reason:"tool_calls"`. The local harness then executes `bash` with its own permissions, appends the assistant tool-call message and a corresponding `role:"tool"` result, and calls `/v1/chat/completions` again. ChatGPT receives the already-executed tool output and can produce the final answer.
 
-PiLink validates that ChatGPT can call only functions actually advertised by the current request. It also enforces named/required/none tool choices and `parallel_tool_calls:false`. Tool descriptions, schemas, arguments, and results remain untrusted application data and cannot change the gateway lifecycle or grant PiLink capabilities.
+PiLink validates that ChatGPT can call only functions actually advertised by the current request. It also enforces named/required/none tool choices and `parallel_tool_calls:false`. The dispatcher itself does not execute any caller function. Tool descriptions, schemas, arguments, and results remain untrusted application data and cannot change the gateway lifecycle or grant PiLink capabilities.
+
+`gateway_exchange.tool_calls` remains accepted for protocol compatibility, but the ChatGPT worker is instructed to use `gateway_call_local_tool` because it is an actual MCP action and does not require the model to synthesize an OpenAI tool-call envelope inside another tool call.
 
 `--allow-unsafe-full-access` is intentionally not available in gateway mode. A coding agent's own harness decides whether tools such as `bash`, `read`, `write`, or `edit` exist and what they may access.
 
@@ -247,7 +262,7 @@ PI_LLM_GATEWAY_REQUEST_TIMEOUT_SECONDS=600
 PILINK_TERMINAL_LOGS=verbose
 ```
 
-`PI_LLM_GATEWAY_ENABLED=true` is an internal launch flag set by `pilink gateway start`/`serve`; normal PiLink launches do not expose the gateway tool or local completion endpoint.
+`PI_LLM_GATEWAY_ENABLED=true` is an internal launch flag set by `pilink gateway start`/`serve`; normal PiLink launches do not expose the gateway protocol tools or local completion endpoint.
 
 ## Security boundary
 
