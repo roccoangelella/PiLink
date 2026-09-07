@@ -2,48 +2,57 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  GATEWAY_MODEL,
+  copyGatewayAssistantCompletion,
+  copyGatewayMessage,
+  copyGatewayTool,
+  copyGatewayToolChoice,
+  validateGatewayAssistantCompletion,
+  validateGatewayRequestPayload,
+  type GatewayAssistantCompletion,
+  type GatewayFunctionTool,
+  type GatewayMessage,
+  type GatewayRequestPayload,
+  type GatewayToolChoice,
+} from "./llm-gateway-protocol.js";
 
-export const GATEWAY_MODEL = "pilink";
+export { GATEWAY_MODEL } from "./llm-gateway-protocol.js";
+export type {
+  GatewayAssistantCompletion,
+  GatewayFunctionTool,
+  GatewayJsonObject,
+  GatewayJsonValue,
+  GatewayMessage,
+  GatewayRequestPayload,
+  GatewayRole,
+  GatewayToolCall,
+  GatewayToolChoice,
+} from "./llm-gateway-protocol.js";
+
 export const GATEWAY_MAX_WAIT_SECONDS = 55;
 export const GATEWAY_DEFAULT_WAIT_SECONDS = 50;
 export const GATEWAY_DEFAULT_STALE_SECONDS = 120;
 export const GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS = 10 * 60;
 export const GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS = 10 * 60;
 
-export const GATEWAY_ROLES = ["system", "developer", "user", "assistant", "tool"] as const;
-export type GatewayRole = typeof GATEWAY_ROLES[number];
-
-export interface GatewayMessage {
-  role: GatewayRole;
-  content: string;
-  name?: string;
-  tool_call_id?: string;
-}
-
-export interface GatewayRequestPayload {
-  model: string;
-  messages: GatewayMessage[];
-}
-
 export type GatewayJobStatus = "queued" | "claimed" | "completed" | "failed" | "cancelled";
 
-export interface GatewayJobSnapshot {
+export interface GatewayJobSnapshot extends GatewayRequestPayload {
   requestId: string;
-  model: string;
-  messages: GatewayMessage[];
   status: GatewayJobStatus;
   createdAt: string;
   claimedAt?: string;
   leaseExpiresAt?: string;
   completedAt?: string;
-  response?: string;
+  response?: GatewayAssistantCompletion;
   error?: string;
 }
 
 export interface GatewayCompletionInput {
   requestId: string;
   claimToken: string;
-  response?: string;
+  response?: GatewayAssistantCompletion | string;
   error?: string;
 }
 
@@ -56,6 +65,9 @@ export type GatewayExchangeResult =
         claim_token: string;
         model: string;
         messages: GatewayMessage[];
+        tools?: GatewayFunctionTool[];
+        tool_choice?: GatewayToolChoice;
+        parallel_tool_calls?: boolean;
       };
     }
   | {
@@ -85,6 +97,9 @@ interface StoredGatewayJob {
   requestId: string;
   model: string;
   messages: GatewayMessage[];
+  tools?: GatewayFunctionTool[];
+  toolChoice?: GatewayToolChoice;
+  parallelToolCalls?: boolean;
   status: GatewayJobStatus;
   createdAt: string;
   claimedAt?: string;
@@ -92,7 +107,7 @@ interface StoredGatewayJob {
   claimToken?: string;
   leaseExpiresAt?: string;
   completedAt?: string;
-  response?: string;
+  response?: GatewayAssistantCompletion;
   error?: string;
 }
 
@@ -115,11 +130,6 @@ export interface LlmGatewayStoreOptions {
 
 const MAX_RETAINED_JOBS = 256;
 const MAX_ACTIVE_JOBS = 128;
-const MAX_MODEL_BYTES = 128;
-const MAX_MESSAGES = 256;
-const MAX_MESSAGE_BYTES = 256 * 1024;
-const MAX_TOTAL_MESSAGE_BYTES = 1024 * 1024;
-const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_ERROR_BYTES = 64 * 1024;
 const REQUEST_ID_PATTERN = /^req_[0-9a-f-]{36}$/u;
 const CLAIM_TOKEN_PATTERN = /^claim_[A-Za-z0-9_-]{32,128}$/u;
@@ -148,9 +158,7 @@ export class LlmGatewayJobStore {
   constructor(options: LlmGatewayStoreOptions) {
     this.workspace = path.resolve(options.workspace);
     const dataDir = path.resolve(options.dataDir);
-    if (isWithin(this.workspace, dataDir)) {
-      throw new Error("LLM gateway private data must not be stored under the workspace");
-    }
+    if (isWithin(this.workspace, dataDir)) throw new Error("LLM gateway private data must not be stored under the workspace");
     const projectKey = createHash("sha256").update(this.workspace, "utf8").digest("hex");
     this.rootDir = path.join(dataDir, "llm-gateway", projectKey);
     this.statePath = path.join(this.rootDir, "state.json");
@@ -220,12 +228,11 @@ export class LlmGatewayJobStore {
   }
 
   async isAvailable(): Promise<boolean> {
-    const snapshot = await this.status();
-    return snapshot.state === "active";
+    return (await this.status()).state === "active";
   }
 
   async enqueueRequest(input: GatewayRequestPayload): Promise<GatewayJobSnapshot> {
-    const normalized = validateRequestPayload(input);
+    const normalized = validateGatewayRequestPayload(input);
     return this.mutate(async (state) => {
       reclaimExpiredClaims(state, this.now().getTime());
       if (state.released) throw new Error("Gateway is released");
@@ -233,8 +240,7 @@ export class LlmGatewayJobStore {
       if (activeJobs >= MAX_ACTIVE_JOBS) throw new Error("Gateway request queue is full");
       const job: StoredGatewayJob = {
         requestId: `req_${randomUUID()}`,
-        model: normalized.model,
-        messages: normalized.messages,
+        ...copyRequest(normalized),
         status: "queued",
         createdAt: this.now().toISOString(),
       };
@@ -329,13 +335,7 @@ export class LlmGatewayJobStore {
 
     while (true) {
       if (signal?.aborted) throw new Error("Gateway exchange was cancelled");
-      if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) {
-        return {
-          state: "idle",
-          continue: true,
-          waited_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
-        };
-      }
+      if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) return idleResult(startedAt);
       const selected = await this.mutate(async (state): Promise<GatewayExchangeResult | undefined> => {
         if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) return undefined;
         const nowMs = this.now().getTime();
@@ -346,11 +346,7 @@ export class LlmGatewayJobStore {
 
         if (state.released) {
           if (changed) await this.persist(state);
-          return {
-            state: "released",
-            continue: false,
-            reason: state.releaseReason || "Gateway released",
-          };
+          return { state: "released", continue: false, reason: state.releaseReason || "Gateway released" };
         }
 
         if (selectedCompletion && !completionApplied) {
@@ -375,7 +371,10 @@ export class LlmGatewayJobStore {
               request_id: queued.requestId,
               claim_token: queued.claimToken,
               model: queued.model,
-              messages: queued.messages.map(copyMessage),
+              messages: queued.messages.map(copyGatewayMessage),
+              ...(queued.tools === undefined ? {} : { tools: queued.tools.map(copyGatewayTool) }),
+              ...(queued.toolChoice === undefined ? {} : { tool_choice: copyGatewayToolChoice(queued.toolChoice) }),
+              ...(queued.parallelToolCalls === undefined ? {} : { parallel_tool_calls: queued.parallelToolCalls }),
             },
           };
         }
@@ -384,22 +383,9 @@ export class LlmGatewayJobStore {
         return undefined;
       });
       if (selected) return selected;
-      if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) {
-        return {
-          state: "idle",
-          continue: true,
-          waited_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
-        };
-      }
-
+      if ((this.sessionGenerations.get(selectedSessionId) ?? 0) !== sessionGeneration) return idleResult(startedAt);
       const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        return {
-          state: "idle",
-          continue: true,
-          waited_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
-        };
-      }
+      if (remaining <= 0) return idleResult(startedAt);
       await this.waitForChange(Math.min(remaining, 1_000), signal);
     }
   }
@@ -509,11 +495,16 @@ function validateStoredJob(value: unknown): StoredGatewayJob {
   if (!["queued", "claimed", "completed", "failed", "cancelled"].includes(String(status))) {
     throw new Error("Malformed LLM gateway job status");
   }
-  const request = validateRequestPayload({ model: value.model, messages: value.messages });
+  const request = validateGatewayRequestPayload({
+    model: value.model,
+    messages: value.messages,
+    ...(value.tools === undefined ? {} : { tools: value.tools }),
+    ...(value.toolChoice === undefined ? {} : { toolChoice: value.toolChoice }),
+    ...(value.parallelToolCalls === undefined ? {} : { parallelToolCalls: value.parallelToolCalls }),
+  });
   const job: StoredGatewayJob = {
     requestId: validateRequestId(value.requestId),
-    model: request.model,
-    messages: request.messages,
+    ...copyRequest(request),
     status: status as GatewayJobStatus,
     createdAt: validateTimestamp(value.createdAt, "createdAt"),
   };
@@ -522,32 +513,9 @@ function validateStoredJob(value: unknown): StoredGatewayJob {
   if (typeof value.claimToken === "string") job.claimToken = validateClaimToken(value.claimToken);
   if (typeof value.leaseExpiresAt === "string") job.leaseExpiresAt = validateTimestamp(value.leaseExpiresAt, "leaseExpiresAt");
   if (typeof value.completedAt === "string") job.completedAt = validateTimestamp(value.completedAt, "completedAt");
-  if (typeof value.response === "string") job.response = validateText(value.response, "response", MAX_RESPONSE_BYTES, true);
+  if (value.response !== undefined) job.response = validateGatewayAssistantCompletion(value.response, request);
   if (typeof value.error === "string") job.error = validateText(value.error, "error", MAX_ERROR_BYTES);
   return job;
-}
-
-function validateRequestPayload(input: { model: unknown; messages: unknown }): GatewayRequestPayload {
-  if (typeof input.model !== "string") throw new Error("model must be a string");
-  const model = validateText(input.model, "model", MAX_MODEL_BYTES);
-  if (!Array.isArray(input.messages) || input.messages.length < 1 || input.messages.length > MAX_MESSAGES) {
-    throw new Error(`messages must contain from 1 through ${MAX_MESSAGES} entries`);
-  }
-  let totalBytes = 0;
-  const messages = input.messages.map((message) => {
-    if (!isRecord(message) || typeof message.role !== "string" || !GATEWAY_ROLES.includes(message.role as GatewayRole)) {
-      throw new Error("message role is invalid");
-    }
-    if (typeof message.content !== "string") throw new Error("message content must be a string");
-    const content = validateText(message.content, "message content", MAX_MESSAGE_BYTES, true);
-    totalBytes += Buffer.byteLength(content, "utf8");
-    const normalized: GatewayMessage = { role: message.role as GatewayRole, content };
-    if (message.name !== undefined) normalized.name = validateSingleLine(message.name, "message name", 256);
-    if (message.tool_call_id !== undefined) normalized.tool_call_id = validateSingleLine(message.tool_call_id, "tool_call_id", 512);
-    return normalized;
-  });
-  if (totalBytes > MAX_TOTAL_MESSAGE_BYTES) throw new Error(`messages exceed ${MAX_TOTAL_MESSAGE_BYTES} UTF-8 bytes`);
-  return { model, messages };
 }
 
 function validateCompletion(input: GatewayCompletionInput): GatewayCompletionInput {
@@ -559,7 +527,7 @@ function validateCompletion(input: GatewayCompletionInput): GatewayCompletionInp
   return {
     requestId,
     claimToken,
-    ...(hasResponse ? { response: validateText(input.response, "response", MAX_RESPONSE_BYTES, true) } : {}),
+    ...(hasResponse ? { response: input.response } : {}),
     ...(hasError ? { error: validateText(input.error, "error", MAX_ERROR_BYTES) } : {}),
   };
 }
@@ -571,18 +539,16 @@ function applyCompletion(
   completedAt: string,
 ): void {
   const job = findJob(state, completion.requestId);
-  if (job.status === "completed" && completion.response !== undefined && job.response === completion.response && job.claimToken === completion.claimToken) {
-    return;
-  }
-  if (job.status === "failed" && completion.error !== undefined && job.error === completion.error && job.claimToken === completion.claimToken) {
-    return;
-  }
+  const normalizedResponse = completion.response === undefined ? undefined : validateGatewayAssistantCompletion(completion.response, job);
+  if (job.status === "completed" && normalizedResponse !== undefined && job.response &&
+      JSON.stringify(job.response) === JSON.stringify(normalizedResponse) && job.claimToken === completion.claimToken) return;
+  if (job.status === "failed" && completion.error !== undefined && job.error === completion.error && job.claimToken === completion.claimToken) return;
   if (job.status !== "claimed") throw new Error("Gateway request is not currently claimed");
   if (job.claimedBy !== sessionId) throw new Error("Gateway request is claimed by another MCP session");
   if (job.claimToken !== completion.claimToken) throw new Error("Gateway claim token does not match the active request");
-  job.status = completion.response !== undefined ? "completed" : "failed";
+  job.status = normalizedResponse !== undefined ? "completed" : "failed";
   job.completedAt = completedAt;
-  if (completion.response !== undefined) job.response = completion.response;
+  if (normalizedResponse !== undefined) job.response = normalizedResponse;
   if (completion.error !== undefined) job.error = completion.error;
   delete job.claimedAt;
   delete job.claimedBy;
@@ -595,9 +561,7 @@ function bindSession(state: StoredGatewayState, sessionId: string, nowMs: number
     state.activeSessionId = sessionId;
     return changed;
   }
-  if (isSessionFresh(state, nowMs, staleAfterMs)) {
-    throw new Error("Another ChatGPT gateway MCP session is already active");
-  }
+  if (isSessionFresh(state, nowMs, staleAfterMs)) throw new Error("Another ChatGPT gateway MCP session is already active");
   for (const job of state.jobs) {
     if (job.status !== "claimed" || job.claimedBy !== state.activeSessionId) continue;
     job.status = "queued";
@@ -660,20 +624,33 @@ function pruneJobs(state: StoredGatewayState): void {
 function publicJob(job: StoredGatewayJob): GatewayJobSnapshot {
   return {
     requestId: job.requestId,
-    model: job.model,
-    messages: job.messages.map(copyMessage),
+    ...copyRequest(job),
     status: job.status,
     createdAt: job.createdAt,
     ...(job.claimedAt ? { claimedAt: job.claimedAt } : {}),
     ...(job.leaseExpiresAt ? { leaseExpiresAt: job.leaseExpiresAt } : {}),
     ...(job.completedAt ? { completedAt: job.completedAt } : {}),
-    ...(job.response !== undefined ? { response: job.response } : {}),
+    ...(job.response === undefined ? {} : { response: copyGatewayAssistantCompletion(job.response) }),
     ...(job.error !== undefined ? { error: job.error } : {}),
   };
 }
 
-function copyMessage(message: GatewayMessage): GatewayMessage {
-  return { ...message };
+function copyRequest(request: Pick<GatewayRequestPayload, "model" | "messages" | "tools" | "toolChoice" | "parallelToolCalls">): GatewayRequestPayload {
+  return {
+    model: request.model,
+    messages: request.messages.map(copyGatewayMessage),
+    ...(request.tools === undefined ? {} : { tools: request.tools.map(copyGatewayTool) }),
+    ...(request.toolChoice === undefined ? {} : { toolChoice: copyGatewayToolChoice(request.toolChoice) }),
+    ...(request.parallelToolCalls === undefined ? {} : { parallelToolCalls: request.parallelToolCalls }),
+  };
+}
+
+function idleResult(startedAt: number): GatewayExchangeResult {
+  return {
+    state: "idle",
+    continue: true,
+    waited_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+  };
 }
 
 function findJob(state: StoredGatewayState, requestId: string): StoredGatewayJob {
@@ -702,12 +679,6 @@ function validateText(value: unknown, field: string, maximumBytes: number, allow
   if (!allowEmpty && !value.trim()) throw new Error(`${field} must not be empty`);
   if (Buffer.byteLength(value, "utf8") > maximumBytes) throw new Error(`${field} exceeds ${maximumBytes} UTF-8 bytes`);
   return value;
-}
-
-function validateSingleLine(value: unknown, field: string, maximumBytes: number): string {
-  const selected = validateText(value, field, maximumBytes);
-  if (/[\r\n]/u.test(selected)) throw new Error(`${field} must be one line`);
-  return selected;
 }
 
 function validateTimestamp(value: unknown, field: string): string {
