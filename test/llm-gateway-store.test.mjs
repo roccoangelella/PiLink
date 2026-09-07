@@ -16,6 +16,22 @@ async function fixture(t) {
   return { store };
 }
 
+function bashTool() {
+  return {
+    type: "function",
+    function: {
+      name: "bash",
+      description: "Execute a shell command in the local harness",
+      parameters: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
 test("gateway_exchange atomically completes one request and keeps waiting", async (t) => {
   const { store } = await fixture(t);
   const waiting = store.exchange("session-a", undefined, 2);
@@ -42,7 +58,126 @@ test("gateway_exchange atomically completes one request and keeps waiting", asyn
 
   const completed = await resultWait;
   assert.equal(completed.status, "completed");
-  assert.equal(completed.response, "pong");
+  assert.deepEqual(completed.response, { content: "pong" });
+});
+
+test("gateway preserves advertised tools and structured assistant tool calls", async (t) => {
+  const { store } = await fixture(t);
+  const waiting = store.exchange("session-tools", undefined, 3);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "List /home/ubuntu/Projects" }],
+    tools: [bashTool()],
+    toolChoice: "auto",
+    parallelToolCalls: false,
+  });
+  const claimed = await waiting;
+  assert.equal(claimed.state, "request");
+  assert.deepEqual(claimed.request.tools, [bashTool()]);
+  assert.equal(claimed.request.tool_choice, "auto");
+  assert.equal(claimed.request.parallel_tool_calls, false);
+
+  const resultWait = store.waitForResult(queued.requestId, 3);
+  const idle = await store.exchange("session-tools", {
+    requestId: claimed.request.request_id,
+    claimToken: claimed.request.claim_token,
+    response: {
+      content: null,
+      tool_calls: [{
+        id: "call_list_projects",
+        type: "function",
+        function: { name: "bash", arguments: "{\"command\":\"ls /home/ubuntu/Projects\"}" },
+      }],
+    },
+  }, 1);
+  assert.equal(idle.state, "idle");
+
+  const completed = await resultWait;
+  assert.equal(completed.status, "completed");
+  assert.deepEqual(completed.response, {
+    content: null,
+    tool_calls: [{
+      id: "call_list_projects",
+      type: "function",
+      function: { name: "bash", arguments: "{\"command\":\"ls /home/ubuntu/Projects\"}" },
+    }],
+  });
+});
+
+test("gateway rejects tool calls not advertised by the local harness", async (t) => {
+  const { store } = await fixture(t);
+  const waiting = store.exchange("session-tool-contract", undefined, 3);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "Read something" }],
+    tools: [bashTool()],
+    toolChoice: "auto",
+  });
+  const claimed = await waiting;
+  assert.equal(claimed.state, "request");
+
+  await assert.rejects(
+    store.exchange("session-tool-contract", {
+      requestId: claimed.request.request_id,
+      claimToken: claimed.request.claim_token,
+      response: {
+        content: null,
+        tool_calls: [{
+          id: "call_unavailable",
+          type: "function",
+          function: { name: "read_secret_file", arguments: "{}" },
+        }],
+      },
+    }, 1),
+    /unavailable function/i,
+  );
+
+  const job = await store.job(claimed.request.request_id);
+  assert.equal(job.status, "claimed");
+  await store.release("test cleanup");
+});
+
+test("gateway validates tool_choice and parallel tool constraints", async (t) => {
+  const { store } = await fixture(t);
+  const waiting = store.exchange("session-tool-choice", undefined, 3);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "Use bash" }],
+    tools: [bashTool()],
+    toolChoice: { type: "function", function: { name: "bash" } },
+    parallelToolCalls: false,
+  });
+  const claimed = await waiting;
+  assert.equal(claimed.state, "request");
+
+  await assert.rejects(
+    store.exchange("session-tool-choice", {
+      requestId: claimed.request.request_id,
+      claimToken: claimed.request.claim_token,
+      response: { content: "I will not call the tool." },
+    }, 1),
+    /must call required function 'bash'/i,
+  );
+
+  await assert.rejects(
+    store.exchange("session-tool-choice", {
+      requestId: claimed.request.request_id,
+      claimToken: claimed.request.claim_token,
+      response: {
+        content: null,
+        tool_calls: [
+          { id: "call_a", type: "function", function: { name: "bash", arguments: "{\"command\":\"pwd\"}" } },
+          { id: "call_b", type: "function", function: { name: "bash", arguments: "{\"command\":\"ls\"}" } },
+        ],
+      },
+    }, 1),
+    /parallel tool calls/i,
+  );
+  await store.release("test cleanup");
 });
 
 test("a distinct fresh gateway worker cannot take over the active worker", async (t) => {
