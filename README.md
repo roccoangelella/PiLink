@@ -20,6 +20,8 @@ checking bridge status. It is not a second chat frontend.
   sessions.
 - A default **Single-agent** tool catalog plus an optional collaboration catalog
   in the core server/CLI.
+- **ChatGPT LLM Gateway:** run a connected ChatGPT conversation as a local
+  OpenAI-compatible model provider with native tool-calling for coding agents.
 - Stable Cloudflare fixed-domain hosting, existing HTTPS domains, Quick Tunnel,
   local-only operation, and legacy CLI hosting paths.
 - Explicit opt-ins for repository execution and unrestricted machine access.
@@ -110,6 +112,32 @@ pilink reset
 
 See [Runtime mode selection](docs/operations/mode-selection.md) for the exact
 capability split.
+
+## ChatGPT LLM Gateway
+
+PiLink can run a persistent ChatGPT conversation as a local OpenAI-compatible
+model provider for coding agent harnesses (such as [Pi Agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)):
+
+```bash
+pilink gateway start
+```
+
+- **OpenAI-compatible endpoint:** Loopback API at `http://127.0.0.1:3210/v1`
+  (with automatic port fallback to `3211/v1` if `3210` is occupied).
+- **Tool-calling bridge:** Forwards caller-advertised function tools (`bash`,
+  `read`, `edit`, `write`) to ChatGPT. ChatGPT selects tools via the structured
+  MCP dispatcher `gateway_call_local_tool`, PiLink returns standard OpenAI
+  `assistant.tool_calls`, and the caller executes them locally with its own
+  permissions.
+- **Harness execution boundary:** Tool execution remains strictly with the
+  caller harness. PiLink never executes caller tools and requires no
+  `--allow-unsafe-full-access` flag.
+- **Client compatibility:** Supports streaming (`stream: true`) with buffered SSE
+  chunks, multi-part text messages, and standard client parameters (`store`,
+  `max_completion_tokens`, `temperature`, `top_p`, etc.).
+
+See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for complete protocol,
+lifecycle, and configuration details.
 
 ## Start PiLink from VS Code
 
@@ -215,6 +243,7 @@ broadening execution/access policy.
 - [Installation](docs/INSTALLATION.md)
 - [VS Code extension](docs/VSCODE_EXTENSION.md)
 - [Connect ChatGPT Work](docs/CONNECT_CHATGPT.md)
+- [ChatGPT LLM Gateway](docs/operations/llm-gateway.md)
 - [Runtime mode selection](docs/operations/mode-selection.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security model](docs/SECURITY_MODEL.md)
