@@ -1,7 +1,7 @@
 import { loadEnvironment, loadRuntimeConfig } from "./config.js";
 import { deriveGatewayApiKey } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
-import { writeGatewayCompactBlock } from "./llm-gateway-output.js";
+import { gatewayCompactOutputEnabled, writeGatewayCompactBlock } from "./llm-gateway-output.js";
 
 export interface GatewayConnectorInfo {
   mcpUrl: string;
@@ -63,22 +63,30 @@ export function printGatewayReady(info: GatewayConnectorInfo): void {
   const interactiveApproval = process.stdin.isTTY === true && process.stderr.isTTY === true && process.env.CI !== "true";
   const lines = [
     "",
-    "PiLink Gateway ready",
+    "PiLink Gateway",
+    "  Status        ready",
     interactiveApproval
-      ? "ChatGPT OAuth: DCR window open for 5 minutes; approve the connection here when prompted."
-      : "ChatGPT OAuth: complete the one-use owner pairing before authorizing the connector.",
+      ? "  ChatGPT OAuth DCR open for 5 minutes; approve new connections in this terminal."
+      : "  ChatGPT OAuth owner pairing required before a new connector can be authorized.",
+    `  Logs          ${gatewayCompactOutputEnabled() ? "compact" : "verbose"}`,
     "",
-    `ChatGPT MCP: ${info.mcpUrl}`,
-    `Local OpenAI API: ${info.apiBaseUrl}`,
-    `API key: ${info.apiKey}`,
-    "Reopen OAuth window: pilink gateway connect",
-    "Wake command: @PiLink wake",
+    "Connection details",
+    `  ChatGPT MCP   ${info.mcpUrl}`,
+    `  Local API     ${info.apiBaseUrl}`,
+    `  API key       ${info.apiKey}`,
   ];
   if (!interactiveApproval && info.pairingUrl && info.verificationCode) {
-    lines.splice(3, 0,
-      `Owner pairing: ${info.pairingUrl}`,
-      `Verification code: ${info.verificationCode}`,
+    lines.push(
+      `  Owner pairing ${info.pairingUrl}`,
+      `  Verify code   ${info.verificationCode}`,
     );
+  }
+  lines.push(
+    "  OAuth setup   pilink gateway connect",
+    "  Wake          @PiLink wake",
+  );
+  if (gatewayCompactOutputEnabled()) {
+    lines.push("  Debug logs    PILINK_TERMINAL_LOGS=verbose pilink gateway start");
   }
   writeGatewayCompactBlock(lines);
 }
