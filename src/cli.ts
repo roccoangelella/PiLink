@@ -20,7 +20,10 @@ if (command !== "gateway") {
     } else {
       process.env.PI_LLM_GATEWAY_ENABLED = "true";
       process.env.PI_CHAT_CLI = "off";
-      process.argv.splice(2, 2, subcommand);
+      // The gateway replaces the ordinary MCP catalog, so pin the underlying
+      // core runtime to the least-privileged single mode and skip the normal
+      // interactive 1/2/3 experience chooser.
+      process.argv.splice(2, 2, subcommand, "--mode", "single");
       await import("./cli-core.js");
     }
   } else if (subcommand === "status") {
@@ -50,6 +53,8 @@ function printGatewayUsage(): void {
   console.error("  pilink gateway status             Read local gateway lifecycle and queue status");
   console.error("  pilink gateway release [reason]   Permanently end the active gateway loop until the server is restarted");
   console.error("");
-  console.error("The OpenAI-compatible API is loopback-only. By default its port is MCP PORT + 10 (3200 -> 3210).");
+  console.error("The gateway pins the underlying core runtime to single mode because the ordinary MCP catalog is replaced by gateway_exchange.");
+  console.error("If the configured MCP port is busy, gateway start/serve selects the next free MCP/API loopback pair (3200 -> 3201, API 3210 -> 3211).");
+  console.error("The OpenAI-compatible API is loopback-only and normally uses MCP PORT + 10.");
   console.error("The only OpenAI-compatible inference route is POST /v1/chat/completions with model, messages, and optional stream=false.");
 }
