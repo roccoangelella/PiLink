@@ -5,7 +5,7 @@ import test from "node:test";
 const source = fs.readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");
 
 function methodSource(name: string): string {
-  const expression = new RegExp(`\\n  private (?:async )?${name}\\(`, "u");
+  const expression = new RegExp(`\\n  private (?:async )?${name}(?:<[^>\\n]+>)?\\(`, "u");
   const match = expression.exec(source);
   assert.ok(match, `missing ${name}`);
   const start = match.index;
