@@ -1,5 +1,3 @@
-import type { Writable } from "node:stream";
-
 let installed = false;
 let originalWrite: typeof process.stderr.write | undefined;
 let pending = "";
