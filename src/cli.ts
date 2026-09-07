@@ -21,6 +21,8 @@ if (command !== "gateway") {
       process.env.PI_LLM_GATEWAY_ENABLED = "true";
       process.env.PI_CHAT_CLI = "off";
       try {
+        const { installGatewayCompactOutput } = await import("./llm-gateway-output.js");
+        installGatewayCompactOutput();
         const { prepareGatewayLaunch } = await import("./llm-gateway-launch.js");
         await prepareGatewayLaunch(subcommand);
         // The gateway replaces the ordinary MCP catalog, so pin the underlying
@@ -28,10 +30,25 @@ if (command !== "gateway") {
         // interactive 1/2/3 experience chooser.
         process.argv.splice(2, 2, subcommand, "--mode", "single");
         await import("./cli-core.js");
+
+        // `cli-core` starts asynchronously. Wait for its private local admin
+        // endpoint, then make this explicit local launch open the short DCR
+        // window even when another OAuth client is already stored.
+        const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
+        const info = await openGatewayConnectorWindow();
+        printGatewayReady(info);
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
       }
+    }
+  } else if (subcommand === "connect") {
+    if (rest.length > 0) {
+      printGatewayUsage();
+      process.exitCode = 1;
+    } else {
+      const { runGatewayConnect } = await import("./llm-gateway-connect.js");
+      process.exitCode = await runGatewayConnect();
     }
   } else if (subcommand === "status") {
     if (rest.length > 0) {
@@ -53,10 +70,11 @@ if (command !== "gateway") {
 }
 
 function printGatewayUsage(): void {
-  console.error("Usage: pilink gateway <start|serve|status|release> [options]");
+  console.error("Usage: pilink gateway <start|serve|connect|status|release> [options]");
   console.error("");
-  console.error("  pilink gateway start              Start PiLink hosting with the persistent ChatGPT LLM gateway catalog");
-  console.error("  pilink gateway serve              Serve the gateway on the configured MCP origin without managing public hosting");
+  console.error("  pilink gateway start              Start hosted PiLink gateway and open a short ChatGPT DCR window");
+  console.error("  pilink gateway serve              Serve the configured gateway origin and open a short ChatGPT DCR window");
+  console.error("  pilink gateway connect            Reopen the short ChatGPT OAuth/DCR registration window");
   console.error("  pilink gateway status             Read local gateway lifecycle and queue status");
   console.error("  pilink gateway release [reason]   Permanently end the active gateway loop until the server is restarted");
   console.error("");
