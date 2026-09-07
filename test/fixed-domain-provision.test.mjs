@@ -128,7 +128,7 @@ test("fixed-domain API provisioning rejects an occupied hostname without modifyi
 
 
 test("fixed-domain CLI source scrubs an inherited account token after provisioning", async () => {
-  const source = await fs.readFile(new URL("../src/cli.ts", import.meta.url), "utf8");
+  const source = await fs.readFile(new URL("../src/cli-core.ts", import.meta.url), "utf8");
   const start = source.indexOf("async function configureCloudflareNamedHosting");
   const end = source.indexOf("async function questionSecret", start);
   assert.ok(start >= 0 && end > start);
