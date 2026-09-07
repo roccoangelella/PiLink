@@ -1,15 +1,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import express from "express";
+import express, { type Response } from "express";
 import type { Server } from "node:http";
 import {
   GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
   GATEWAY_MODEL,
   GatewayRequestTimeoutError,
   LlmGatewayJobStore,
-  type GatewayMessage,
+  type GatewayAssistantCompletion,
   type GatewayRequestPayload,
 } from "./llm-gateway-store.js";
+import { validateGatewayRequestPayload } from "./llm-gateway-protocol.js";
 
 export interface GatewayApiOptions {
   store: LlmGatewayJobStore;
@@ -28,12 +29,29 @@ export interface StartedGatewayApi {
   close: () => Promise<void>;
 }
 
+interface ParsedCompletionRequest {
+  payload: GatewayRequestPayload;
+  stream: boolean;
+  includeUsage: boolean;
+}
+
 const MAX_API_KEY_BYTES = 512;
-const MAX_MODEL_BYTES = 128;
 const MAX_BODY_BYTES = "2mb";
-const ALLOWED_COMPLETION_KEYS = new Set(["model", "messages", "stream"]);
-const ALLOWED_MESSAGE_KEYS = new Set(["role", "content", "name", "tool_call_id"]);
-const MESSAGE_ROLES = new Set(["system", "developer", "user", "assistant", "tool"]);
+const ALLOWED_COMPLETION_KEYS = new Set([
+  "model",
+  "messages",
+  "stream",
+  "stream_options",
+  "tools",
+  "tool_choice",
+  "parallel_tool_calls",
+]);
+const ALLOWED_MESSAGE_KEYS = new Set(["role", "content", "name", "tool_call_id", "tool_calls"]);
+const ALLOWED_TOOL_KEYS = new Set(["type", "function"]);
+const ALLOWED_FUNCTION_KEYS = new Set(["name", "description", "parameters", "strict"]);
+const ALLOWED_TOOL_CHOICE_KEYS = new Set(["type", "function"]);
+const ALLOWED_TOOL_CHOICE_FUNCTION_KEYS = new Set(["name"]);
+const ALLOWED_STREAM_OPTIONS_KEYS = new Set(["include_usage"]);
 
 export function deriveGatewayApiKey(jwtSecret: string): string {
   if (typeof jwtSecret !== "string" || jwtSecret.length < 32) throw new Error("JWT secret is unavailable for gateway API-key derivation");
@@ -44,9 +62,7 @@ export function deriveGatewayApiKey(jwtSecret: string): string {
 
 export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
   const host = options.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
-    throw new Error("PiLink LLM gateway API is loopback-only");
-  }
+  if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") throw new Error("PiLink LLM gateway API is loopback-only");
   if (!Number.isSafeInteger(options.port) || options.port < 0 || options.port > 65535) {
     throw new Error("Gateway API port must be an integer from 0 through 65535");
   }
@@ -70,6 +86,21 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
     next();
   });
 
+  app.get("/v1/models", (_req, res) => {
+    res.json({
+      object: "list",
+      data: [{ id: GATEWAY_MODEL, object: "model", created: 0, owned_by: "pilink" }],
+    });
+  });
+
+  app.get("/v1/models/:model", (req, res) => {
+    if (req.params.model !== GATEWAY_MODEL) {
+      res.status(404).json(openAiError("model_not_found", `Model '${req.params.model}' is not available`));
+      return;
+    }
+    res.json({ id: GATEWAY_MODEL, object: "model", created: 0, owned_by: "pilink" });
+  });
+
   app.get("/v1/gateway/status", async (_req, res) => {
     try {
       res.json(await options.store.status());
@@ -89,9 +120,9 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
   });
 
   app.post("/v1/chat/completions", async (req, res) => {
-    let payload: GatewayRequestPayload;
+    let parsed: ParsedCompletionRequest;
     try {
-      payload = parseCompletionRequest(req.body);
+      parsed = parseCompletionRequest(req.body);
     } catch (error) {
       res.status(400).json(openAiError("invalid_request_error", errorMessage(error, "Invalid chat completion request")));
       return;
@@ -106,7 +137,7 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
         return;
       }
 
-      const job = await options.store.enqueueRequest(payload);
+      const job = await options.store.enqueueRequest(parsed.payload);
       const controller = new AbortController();
       let responseClosed = false;
       const onClose = () => {
@@ -119,18 +150,12 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
         const result = await options.store.waitForResult(job.requestId, requestTimeoutSeconds, controller.signal);
         if (responseClosed && !res.writableEnded) return;
         if (result.status === "completed") {
-          const created = Math.floor(Date.parse(result.createdAt) / 1000);
-          res.json({
-            id: `chatcmpl_${result.requestId.slice(4)}`,
-            object: "chat.completion",
-            created: Number.isFinite(created) ? created : Math.floor(Date.now() / 1000),
-            model: payload.model || GATEWAY_MODEL,
-            choices: [{
-              index: 0,
-              message: { role: "assistant", content: result.response ?? "" },
-              finish_reason: "stop",
-            }],
-          });
+          const completion = result.response ?? { content: "" };
+          if (parsed.stream) {
+            sendBufferedChatCompletionStream(res, result.requestId, result.createdAt, parsed.payload.model, completion, parsed.includeUsage);
+          } else {
+            res.json(chatCompletionObject(result.requestId, result.createdAt, parsed.payload.model, completion));
+          }
           return;
         }
         if (result.status === "failed") {
@@ -168,16 +193,11 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
   const server = app.listen(options.port, host);
   server.unref();
   server.once("error", (error: NodeJS.ErrnoException) => {
-    if (error.code === "EADDRINUSE") {
-      log(`[Gateway] Could not bind local API on ${host}:${options.port}: address already in use.`);
-    } else {
-      log(`[Gateway] Local API error: ${error.message}`);
-    }
+    if (error.code === "EADDRINUSE") log(`[Gateway] Could not bind local API on ${host}:${options.port}: address already in use.`);
+    else log(`[Gateway] Local API error: ${error.message}`);
   });
   const address = server.address();
-  const actualPort = typeof address === "object" && address !== null
-    ? (address as AddressInfo).port
-    : options.port;
+  const actualPort = typeof address === "object" && address !== null ? (address as AddressInfo).port : options.port;
   const baseUrl = `http://${host}:${actualPort}/v1`;
   log(`[Gateway] OpenAI-compatible endpoint: ${baseUrl}`);
   log(`[Gateway] Model field: ${GATEWAY_MODEL} (selection remains controlled by the ChatGPT conversation)`);
@@ -195,39 +215,147 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
   };
 }
 
-function parseCompletionRequest(value: unknown): GatewayRequestPayload {
+function parseCompletionRequest(value: unknown): ParsedCompletionRequest {
   if (!isRecord(value)) throw new Error("Request body must be a JSON object");
-  for (const key of Object.keys(value)) {
-    if (!ALLOWED_COMPLETION_KEYS.has(key)) throw new Error(`Unsupported chat completion field '${key}'`);
-  }
+  assertAllowedKeys(value, ALLOWED_COMPLETION_KEYS, "chat completion");
   if (typeof value.model !== "string" || !value.model.trim()) throw new Error("model is required");
-  if (Buffer.byteLength(value.model, "utf8") > MAX_MODEL_BYTES) throw new Error("model is too long");
-  if (value.stream === true) throw new Error("stream=true is not supported by PiLink gateway yet");
-  if (value.stream !== undefined && value.stream !== false) throw new Error("stream must be false when supplied");
   if (!Array.isArray(value.messages) || value.messages.length === 0) throw new Error("messages must be a non-empty array");
+  for (const [index, message] of value.messages.entries()) {
+    if (!isRecord(message)) throw new Error(`messages[${index}] must be an object`);
+    assertAllowedKeys(message, ALLOWED_MESSAGE_KEYS, `messages[${index}]`);
+  }
+  if (value.tools !== undefined) validateOpenAiToolEnvelope(value.tools);
+  if (value.tool_choice !== undefined) validateOpenAiToolChoiceEnvelope(value.tool_choice);
 
-  const messages: GatewayMessage[] = value.messages.map((candidate) => {
-    if (!isRecord(candidate)) throw new Error("Each message must be an object");
-    for (const key of Object.keys(candidate)) {
-      if (!ALLOWED_MESSAGE_KEYS.has(key)) throw new Error(`Unsupported message field '${key}'`);
-    }
-    if (typeof candidate.role !== "string" || !MESSAGE_ROLES.has(candidate.role)) throw new Error("Message role is invalid");
-    if (typeof candidate.content !== "string") throw new Error("Message content must be a string");
-    const message: GatewayMessage = {
-      role: candidate.role as GatewayMessage["role"],
-      content: candidate.content,
-    };
-    if (candidate.name !== undefined) {
-      if (typeof candidate.name !== "string") throw new Error("Message name must be a string");
-      message.name = candidate.name;
-    }
-    if (candidate.tool_call_id !== undefined) {
-      if (typeof candidate.tool_call_id !== "string") throw new Error("tool_call_id must be a string");
-      message.tool_call_id = candidate.tool_call_id;
-    }
-    return message;
+  const stream = value.stream === undefined ? false : validateBoolean(value.stream, "stream");
+  const includeUsage = parseStreamOptions(value.stream_options, stream);
+  const payload = validateGatewayRequestPayload({
+    model: value.model,
+    messages: value.messages,
+    ...(value.tools === undefined ? {} : { tools: value.tools }),
+    ...(value.tool_choice === undefined ? {} : { toolChoice: value.tool_choice }),
+    ...(value.parallel_tool_calls === undefined ? {} : { parallelToolCalls: value.parallel_tool_calls }),
   });
-  return { model: value.model, messages };
+  return { payload, stream, includeUsage };
+}
+
+function validateOpenAiToolEnvelope(value: unknown): void {
+  if (!Array.isArray(value)) throw new Error("tools must be an array");
+  for (const [index, tool] of value.entries()) {
+    if (!isRecord(tool)) throw new Error(`tools[${index}] must be an object`);
+    assertAllowedKeys(tool, ALLOWED_TOOL_KEYS, `tools[${index}]`);
+    if (!isRecord(tool.function)) throw new Error(`tools[${index}].function must be an object`);
+    assertAllowedKeys(tool.function, ALLOWED_FUNCTION_KEYS, `tools[${index}].function`);
+  }
+}
+
+function validateOpenAiToolChoiceEnvelope(value: unknown): void {
+  if (value === "none" || value === "auto" || value === "required") return;
+  if (!isRecord(value)) throw new Error("tool_choice is invalid");
+  assertAllowedKeys(value, ALLOWED_TOOL_CHOICE_KEYS, "tool_choice");
+  if (!isRecord(value.function)) throw new Error("tool_choice.function must be an object");
+  assertAllowedKeys(value.function, ALLOWED_TOOL_CHOICE_FUNCTION_KEYS, "tool_choice.function");
+}
+
+function parseStreamOptions(value: unknown, stream: boolean): boolean {
+  if (value === undefined) return false;
+  if (!stream) throw new Error("stream_options may be supplied only when stream=true");
+  if (!isRecord(value)) throw new Error("stream_options must be an object");
+  assertAllowedKeys(value, ALLOWED_STREAM_OPTIONS_KEYS, "stream_options");
+  return value.include_usage === undefined ? false : validateBoolean(value.include_usage, "stream_options.include_usage");
+}
+
+function chatCompletionObject(
+  requestId: string,
+  createdAt: string,
+  model: string,
+  completion: GatewayAssistantCompletion,
+) {
+  return {
+    id: completionId(requestId),
+    object: "chat.completion",
+    created: createdSeconds(createdAt),
+    model: model || GATEWAY_MODEL,
+    choices: [{
+      index: 0,
+      message: assistantMessage(completion),
+      finish_reason: finishReason(completion),
+    }],
+  };
+}
+
+function sendBufferedChatCompletionStream(
+  res: Response,
+  requestId: string,
+  createdAt: string,
+  model: string,
+  completion: GatewayAssistantCompletion,
+  includeUsage: boolean,
+): void {
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const base = {
+    id: completionId(requestId),
+    object: "chat.completion.chunk",
+    created: createdSeconds(createdAt),
+    model: model || GATEWAY_MODEL,
+  };
+  const delta: Record<string, unknown> = { role: "assistant" };
+  if (completion.content !== null) delta.content = completion.content;
+  if (completion.tool_calls?.length) {
+    delta.tool_calls = completion.tool_calls.map((call, index) => ({
+      index,
+      id: call.id,
+      type: "function",
+      function: { name: call.function.name, arguments: call.function.arguments },
+    }));
+  }
+  writeSse(res, {
+    ...base,
+    choices: [{ index: 0, delta, finish_reason: null }],
+  });
+  writeSse(res, {
+    ...base,
+    choices: [{ index: 0, delta: {}, finish_reason: finishReason(completion) }],
+  });
+  if (includeUsage) {
+    writeSse(res, {
+      ...base,
+      choices: [],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    });
+  }
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+function assistantMessage(completion: GatewayAssistantCompletion) {
+  return {
+    role: "assistant",
+    content: completion.content,
+    ...(completion.tool_calls?.length ? { tool_calls: completion.tool_calls } : {}),
+  };
+}
+
+function finishReason(completion: GatewayAssistantCompletion): "stop" | "tool_calls" {
+  return completion.tool_calls?.length ? "tool_calls" : "stop";
+}
+
+function writeSse(res: Response, value: unknown): void {
+  res.write(`data: ${JSON.stringify(value)}\n\n`);
+}
+
+function completionId(requestId: string): string {
+  return `chatcmpl_${requestId.slice(4)}`;
+}
+
+function createdSeconds(createdAt: string): number {
+  const created = Math.floor(Date.parse(createdAt) / 1000);
+  return Number.isFinite(created) ? created : Math.floor(Date.now() / 1000);
 }
 
 function optionalReleaseReason(value: unknown): string {
@@ -241,9 +369,7 @@ function optionalReleaseReason(value: unknown): string {
 }
 
 function validateApiKey(value: string): string {
-  if (!value || Buffer.byteLength(value, "utf8") > MAX_API_KEY_BYTES || /[\r\n\0]/u.test(value)) {
-    throw new Error("Gateway API key is invalid");
-  }
+  if (!value || Buffer.byteLength(value, "utf8") > MAX_API_KEY_BYTES || /[\r\n\0]/u.test(value)) throw new Error("Gateway API key is invalid");
   return value;
 }
 
@@ -253,6 +379,17 @@ function authenticateApiKey(header: string | undefined, expected: string): boole
   const left = Buffer.from(supplied, "utf8");
   const right = Buffer.from(expected, "utf8");
   return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function assertAllowedKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>, field: string): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new Error(`Unsupported ${field} field '${key}'`);
+  }
+}
+
+function validateBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${field} must be boolean`);
+  return value;
 }
 
 function openAiError(type: string, message: string) {
