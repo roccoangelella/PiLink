@@ -15,21 +15,28 @@ export interface HarnessPolicy {
   requireExecutionApproval?: boolean;
 }
 
+const authenticatedClientIds = new WeakMap<object, string>();
+
 export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): HarnessPolicy {
   const configuredClientIds = config.fullAccessClientIds ?? [];
   const clientMayUseFullAccess = clientId === undefined || configuredClientIds.includes("*") || configuredClientIds.includes(clientId);
   const workspace = path.resolve(config.workspace);
-  const unsafeFullAccess = config.unsafeFullAccess && clientMayUseFullAccess;
-  return {
+  const policy: HarnessPolicy = {
     workspace,
     // Full Access broadens authority, not the default point of reference.
     // Keep ordinary relative operations project-centric while absolute paths
     // and explicit cwd values remain unrestricted for authorized clients.
     workingDirectory: workspace,
-    unsafeFullAccess,
+    unsafeFullAccess: config.unsafeFullAccess && clientMayUseFullAccess,
     allowWorkspaceExecution: config.allowWorkspaceExecution,
     requireExecutionApproval: config.requireExecutionApproval,
   };
+  if (clientId) authenticatedClientIds.set(policy, clientId);
+  return policy;
+}
+
+export function authenticatedHarnessClientId(policy: HarnessPolicy): string | undefined {
+  return authenticatedClientIds.get(policy);
 }
 
 export function operationBase(policy: Pick<HarnessPolicy, "workspace" | "workingDirectory" | "unsafeFullAccess">): string {
