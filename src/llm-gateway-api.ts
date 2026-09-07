@@ -45,8 +45,36 @@ const ALLOWED_COMPLETION_KEYS = new Set([
   "tools",
   "tool_choice",
   "parallel_tool_calls",
+  "temperature",
+  "top_p",
+  "max_tokens",
+  "max_completion_tokens",
+  "store",
+  "user",
+  "stop",
+  "seed",
+  "n",
+  "presence_penalty",
+  "frequency_penalty",
+  "logit_bias",
+  "response_format",
+  "service_tier",
+  "reasoning_effort",
+  "prompt_cache_key",
+  "prompt_cache_retention",
+  "tool_stream",
+  "chat_template_kwargs",
 ]);
-const ALLOWED_MESSAGE_KEYS = new Set(["role", "content", "name", "tool_call_id", "tool_calls"]);
+const ALLOWED_MESSAGE_KEYS = new Set([
+  "role",
+  "content",
+  "name",
+  "tool_call_id",
+  "tool_calls",
+  "refusal",
+  "reasoning_content",
+  "reasoning_details",
+]);
 const ALLOWED_TOOL_KEYS = new Set(["type", "function"]);
 const ALLOWED_FUNCTION_KEYS = new Set(["name", "description", "parameters", "strict"]);
 const ALLOWED_TOOL_CHOICE_KEYS = new Set(["type", "function"]);
@@ -281,6 +309,7 @@ function chatCompletionObject(
       message: assistantMessage(completion),
       finish_reason: finishReason(completion),
     }],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 }
 

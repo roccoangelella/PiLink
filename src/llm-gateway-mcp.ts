@@ -42,13 +42,13 @@ const gatewayToolCallSchema = z.object({
   type: z.literal("function"),
   function: z.object({
     name: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
-    arguments: z.string().max(1024 * 1024),
+    arguments: z.union([z.string().max(1024 * 1024), z.record(z.unknown())]),
   }).strict(),
 }).strict();
 const localToolInvocationSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u)
     .describe("Exact function name advertised in the current request.tools array."),
-  arguments: z.record(z.unknown())
+  arguments: z.union([z.record(z.unknown()), z.string()])
     .describe("JSON arguments object matching the advertised function schema. PiLink forwards it to the local harness and does not execute it."),
 }).strict();
 
@@ -135,7 +135,18 @@ export function createGatewayMcpServer(
           : {
               response: {
                 content: args.response ?? null,
-                ...(args.tool_calls === undefined ? {} : { tool_calls: args.tool_calls as GatewayToolCall[] }),
+                ...(args.tool_calls === undefined ? {} : {
+                  tool_calls: args.tool_calls.map((tc) => ({
+                    id: tc.id,
+                    type: "function" as const,
+                    function: {
+                      name: tc.function.name,
+                      arguments: typeof tc.function.arguments === "string"
+                        ? tc.function.arguments
+                        : JSON.stringify(tc.function.arguments),
+                    },
+                  })),
+                }),
               },
             }),
       };
@@ -159,14 +170,31 @@ export function createGatewayMcpServer(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (args, extra) => {
     if (!canWrite(scopes)) return toolError("Token scope does not permit 'gateway_call_local_tool'");
-    const toolCalls: GatewayToolCall[] = args.calls.map((call) => ({
-      id: `call_${randomUUID()}`,
-      type: "function",
-      function: {
-        name: call.name,
-        arguments: JSON.stringify(call.arguments),
-      },
-    }));
+    const toolCalls: GatewayToolCall[] = args.calls.map((call) => {
+      let argsString: string;
+      if (typeof call.arguments === "string") {
+        try {
+          const parsed = JSON.parse(call.arguments);
+          if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            argsString = call.arguments;
+          } else {
+            argsString = JSON.stringify(call.arguments);
+          }
+        } catch {
+          argsString = JSON.stringify(call.arguments);
+        }
+      } else {
+        argsString = JSON.stringify(call.arguments);
+      }
+      return {
+        id: `call_${randomUUID()}`,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: argsString,
+        },
+      };
+    });
     return exchange({
       requestId: args.request_id,
       claimToken: args.claim_token,

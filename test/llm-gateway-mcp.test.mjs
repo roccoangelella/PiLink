@@ -259,3 +259,66 @@ test("gateway_exchange rejects partial completion tuples", async (t) => {
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /request_id, claim_token/i);
 });
+
+test("gateway_call_local_tool accepts JSON string arguments and gateway_exchange accepts object arguments", async (t) => {
+  const { client, store } = await connected(t);
+
+  // 1. Test gateway_call_local_tool with JSON string arguments
+  const wait1 = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const job1 = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "ls" }],
+    tools: [bashTool()],
+  });
+  const claimed1 = JSON.parse((await wait1).content[0].text);
+  const submit1 = await client.callTool({
+    name: "gateway_call_local_tool",
+    arguments: {
+      request_id: claimed1.request.request_id,
+      claim_token: claimed1.request.claim_token,
+      calls: [{
+        name: "bash",
+        arguments: JSON.stringify({ command: "ls /tmp" }),
+      }],
+      maximum_wait_seconds: 1,
+    },
+  });
+  assert.equal(JSON.parse(submit1.content[0].text).state, "idle");
+  const completed1 = await store.job(job1.requestId);
+  assert.equal(completed1.status, "completed");
+  assert.equal(completed1.response.tool_calls[0].function.arguments, "{\"command\":\"ls /tmp\"}");
+
+  // 2. Test gateway_exchange with object arguments in tool_calls
+  const wait2 = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const job2 = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "ls again" }],
+    tools: [bashTool()],
+  });
+  const claimed2 = JSON.parse((await wait2).content[0].text);
+  const submit2 = await client.callTool({
+    name: "gateway_exchange",
+    arguments: {
+      request_id: claimed2.request.request_id,
+      claim_token: claimed2.request.claim_token,
+      tool_calls: [{
+        id: "call_obj_arg",
+        type: "function",
+        function: {
+          name: "bash",
+          arguments: { command: "ls -a" },
+        },
+      }],
+      maximum_wait_seconds: 1,
+    },
+  });
+  assert.equal(JSON.parse(submit2.content[0].text).state, "idle");
+  const completed2 = await store.job(job2.requestId);
+  assert.equal(completed2.status, "completed");
+  assert.equal(completed2.response.tool_calls[0].function.arguments, "{\"command\":\"ls -a\"}");
+
+  await store.release("test cleanup");
+});
+

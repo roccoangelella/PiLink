@@ -166,8 +166,7 @@ function validateGatewayMessage(input: unknown, field: string): GatewayMessage {
     throw new Error(`${field} role is invalid`);
   }
   const role = input.role as GatewayRole;
-  const content = input.content;
-  if (content !== null && typeof content !== "string") throw new Error(`${field} content must be a string or null`);
+  const content = extractMessageContent(input.content, field);
   if (content === null && role !== "assistant") throw new Error(`${field} content may be null only for assistant messages`);
   const normalized: GatewayMessage = {
     role,
@@ -256,6 +255,30 @@ function validateAssistantObject(input: unknown): GatewayAssistantCompletion {
   };
 }
 
+function extractMessageContent(raw: unknown, field: string): string | null {
+  if (raw === null || typeof raw === "string") return raw;
+  if (Array.isArray(raw)) {
+    const parts: string[] = [];
+    for (const [index, part] of raw.entries()) {
+      if (typeof part === "string") {
+        parts.push(part);
+      } else if (isRecord(part)) {
+        if (typeof part.text === "string") {
+          parts.push(part.text);
+        } else if (part.type === "text" && typeof part.text === "string") {
+          parts.push(part.text);
+        } else {
+          throw new Error(`${field} content[${index}] must be a text part`);
+        }
+      } else {
+        throw new Error(`${field} content[${index}] is invalid`);
+      }
+    }
+    return parts.join("\n");
+  }
+  throw new Error(`${field} content must be a string, array of text parts, or null`);
+}
+
 function validateGatewayToolCalls(input: unknown, field: string): GatewayToolCall[] {
   if (!Array.isArray(input) || input.length < 1 || input.length > MAX_TOOL_CALLS) {
     throw new Error(`${field} must contain from 1 through ${MAX_TOOL_CALLS} calls`);
@@ -269,7 +292,15 @@ function validateGatewayToolCalls(input: unknown, field: string): GatewayToolCal
     if (ids.has(id)) throw new Error(`Duplicate tool call id '${id}'`);
     ids.add(id);
     const name = validateFunctionName(candidate.function.name, `${field}[${index}] function name`);
-    const args = validateText(candidate.function.arguments, `${field}[${index}] arguments`, MAX_TOOL_CALL_ARGUMENT_BYTES, true);
+    let rawArgs: string;
+    if (typeof candidate.function.arguments === "string") {
+      rawArgs = candidate.function.arguments;
+    } else if (isRecord(candidate.function.arguments) || Array.isArray(candidate.function.arguments)) {
+      rawArgs = JSON.stringify(candidate.function.arguments);
+    } else {
+      throw new Error(`${field}[${index}] arguments must be a JSON object string`);
+    }
+    const args = validateText(rawArgs, `${field}[${index}] arguments`, MAX_TOOL_CALL_ARGUMENT_BYTES, true);
     try {
       const parsed = JSON.parse(args);
       if (!isRecord(parsed)) throw new Error("not-object");

@@ -116,14 +116,15 @@ Every route requires the gateway bearer key printed at startup. The model id `pi
 `POST /v1/chat/completions` supports these request fields:
 
 - `model` — required compatibility model id;
-- `messages` — `system`, `developer`, `user`, `assistant`, and `tool` messages;
+- `messages` — `system`, `developer`, `user`, `assistant`, and `tool` messages; supports string content as well as multi-part text part arrays (`[{"type":"text","text":"..."}]`);
 - `tools` — OpenAI function tools (`type: "function"`) advertised by the local harness;
 - `tool_choice` — `none`, `auto`, `required`, or one named function choice;
 - `parallel_tool_calls` — when `false`, ChatGPT may return at most one function call;
 - `stream` — `true` or `false`;
-- `stream_options.include_usage` — accepted with `stream:true`.
+- `stream_options.include_usage` — accepted with `stream:true`;
+- standard OpenAI parameters — `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `store`, `stop`, `user`, `seed`, `n`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `response_format`, `service_tier`, and `reasoning_effort` are accepted for client compatibility.
 
-Assistant history may contain `content:null` together with `tool_calls`. Tool-result messages use `role:"tool"`, `tool_call_id`, and string content. Function-call `arguments` are standard OpenAI JSON object strings.
+Assistant history may contain `content:null` together with `tool_calls`. Tool-result messages use `role:"tool"`, `tool_call_id`, and string content. Function-call `arguments` are standard OpenAI JSON object strings (or JSON objects from dispatchers). Non-streaming responses include compatibility token `usage` accounting.
 
 Unsupported completion fields are rejected instead of silently pretending PiLink can enforce settings that the ChatGPT web conversation does not expose.
 

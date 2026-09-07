@@ -219,3 +219,132 @@ test("gateway exposes a minimal OpenAI model catalog", async (t) => {
   assert.equal(model.status, 200);
   assert.equal((await model.json()).id, "pilink");
 });
+
+test("OpenAI endpoint accepts Pi Agent payload and executes multi-turn tool loop", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t);
+  const workerWaitTurn1 = store.exchange("pi-agent-worker", undefined, 5);
+  await sleep(20);
+
+  const tools = [
+    bashTool(),
+    {
+      type: "function",
+      function: {
+        name: "read",
+        description: "Read a file from disk",
+        parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "edit",
+        description: "Edit a file on disk",
+        parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "write",
+        description: "Write a file to disk",
+        parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
+      },
+    },
+  ];
+
+  // Turn 1: Client sends request mimicking Pi Agent
+  const turn1Promise = fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [{ role: "user", content: [{ type: "text", text: "List the files in this folder" }] }],
+      tools,
+      stream: false,
+      store: false,
+      max_completion_tokens: 4096,
+      temperature: 0.2,
+      top_p: 1.0,
+    }),
+  });
+
+  const claimedTurn1 = await workerWaitTurn1;
+  assert.equal(claimedTurn1.state, "request");
+  assert.equal(claimedTurn1.request.messages[0].content, "List the files in this folder");
+  assert.equal(claimedTurn1.request.tools.length, 4);
+  assert.deepEqual(claimedTurn1.request.tools.map((tool) => tool.function.name), ["bash", "read", "edit", "write"]);
+
+  // Worker decides to call local bash tool
+  const workerWaitTurn2 = store.exchange("pi-agent-worker", {
+    requestId: claimedTurn1.request.request_id,
+    claimToken: claimedTurn1.request.claim_token,
+    response: {
+      content: null,
+      tool_calls: [{
+        id: "call_ls_123",
+        type: "function",
+        function: { name: "bash", arguments: JSON.stringify({ command: "ls -la" }) },
+      }],
+    },
+  }, 5);
+
+  const turn1Response = await turn1Promise;
+  assert.equal(turn1Response.status, 200);
+  const turn1Body = await turn1Response.json();
+  assert.equal(turn1Body.choices[0].finish_reason, "tool_calls");
+  assert.deepEqual(turn1Body.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  const toolCall = turn1Body.choices[0].message.tool_calls[0];
+  assert.equal(toolCall.id, "call_ls_123");
+  assert.equal(toolCall.function.name, "bash");
+  assert.equal(toolCall.function.arguments, "{\"command\":\"ls -la\"}");
+
+  // Harness simulates local execution of bash command
+  const localExecutionResult = "total 8\ndrwxr-xr-x 2 user user 4096 Sep 7 12:00 .\n-rw-r--r-- 1 user user   15 Sep 7 12:00 README.md";
+
+  // Turn 2: Client sends tool execution result back to completions endpoint
+  const turn2Promise = fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "List the files in this folder" }] },
+        turn1Body.choices[0].message,
+        {
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: localExecutionResult,
+        },
+      ],
+      tools,
+      stream: false,
+      store: false,
+      max_completion_tokens: 4096,
+    }),
+  });
+
+  const claimedTurn2 = await workerWaitTurn2;
+  assert.equal(claimedTurn2.state, "request");
+  assert.equal(claimedTurn2.request.messages.length, 3);
+  assert.equal(claimedTurn2.request.messages[1].role, "assistant");
+  assert.equal(claimedTurn2.request.messages[2].role, "tool");
+  assert.equal(claimedTurn2.request.messages[2].content, localExecutionResult);
+
+  // Worker provides final answer
+  const cleanupWait = store.exchange("pi-agent-worker", {
+    requestId: claimedTurn2.request.request_id,
+    claimToken: claimedTurn2.request.claim_token,
+    response: "The folder contains README.md.",
+  }, 5);
+
+  const turn2Response = await turn2Promise;
+  assert.equal(turn2Response.status, 200);
+  const turn2Body = await turn2Response.json();
+  assert.equal(turn2Body.choices[0].finish_reason, "stop");
+  assert.equal(turn2Body.choices[0].message.content, "The folder contains README.md.");
+
+  await store.release("test cleanup");
+  await cleanupWait;
+});
+
