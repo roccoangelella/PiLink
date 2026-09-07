@@ -67,22 +67,10 @@
         "icon": "$(plug)"
       },
       {
-        "command": "vspilink.start",
-        "title": "Start PiLink",
-        "category": "PiLink",
-        "icon": "$(play)"
-      },
-      {
         "command": "vspilink.stop",
         "title": "Stop PiLink",
         "category": "PiLink",
         "icon": "$(debug-stop)"
-      },
-      {
-        "command": "vspilink.restart",
-        "title": "Restart PiLink",
-        "category": "PiLink",
-        "icon": "$(debug-restart)"
       },
       {
         "command": "vspilink.guidedSetup",
