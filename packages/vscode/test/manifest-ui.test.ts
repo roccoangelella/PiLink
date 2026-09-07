@@ -11,12 +11,19 @@ const manifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.me
     configuration?: { title?: string; properties?: Record<string, unknown> };
     viewsContainers?: { activitybar?: Array<{ title?: string }> };
     views?: Record<string, Array<{ name?: string }>>;
+    menus?: { commandPalette?: Array<{ command?: string; when?: string }> };
     mcpServerDefinitionProviders?: unknown[];
   };
 };
 
 const commands = manifest.contributes?.commands || [];
 const commandIds = commands.map((entry) => entry.command);
+const hiddenPaletteCommands = new Set(
+  (manifest.contributes?.menus?.commandPalette || [])
+    .filter((entry) => entry.when === "false")
+    .map((entry) => entry.command),
+);
+const paletteCommandIds = commandIds.filter((command) => !hiddenPaletteCommands.has(command));
 
 test("the extension presents itself as PiLink's MCP bridge", () => {
   assert.equal(manifest.displayName, "PiLink — MCP Bridge");
@@ -28,7 +35,7 @@ test("the extension presents itself as PiLink's MCP bridge", () => {
 });
 
 test("the command palette exposes only ordinary recovery and navigation entry points", () => {
-  assert.deepEqual(commandIds, [
+  assert.deepEqual(paletteCommandIds, [
     "vspilink.openSidebar",
     "vspilink.openPanel",
     "vspilink.connectChatGpt",
@@ -55,7 +62,9 @@ test("state-sensitive, dangerous and specialist commands are not promoted into t
     "vspilink.reset",
     "vspilink.legacySetup",
   ];
-  for (const command of hidden) assert.ok(!commandIds.includes(command), `${command} must stay out of the ordinary palette`);
+  for (const command of hidden) assert.ok(!paletteCommandIds.includes(command), `${command} must stay out of the ordinary palette`);
+  assert.equal(hiddenPaletteCommands.has("vspilink.start"), true);
+  assert.equal(hiddenPaletteCommands.has("vspilink.restart"), true);
 });
 
 test("specialist native-MCP integration is no longer a user-facing product", () => {
