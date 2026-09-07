@@ -27,6 +27,21 @@ async function connected(t) {
   return { client, store };
 }
 
+function bashTool() {
+  return {
+    type: "function",
+    function: {
+      name: "bash",
+      description: "Execute a shell command in the local agent harness",
+      parameters: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+      },
+    },
+  };
+}
+
 test("gateway OAuth worker identity is stable without exposing the client id", () => {
   const first = gatewayWorkerSessionId("pi_client_alpha");
   const repeated = gatewayWorkerSessionId("pi_client_alpha");
@@ -72,7 +87,83 @@ test("gateway MCP catalog exposes only gateway_exchange", async (t) => {
 
   const completed = await store.job(queued.requestId);
   assert.equal(completed.status, "completed");
-  assert.equal(completed.response, "world");
+  assert.deepEqual(completed.response, { content: "world" });
+});
+
+test("gateway_exchange carries harness tools and returns typed tool calls", async (t) => {
+  const { client, store } = await connected(t);
+  const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "List /home/ubuntu/Projects" }],
+    tools: [bashTool()],
+    toolChoice: "auto",
+    parallelToolCalls: false,
+  });
+  const claimed = JSON.parse((await wait).content[0].text);
+  assert.equal(claimed.state, "request");
+  assert.deepEqual(claimed.request.tools, [bashTool()]);
+  assert.equal(claimed.request.tool_choice, "auto");
+  assert.equal(claimed.request.parallel_tool_calls, false);
+
+  const submit = client.callTool({
+    name: "gateway_exchange",
+    arguments: {
+      request_id: claimed.request.request_id,
+      claim_token: claimed.request.claim_token,
+      tool_calls: [{
+        id: "call_list_projects",
+        type: "function",
+        function: {
+          name: "bash",
+          arguments: "{\"command\":\"ls /home/ubuntu/Projects\"}",
+        },
+      }],
+      maximum_wait_seconds: 1,
+    },
+  });
+  const submitted = JSON.parse((await submit).content[0].text);
+  assert.equal(submitted.state, "idle");
+
+  const completed = await store.job(queued.requestId);
+  assert.equal(completed.status, "completed");
+  assert.deepEqual(completed.response, {
+    content: null,
+    tool_calls: [{
+      id: "call_list_projects",
+      type: "function",
+      function: { name: "bash", arguments: "{\"command\":\"ls /home/ubuntu/Projects\"}" },
+    }],
+  });
+});
+
+test("gateway_exchange rejects a tool call for an unadvertised function", async (t) => {
+  const { client, store } = await connected(t);
+  const wait = client.callTool({ name: "gateway_exchange", arguments: { maximum_wait_seconds: 2 } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "Do something" }],
+    tools: [bashTool()],
+  });
+  const claimed = JSON.parse((await wait).content[0].text);
+  const result = await client.callTool({
+    name: "gateway_exchange",
+    arguments: {
+      request_id: claimed.request.request_id,
+      claim_token: claimed.request.claim_token,
+      tool_calls: [{
+        id: "call_bad",
+        type: "function",
+        function: { name: "delete_everything", arguments: "{}" },
+      }],
+      maximum_wait_seconds: 1,
+    },
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /unavailable function/i);
+  await store.release("test cleanup");
 });
 
 test("same OAuth worker survives ChatGPT MCP transport replacement", async (t) => {
