@@ -62,11 +62,22 @@ test("release is the only terminal gateway lifecycle state", async (t) => {
 
 test("a disconnected session makes the gateway unavailable until a new exchange", async (t) => {
   const { store } = await fixture(t);
-  const waiting = store.exchange("session-disconnect", undefined, 1);
+  const waiting = store.exchange("session-disconnect", undefined, 5);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(await store.isAvailable(), true);
+
   await store.disconnectSession("session-disconnect");
   assert.equal(await store.isAvailable(), false);
+  const disconnected = await waiting;
+  assert.equal(disconnected.state, "idle");
+  assert.equal(disconnected.continue, true);
+  assert.equal(await store.isAvailable(), false);
+
+  const resumed = store.exchange("session-disconnect", undefined, 5);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await store.isAvailable(), true);
   await store.release("test cleanup");
-  await waiting;
+  const released = await resumed;
+  assert.equal(released.state, "released");
+  assert.equal(released.continue, false);
 });
