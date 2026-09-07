@@ -8,6 +8,7 @@ import {
   setClientDisabled,
 } from "./auth.js";
 import { loadRuntimeConfig } from "./config.js";
+import { gatewayLogsAreVerbose } from "./llm-gateway-output.js";
 import { closeOwnerRegistrationWindow, isOwnerRegistrationWindowOpen } from "./oauth-owner.js";
 import { recordOAuthActivity } from "./service-status.js";
 import type { OAuthClient } from "./types.js";
@@ -134,9 +135,6 @@ export function isApprovedChatGptPublicClient(client: OAuthClient, redirectUri: 
 
 export function resolveClientScope(requestedScope: string | undefined, allowedScope: string): string | undefined {
   const allowed = new Set(allowedScope.split(/\s+/u).filter(Boolean));
-  // Keep the local terminal-approval path aligned with the main OAuth router:
-  // mcp:tools is PiLink's umbrella permission, while ChatGPT may echo the
-  // advertised mcp:read and mcp:write resource aliases alongside it.
   if (allowed.has("mcp:tools")) {
     for (const scope of CHATGPT_RESOURCE_SCOPES) allowed.add(scope);
   }
@@ -185,28 +183,37 @@ async function requestLocalApproval(request: LocalApprovalRequest): Promise<bool
 }
 
 async function promptForApproval(request: LocalApprovalRequest): Promise<boolean> {
-  console.error("\n=== ChatGPT connection request ===");
-  console.error(`Client: ${terminalText(request.client.client_name, 120)}`);
-  console.error(`Callback: ${terminalText(request.redirectUri, 300)}`);
-  console.error(`Access: ${terminalText(request.scope, 256)}`);
-  console.error("Approve only if you just initiated this connection in ChatGPT.");
+  const compactGateway = /^(?:1|true|yes|on)$/iu.test(process.env.PI_LLM_GATEWAY_ENABLED?.trim() ?? "") &&
+    !gatewayLogsAreVerbose();
+  if (compactGateway) {
+    console.error("\nChatGPT connection request");
+    console.error(`  Client   ${terminalText(request.client.client_name, 120)}`);
+    console.error(`  Access   ${terminalText(request.scope, 256)}`);
+    console.error(`  Callback ${terminalText(request.redirectUri, 300)}`);
+  } else {
+    console.error("\n=== ChatGPT connection request ===");
+    console.error(`Client: ${terminalText(request.client.client_name, 120)}`);
+    console.error(`Callback: ${terminalText(request.redirectUri, 300)}`);
+    console.error(`Access: ${terminalText(request.scope, 256)}`);
+    console.error("Approve only if you just initiated this connection in ChatGPT.");
+  }
 
-  // stdin is the real terminal; stderr is intentionally piped through the
-  // PiLink launcher so use plain line mode and avoid cursor-control sequences.
   const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: false });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LOCAL_APPROVAL_TIMEOUT_MS);
   timeout.unref();
   try {
-    const answer = (await readline.question("Allow this ChatGPT connection? [y/N]: ", {
+    const answer = (await readline.question(compactGateway
+      ? "Approve this ChatGPT connection? [y/N]: "
+      : "Allow this ChatGPT connection? [y/N]: ", {
       signal: controller.signal,
     })).trim().toLowerCase();
     const approved = answer === "y" || answer === "yes";
-    console.error(approved ? "Connection approved." : "Connection denied.");
+    console.error(approved ? "ChatGPT connection approved." : "ChatGPT connection denied.");
     return approved;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      console.error("Connection request expired without approval.");
+      console.error("ChatGPT connection request expired without approval.");
       return false;
     }
     throw error;
