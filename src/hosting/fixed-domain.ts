@@ -23,6 +23,7 @@ export interface FixedDomainProvisionOptions {
   origin: string;
   apiToken: string;
   tokenDirectory: string;
+  expectedTunnelId?: string;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -135,11 +136,22 @@ export async function provisionFixedDomainTunnel(options: FixedDomainProvisionOp
   const hostname = normalizeFixedDomainHostname(options.hostname);
   const origin = normalizeFixedDomainOrigin(options.origin);
   const apiToken = normalizeApiToken(options.apiToken);
+  const expectedTunnelId = options.expectedTunnelId === undefined
+    ? undefined
+    : normalizeFixedDomainTunnelId(options.expectedTunnelId);
   const api = new FixedDomainCloudflareApi(apiToken, options.fetch ?? globalThis.fetch);
   const zone = await api.findZoneForHostname(hostname);
   const tunnelName = fixedDomainTunnelName(hostname);
   let tunnel = await api.findTunnel(zone.accountId, tunnelName);
   let createdTunnel = false;
+  if (expectedTunnelId) {
+    if (!tunnel) {
+      throw new Error(`Configured Cloudflare tunnel ${expectedTunnelId} was not found; PiLink will not create a replacement automatically`);
+    }
+    if (tunnel.id !== expectedTunnelId) {
+      throw new Error(`Configured Cloudflare tunnel ID does not match the tunnel reserved for ${hostname}; PiLink will not modify it`);
+    }
+  }
   if (!tunnel) {
     tunnel = await api.createTunnel(zone.accountId, tunnelName);
     createdTunnel = true;
@@ -152,7 +164,7 @@ export async function provisionFixedDomainTunnel(options: FixedDomainProvisionOp
   } else {
     const configuration = await api.getTunnelConfiguration(zone.accountId, tunnel.id);
     if (!isDesiredTunnelConfiguration(configuration, hostname, origin)) {
-      if (!isClaimableTunnelConfiguration(configuration)) {
+      if (!isClaimableTunnelConfiguration(configuration, hostname)) {
         throw new Error(`Cloudflare tunnel ${tunnelName} already has unrelated ingress rules; PiLink will not overwrite them`);
       }
       await api.putTunnelConfiguration(zone.accountId, tunnel.id, hostname, origin);
@@ -217,12 +229,33 @@ function isDesiredTunnelConfiguration(value: unknown, hostname: string, origin: 
   );
 }
 
-function isClaimableTunnelConfiguration(value: unknown): boolean {
+function isClaimableTunnelConfiguration(value: unknown, hostname: string): boolean {
   const ingress = tunnelIngress(value);
   if (!ingress || ingress.length === 0) return true;
-  if (ingress.length !== 1) return false;
-  const only = objectValue(ingress[0]);
-  return Boolean(only && only.service === "http_status:404" && !("hostname" in only));
+  if (ingress.length === 1) {
+    const only = objectValue(ingress[0]);
+    return Boolean(only && only.service === "http_status:404" && !("hostname" in only));
+  }
+  if (ingress.length !== 2) return false;
+  const first = objectValue(ingress[0]);
+  const last = objectValue(ingress[1]);
+  return Boolean(
+    first && last && first.hostname === hostname && isLoopbackHttpOrigin(first.service) &&
+    last.service === "http_status:404" && !("hostname" in last),
+  );
+}
+
+function isLoopbackHttpOrigin(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value);
+    const port = Number(parsed.port);
+    return parsed.protocol === "http:" && parsed.hostname === "127.0.0.1" && Boolean(parsed.port) &&
+      Number.isSafeInteger(port) && port >= 1 && port <= 65_535 && !parsed.username && !parsed.password &&
+      (parsed.pathname === "/" || parsed.pathname === "") && !parsed.search && !parsed.hash;
+  } catch {
+    return false;
+  }
 }
 
 function tunnelIngress(value: unknown): unknown[] | undefined {
