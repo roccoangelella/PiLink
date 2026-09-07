@@ -13,6 +13,7 @@ the public repository and release packages.
 | Start through the simplified VS Code launcher | [Getting started](GETTING_STARTED.md) |
 | Understand the VSPiLink screen, buttons, statuses, and Advanced features | [VSPiLink: how the VS Code extension works](VSCODE_EXTENSION.md) |
 | Connect ChatGPT Work | [Connect ChatGPT Work](CONNECT_CHATGPT.md) |
+| Use a ChatGPT conversation as a local OpenAI-compatible completion worker | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
 | Understand Single agent vs Collaboration | [Runtime mode selection](operations/mode-selection.md) |
 | Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
 | Diagnose a problem | [Troubleshooting](TROUBLESHOOTING.md) |
@@ -25,6 +26,7 @@ the public repository and release packages.
 - [Illustrated extension setup](ILLUSTRATED_GUIDE.md)
 - [Installation](INSTALLATION.md)
 - [Security model](SECURITY_MODEL.md)
+- [ChatGPT LLM Gateway](operations/llm-gateway.md)
 - [Source CLI workflow and launcher recovery](operations/source-cli.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Usage, models, and costs](USAGE_AND_COSTS.md)
