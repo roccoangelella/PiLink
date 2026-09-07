@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createGatewayMcpServer } from "../dist/llm-gateway-mcp.js";
+import { createGatewayMcpServer, gatewayWorkerSessionId } from "../dist/llm-gateway-mcp.js";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
 
 async function connected(t) {
@@ -26,6 +26,16 @@ async function connected(t) {
   });
   return { client, store };
 }
+
+test("gateway OAuth worker identity is stable without exposing the client id", () => {
+  const first = gatewayWorkerSessionId("pi_client_alpha");
+  const repeated = gatewayWorkerSessionId("pi_client_alpha");
+  const second = gatewayWorkerSessionId("pi_client_beta");
+  assert.equal(first, repeated);
+  assert.notEqual(first, second);
+  assert.match(first, /^oauth_[A-Za-z0-9_-]{43}$/u);
+  assert.doesNotMatch(first, /pi_client_alpha/u);
+});
 
 test("gateway MCP catalog exposes only gateway_exchange", async (t) => {
   const { client, store } = await connected(t);
@@ -63,6 +73,57 @@ test("gateway MCP catalog exposes only gateway_exchange", async (t) => {
   const completed = await store.job(queued.requestId);
   assert.equal(completed.status, "completed");
   assert.equal(completed.response, "world");
+});
+
+test("same OAuth worker survives ChatGPT MCP transport replacement", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-gateway-reconnect-"));
+  const workspace = path.join(root, "workspace");
+  const dataDir = path.join(root, "private");
+  await fs.mkdir(workspace);
+  const store = new LlmGatewayJobStore({ workspace, dataDir });
+  await store.activate();
+  const workerId = gatewayWorkerSessionId("pi_reconnecting_chatgpt_client");
+
+  const handleA = createGatewayMcpServer("mcp:tools", { store }, workerId);
+  const clientA = new Client({ name: "gateway-reconnect-a", version: "1.0.0" });
+  const [clientTransportA, serverTransportA] = InMemoryTransport.createLinkedPair();
+  await Promise.all([clientA.connect(clientTransportA), handleA.connect(serverTransportA)]);
+
+  const firstIdle = await clientA.callTool({
+    name: "gateway_exchange",
+    arguments: { maximum_wait_seconds: 1 },
+  });
+  assert.equal(JSON.parse(firstIdle.content[0].text).state, "idle");
+
+  const handleB = createGatewayMcpServer("mcp:tools", { store }, workerId);
+  const clientB = new Client({ name: "gateway-reconnect-b", version: "1.0.0" });
+  const [clientTransportB, serverTransportB] = InMemoryTransport.createLinkedPair();
+  await Promise.all([clientB.connect(clientTransportB), handleB.connect(serverTransportB)]);
+
+  const waitingB = clientB.callTool({
+    name: "gateway_exchange",
+    arguments: { maximum_wait_seconds: 2 },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await store.isAvailable(), true);
+
+  await clientA.close();
+  await handleA.close();
+  assert.equal(await store.isAvailable(), true, "closing the superseded transport must not disconnect the replacement");
+
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "transport replacement" }],
+  });
+  const claimed = JSON.parse((await waitingB).content[0].text);
+  assert.equal(claimed.state, "request");
+  assert.equal(claimed.request.request_id, queued.requestId);
+
+  await store.release("test cleanup");
+  await clientB.close();
+  await handleB.close();
+  await fs.rm(root, { recursive: true, force: true });
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
 });
 
 test("gateway_exchange rejects partial completion tuples", async (t) => {
