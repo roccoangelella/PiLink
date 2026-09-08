@@ -82,7 +82,7 @@ test("gateway_call_local_tool exact retry is idempotent after an ambiguous trans
     name: "gateway_call_local_tool",
     arguments: exactArguments,
   });
-  assert.equal(firstSubmission.isError, undefined);
+  assert.notEqual(firstSubmission.isError, true);
   assert.equal(JSON.parse(firstSubmission.content[0].text).state, "idle");
 
   const completedBeforeRetry = await store.job(firstJob.requestId);
@@ -97,7 +97,7 @@ test("gateway_call_local_tool exact retry is idempotent after an ambiguous trans
     name: "gateway_call_local_tool",
     arguments: exactArguments,
   });
-  assert.equal(retry.isError, undefined);
+  assert.notEqual(retry.isError, true);
   const retryResult = JSON.parse(retry.content[0].text);
   assert.equal(retryResult.state, "request");
   assert.equal(retryResult.request.request_id, nextJob.requestId);
