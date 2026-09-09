@@ -6,7 +6,7 @@ import test from "node:test";
 import { startGatewayApi } from "../dist/llm-gateway-api.js";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
 
-async function fixture(t) {
+async function fixture(t, apiOptions = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-gateway-api-"));
   const workspace = path.join(root, "workspace");
   const dataDir = path.join(root, "private");
@@ -14,7 +14,7 @@ async function fixture(t) {
   const store = new LlmGatewayJobStore({ workspace, dataDir });
   await store.activate();
   const apiKey = "test-secret-gateway-key";
-  const api = startGatewayApi({ store, apiKey, port: 0, log: () => undefined });
+  const api = startGatewayApi({ store, apiKey, port: 0, log: () => undefined, ...apiOptions });
   if (!api.server.listening) await new Promise((resolve) => api.server.once("listening", resolve));
   const address = api.server.address();
   assert.ok(address && typeof address === "object");
@@ -347,4 +347,41 @@ test("OpenAI endpoint accepts Pi Agent payload and executes multi-turn tool loop
   await store.release("test cleanup");
   await cleanupWait;
 });
+
+test("unclaimed request times out fast with 504 gateway_timeout and wake guidance", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t, { queueTimeoutSeconds: 1, requestTimeoutSeconds: 5 });
+  // Prime worker session to make gateway available
+  const prime = store.exchange("worker-session-prime", undefined, 1);
+  await sleep(20);
+  assert.equal(await store.isAvailable(), true);
+  await prime; // let prime finish, so worker is no longer polling
+
+  // Now store is still available (within stale window), but worker is NOT polling exchange
+  assert.equal(await store.isAvailable(), true);
+
+  const started = Date.now();
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [{ role: "user", content: "ping" }],
+      stream: false,
+    }),
+  });
+
+  const durationMs = Date.now() - started;
+  assert.equal(response.status, 504);
+  const body = await response.json();
+  assert.equal(body.error.type, "gateway_timeout");
+  assert.match(body.error.message, /timed out in queue after 1s before being claimed/i);
+  assert.match(body.error.message, /@PiLink wake/i);
+  assert.ok(durationMs >= 900 && durationMs < 3500, `Expected queue timeout around 1s, got ${durationMs}ms`);
+
+  // Verify store state has no pending queued request
+  const status = await store.status();
+  assert.equal(status.queued, 0);
+  assert.equal(status.cancelled, 1);
+});
+
 

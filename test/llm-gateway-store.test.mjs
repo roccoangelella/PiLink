@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
+import {
+  GatewayRequestQueueTimeoutError,
+  GatewayRequestTimeoutError,
+  LlmGatewayJobStore,
+} from "../dist/llm-gateway-store.js";
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-llm-gateway-"));
@@ -231,4 +235,106 @@ test("a disconnected session makes the gateway unavailable until a new exchange"
   const released = await resumed;
   assert.equal(released.state, "released");
   assert.equal(released.continue, false);
+});
+
+test("waitForResult throws GatewayRequestQueueTimeoutError fast when queued past queueTimeoutSeconds", async (t) => {
+  const { store } = await fixture(t);
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "hello" }],
+  });
+
+  const started = Date.now();
+  await assert.rejects(
+    store.waitForResult(queued.requestId, 10, undefined, 1),
+    (error) => {
+      assert.ok(error instanceof GatewayRequestQueueTimeoutError);
+      assert.ok(error instanceof GatewayRequestTimeoutError);
+      assert.match(error.message, /timed out in queue after 1s before being claimed/i);
+      assert.match(error.message, /@PiLink wake/i);
+      return true;
+    },
+  );
+  const durationMs = Date.now() - started;
+  assert.ok(durationMs >= 900 && durationMs < 3000, `Expected fast queue timeout around 1s, got ${durationMs}ms`);
+});
+
+test("waitForResult throws GatewayRequestTimeoutError when execution exceeds executionTimeoutSeconds after being claimed", async (t) => {
+  const { store } = await fixture(t);
+  const waiting = store.exchange("session-exec-timeout", undefined, 5);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "long thinking prompt" }],
+  });
+  const claimed = await waiting;
+  assert.equal(claimed.state, "request");
+
+  const started = Date.now();
+  await assert.rejects(
+    store.waitForResult(queued.requestId, 1),
+    (error) => {
+      assert.ok(error instanceof GatewayRequestTimeoutError);
+      assert.ok(!(error instanceof GatewayRequestQueueTimeoutError));
+      assert.match(error.message, /Gateway request timed out before ChatGPT returned a completion/i);
+      return true;
+    },
+  );
+  const durationMs = Date.now() - started;
+  assert.ok(durationMs >= 900 && durationMs < 3000, `Expected execution timeout around 1s, got ${durationMs}ms`);
+  await store.release("test cleanup");
+});
+
+test("terminal jobs strip messages and tools to prevent state bloat", async (t) => {
+  const { store } = await fixture(t);
+  const waiting = store.exchange("session-bloat", undefined, 5);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const largeContent = "x".repeat(50_000);
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: largeContent }],
+    tools: [bashTool()],
+  });
+
+  const claimed = await waiting;
+  assert.equal(claimed.state, "request");
+  assert.equal(claimed.request.messages[0].content.length, 50_000);
+
+  const idle = await store.exchange("session-bloat", {
+    requestId: claimed.request.request_id,
+    claimToken: claimed.request.claim_token,
+    response: "done",
+  }, 1);
+  assert.equal(idle.state, "idle");
+
+  const completed = await store.job(queued.requestId);
+  assert.equal(completed.status, "completed");
+  assert.deepEqual(completed.response, { content: "done" });
+  assert.deepEqual(completed.messages, [{ role: "user", content: "" }]);
+  assert.equal(completed.tools, undefined);
+
+  // Verify on-disk serialized state size is tiny (< 2KB) instead of containing the 50KB payload
+  const rawDisk = await fs.readFile(store.statePath, "utf8");
+  assert.ok(rawDisk.length < 2048, `Expected stripped state < 2KB, got ${rawDisk.length} bytes`);
+  assert.ok(!rawDisk.includes("xxxxx"), "State file must not retain bloated messages");
+  await store.release("test cleanup");
+});
+
+test("pruneJobs limits stored jobs to MAX_RETAINED_JOBS", async (t) => {
+  const { store } = await fixture(t);
+
+  // Enqueue and cancel 40 requests
+  for (let i = 0; i < 40; i++) {
+    const job = await store.enqueueRequest({
+      model: "pilink",
+      messages: [{ role: "user", content: `job-${i}` }],
+    });
+    await store.cancelRequest(job.requestId);
+  }
+
+  const rawDisk = await fs.readFile(store.statePath, "utf8");
+  const parsed = JSON.parse(rawDisk);
+  assert.ok(parsed.jobs.length <= 32, `Expected <= 32 retained jobs, got ${parsed.jobs.length}`);
 });

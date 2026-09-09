@@ -1069,7 +1069,7 @@ async function localRequest(port, requestPath, headers = {}, options = {}) {
 }
 
 async function waitFor(predicate) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

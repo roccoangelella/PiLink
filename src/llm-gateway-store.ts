@@ -33,8 +33,9 @@ export type {
 export const GATEWAY_MAX_WAIT_SECONDS = 55;
 export const GATEWAY_DEFAULT_WAIT_SECONDS = 50;
 export const GATEWAY_DEFAULT_STALE_SECONDS = 120;
-export const GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS = 10 * 60;
+export const GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS = 15 * 60;
 export const GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS = 10 * 60;
+export const GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS = 60;
 
 export type GatewayJobStatus = "queued" | "claimed" | "completed" | "failed" | "cancelled";
 
@@ -128,7 +129,7 @@ export interface LlmGatewayStoreOptions {
   now?: () => Date;
 }
 
-const MAX_RETAINED_JOBS = 256;
+const MAX_RETAINED_JOBS = 32;
 const MAX_ACTIVE_JOBS = 128;
 const MAX_ERROR_BYTES = 64 * 1024;
 const REQUEST_ID_PATTERN = /^req_[0-9a-f-]{36}$/u;
@@ -136,9 +137,21 @@ const CLAIM_TOKEN_PATTERN = /^claim_[A-Za-z0-9_-]{32,128}$/u;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,256}$/u;
 
 export class GatewayRequestTimeoutError extends Error {
-  constructor() {
-    super("Gateway request timed out before ChatGPT returned a completion");
+  constructor(message = "Gateway request timed out before ChatGPT returned a completion") {
+    super(message);
     this.name = "GatewayRequestTimeoutError";
+  }
+}
+
+export class GatewayRequestQueueTimeoutError extends GatewayRequestTimeoutError {
+  readonly timeoutSeconds: number;
+
+  constructor(timeoutSeconds = GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS) {
+    super(
+      `Gateway request timed out in queue after ${timeoutSeconds}s before being claimed by ChatGPT. Ensure your ChatGPT conversation is awake with '@PiLink wake'.`,
+    );
+    this.name = "GatewayRequestQueueTimeoutError";
+    this.timeoutSeconds = timeoutSeconds;
   }
 }
 
@@ -201,6 +214,10 @@ export class LlmGatewayJobStore {
         job.status = "failed";
         job.completedAt = completedAt;
         job.error = `Gateway released: ${selectedReason}`;
+        job.messages = [{ role: "user", content: "" }];
+        delete job.tools;
+        delete job.toolChoice;
+        delete job.parallelToolCalls;
         delete job.claimedAt;
         delete job.claimedBy;
         delete job.leaseExpiresAt;
@@ -261,6 +278,10 @@ export class LlmGatewayJobStore {
         job.status = "cancelled";
         job.completedAt = this.now().toISOString();
         job.error = selectedReason;
+        job.messages = [{ role: "user", content: "" }];
+        delete job.tools;
+        delete job.toolChoice;
+        delete job.parallelToolCalls;
         delete job.claimedAt;
         delete job.claimedBy;
         delete job.leaseExpiresAt;
@@ -271,17 +292,52 @@ export class LlmGatewayJobStore {
     });
   }
 
-  async waitForResult(requestId: string, timeoutSeconds: number, signal?: AbortSignal): Promise<GatewayJobSnapshot> {
+  async waitForResult(
+    requestId: string,
+    timeoutSeconds: number,
+    signal?: AbortSignal,
+    queueTimeoutSeconds = GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS,
+  ): Promise<GatewayJobSnapshot> {
     const validatedId = validateRequestId(requestId);
-    const timeoutMs = positiveSeconds(timeoutSeconds, "timeoutSeconds") * 1_000;
-    const deadline = Date.now() + timeoutMs;
+    const executionTimeoutMs = positiveSeconds(timeoutSeconds, "timeoutSeconds") * 1_000;
+    const queueTimeoutMs = positiveSeconds(queueTimeoutSeconds, "queueTimeoutSeconds") * 1_000;
+    const effectiveQueueTimeoutMs = Math.min(queueTimeoutMs, executionTimeoutMs);
+    const startedAt = Date.now();
+    let queueDeadline = startedAt + effectiveQueueTimeoutMs;
+    let executionDeadline: number | undefined;
+    let wasClaimed = false;
+
     while (true) {
       if (signal?.aborted) throw new Error("Gateway request wait was cancelled");
       const snapshot = await this.job(validatedId);
       if (["completed", "failed", "cancelled"].includes(snapshot.status)) return snapshot;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new GatewayRequestTimeoutError();
-      await this.waitForChange(Math.min(remaining, 1_000), signal);
+
+      const now = Date.now();
+      if (snapshot.status === "queued") {
+        if (wasClaimed) {
+          wasClaimed = false;
+          queueDeadline = now + effectiveQueueTimeoutMs;
+          executionDeadline = undefined;
+        }
+        if (now >= queueDeadline) {
+          throw new GatewayRequestQueueTimeoutError(Math.ceil(effectiveQueueTimeoutMs / 1_000));
+        }
+        const remainingQueue = queueDeadline - now;
+        await this.waitForChange(Math.min(remainingQueue, 1_000), signal);
+      } else if (snapshot.status === "claimed") {
+        wasClaimed = true;
+        if (executionDeadline === undefined) {
+          const claimedAtMs = snapshot.claimedAt ? Date.parse(snapshot.claimedAt) : now;
+          executionDeadline = (Number.isFinite(claimedAtMs) ? claimedAtMs : now) + executionTimeoutMs;
+        }
+        if (now >= executionDeadline) {
+          throw new GatewayRequestTimeoutError();
+        }
+        const remainingExec = executionDeadline - now;
+        await this.waitForChange(Math.min(remainingExec, 1_000), signal);
+      } else {
+        await this.waitForChange(1_000, signal);
+      }
     }
   }
 
@@ -495,13 +551,22 @@ function validateStoredJob(value: unknown): StoredGatewayJob {
   if (!["queued", "claimed", "completed", "failed", "cancelled"].includes(String(status))) {
     throw new Error("Malformed LLM gateway job status");
   }
-  const request = validateGatewayRequestPayload({
-    model: value.model,
-    messages: value.messages,
-    ...(value.tools === undefined ? {} : { tools: value.tools }),
-    ...(value.toolChoice === undefined ? {} : { toolChoice: value.toolChoice }),
-    ...(value.parallelToolCalls === undefined ? {} : { parallelToolCalls: value.parallelToolCalls }),
-  });
+  const isTerminal = ["completed", "failed", "cancelled"].includes(String(status));
+  let request: GatewayRequestPayload;
+  if (isTerminal) {
+    request = {
+      model: typeof value.model === "string" && value.model.trim() ? value.model : GATEWAY_MODEL,
+      messages: [{ role: "user", content: "" }],
+    };
+  } else {
+    request = validateGatewayRequestPayload({
+      model: value.model,
+      messages: value.messages,
+      ...(value.tools === undefined ? {} : { tools: value.tools }),
+      ...(value.toolChoice === undefined ? {} : { toolChoice: value.toolChoice }),
+      ...(value.parallelToolCalls === undefined ? {} : { parallelToolCalls: value.parallelToolCalls }),
+    });
+  }
   const job: StoredGatewayJob = {
     requestId: validateRequestId(value.requestId),
     ...copyRequest(request),
@@ -513,7 +578,11 @@ function validateStoredJob(value: unknown): StoredGatewayJob {
   if (typeof value.claimToken === "string") job.claimToken = validateClaimToken(value.claimToken);
   if (typeof value.leaseExpiresAt === "string") job.leaseExpiresAt = validateTimestamp(value.leaseExpiresAt, "leaseExpiresAt");
   if (typeof value.completedAt === "string") job.completedAt = validateTimestamp(value.completedAt, "completedAt");
-  if (value.response !== undefined) job.response = validateGatewayAssistantCompletion(value.response, request);
+  if (value.response !== undefined) {
+    job.response = isTerminal
+      ? validateGatewayAssistantCompletion(value.response)
+      : validateGatewayAssistantCompletion(value.response, request);
+  }
   if (typeof value.error === "string") job.error = validateText(value.error, "error", MAX_ERROR_BYTES);
   return job;
 }
@@ -539,7 +608,9 @@ function applyCompletion(
   completedAt: string,
 ): void {
   const job = findJob(state, completion.requestId);
-  const normalizedResponse = completion.response === undefined ? undefined : validateGatewayAssistantCompletion(completion.response, job);
+  const normalizedResponse = completion.response === undefined
+    ? undefined
+    : validateGatewayAssistantCompletion(completion.response, job.tools ? job : undefined);
   if (job.status === "completed" && normalizedResponse !== undefined && job.response &&
       JSON.stringify(job.response) === JSON.stringify(normalizedResponse) && job.claimToken === completion.claimToken) return;
   if (job.status === "failed" && completion.error !== undefined && job.error === completion.error && job.claimToken === completion.claimToken) return;
@@ -550,6 +621,10 @@ function applyCompletion(
   job.completedAt = completedAt;
   if (normalizedResponse !== undefined) job.response = normalizedResponse;
   if (completion.error !== undefined) job.error = completion.error;
+  job.messages = [{ role: "user", content: "" }];
+  delete job.tools;
+  delete job.toolChoice;
+  delete job.parallelToolCalls;
   delete job.claimedAt;
   delete job.claimedBy;
   delete job.leaseExpiresAt;
@@ -611,8 +686,21 @@ function countStatuses(jobs: StoredGatewayJob[]): Omit<GatewayStatusSnapshot, "s
 }
 
 function pruneJobs(state: StoredGatewayState): void {
-  if (state.jobs.length <= MAX_RETAINED_JOBS) return;
   const terminal = new Set<GatewayJobStatus>(["completed", "failed", "cancelled"]);
+  for (const job of state.jobs) {
+    if (terminal.has(job.status)) {
+      if (job.messages.length !== 1 || job.messages[0]?.content !== "") {
+        job.messages = [{ role: "user", content: "" }];
+      }
+      delete job.tools;
+      delete job.toolChoice;
+      delete job.parallelToolCalls;
+      delete job.claimedAt;
+      delete job.claimedBy;
+      delete job.leaseExpiresAt;
+    }
+  }
+  if (state.jobs.length <= MAX_RETAINED_JOBS) return;
   const removable = state.jobs
     .filter((job) => terminal.has(job.status))
     .sort((left, right) => Date.parse(left.completedAt || left.createdAt) - Date.parse(right.completedAt || right.createdAt));

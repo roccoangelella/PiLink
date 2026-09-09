@@ -3,8 +3,10 @@ import type { AddressInfo } from "node:net";
 import express, { type Response } from "express";
 import type { Server } from "node:http";
 import {
+  GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS,
   GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
   GATEWAY_MODEL,
+  GatewayRequestQueueTimeoutError,
   GatewayRequestTimeoutError,
   LlmGatewayJobStore,
   type GatewayAssistantCompletion,
@@ -17,6 +19,7 @@ export interface GatewayApiOptions {
   apiKey: string;
   port: number;
   requestTimeoutSeconds?: number;
+  queueTimeoutSeconds?: number;
   host?: string;
   log?: (message: string) => void;
 }
@@ -98,6 +101,10 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
   if (!Number.isSafeInteger(requestTimeoutSeconds) || requestTimeoutSeconds < 1 || requestTimeoutSeconds > 24 * 60 * 60) {
     throw new Error("Gateway request timeout must be a positive integer number of seconds");
   }
+  const queueTimeoutSeconds = options.queueTimeoutSeconds ?? GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS;
+  if (!Number.isSafeInteger(queueTimeoutSeconds) || queueTimeoutSeconds < 1 || queueTimeoutSeconds > 24 * 60 * 60) {
+    throw new Error("Gateway queue timeout must be a positive integer number of seconds");
+  }
   const apiKey = validateApiKey(options.apiKey);
   const log = options.log ?? ((message: string) => console.error(message));
 
@@ -175,7 +182,12 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
       res.once("close", onClose);
 
       try {
-        const result = await options.store.waitForResult(job.requestId, requestTimeoutSeconds, controller.signal);
+        const result = await options.store.waitForResult(
+          job.requestId,
+          requestTimeoutSeconds,
+          controller.signal,
+          queueTimeoutSeconds,
+        );
         if (responseClosed && !res.writableEnded) return;
         if (result.status === "completed") {
           const completion = result.response ?? { content: "" };
@@ -193,7 +205,7 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
         res.status(499).json(openAiError("gateway_request_cancelled", result.error || "Gateway request was cancelled"));
       } catch (error) {
         if (error instanceof GatewayRequestTimeoutError) {
-          await options.store.cancelRequest(job.requestId, "Gateway request timed out").catch(() => undefined);
+          await options.store.cancelRequest(job.requestId, error.message).catch(() => undefined);
           if (!res.headersSent) res.status(504).json(openAiError("gateway_timeout", error.message));
           return;
         }

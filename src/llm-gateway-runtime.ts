@@ -3,6 +3,7 @@ import { deriveGatewayApiKey, startGatewayApi, type StartedGatewayApi } from "./
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import {
   GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS,
+  GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS,
   GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
   GATEWAY_DEFAULT_STALE_SECONDS,
   LlmGatewayJobStore,
@@ -31,15 +32,20 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     GATEWAY_DEFAULT_STALE_SECONDS,
     "PI_LLM_GATEWAY_STALE_SECONDS",
   );
-  const claimLeaseSeconds = gatewayInteger(
-    process.env.PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS,
-    GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS,
-    "PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS",
-  );
   const requestTimeoutSeconds = gatewayInteger(
     process.env.PI_LLM_GATEWAY_REQUEST_TIMEOUT_SECONDS,
     GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
     "PI_LLM_GATEWAY_REQUEST_TIMEOUT_SECONDS",
+  );
+  const queueTimeoutSeconds = gatewayInteger(
+    process.env.PI_LLM_GATEWAY_QUEUE_TIMEOUT_SECONDS,
+    GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS,
+    "PI_LLM_GATEWAY_QUEUE_TIMEOUT_SECONDS",
+  );
+  const claimLeaseSeconds = gatewayInteger(
+    process.env.PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS,
+    Math.max(GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS, requestTimeoutSeconds + 60),
+    "PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS",
   );
   const defaultGatewayPort = gatewayApiPortForMcp(config.port);
   const gatewayPort = gatewayPortValue(process.env.PI_LLM_GATEWAY_PORT, defaultGatewayPort);
@@ -59,6 +65,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     apiKey,
     port: gatewayPort,
     requestTimeoutSeconds,
+    queueTimeoutSeconds,
   });
   sharedRuntime = { store, api, apiKey, ready };
   return sharedRuntime;
