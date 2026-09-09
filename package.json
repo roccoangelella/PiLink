@@ -47,7 +47,8 @@
     "access": "public"
   },
   "overrides": {
-    "hono": "4.12.34",
+    "hono": "4.13.7",
+    "qs": "6.16.0",
     "@earendil-works/pi-coding-agent": {
       "undici": "8.9.0"
     }

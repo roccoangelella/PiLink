@@ -46,6 +46,8 @@ All notable PiLink changes are documented in this file.
 
 ### Security
 
+- Updated transitive URL, YAML, query-string, image, and HTTP dependencies for
+  current security advisories.
 - Worktree, Git-history, npm-package, and VSIX secret scanning.
 - Private runtime material excluded from source and extension packages.
 - Release installers now reject a missing or mismatched `SHA256SUMS` unless an
