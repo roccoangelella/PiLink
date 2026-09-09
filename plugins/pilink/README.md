@@ -1,6 +1,6 @@
 # PiLink local Codex plugin
 
-This optional repository marketplace plugin connects Codex to a PiLink
+This optional local plugin connects Codex to a PiLink
 server listening at `http://127.0.0.1:3200/sse`. It is useful when Codex and
 PiLink run on the same machine.
 
@@ -11,11 +11,11 @@ deployment.
 
 ## Install from this checkout
 
-From the repository root:
+Configure Codex to connect to the local PiLink MCP endpoint directly:
 
 ```bash
-codex plugin marketplace add ./.agents/plugins
-codex plugin add pilink@personal
+codex mcp add pilink --url http://127.0.0.1:3200/sse
+codex mcp login pilink
 ```
 
 Start PiLink locally before opening a new Codex thread. The OAuth browser

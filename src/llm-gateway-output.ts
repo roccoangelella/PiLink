@@ -7,6 +7,11 @@ const INTERACTIVE_PROMPTS = [
   "Cloudflare API token required",
   "Allow this ChatGPT connection?",
   "Approve this ChatGPT connection?",
+  "Select hosting",
+  "Fixed Cloudflare hostname",
+  "Cloudflare API token",
+  "Allow PiLink to request these temporary router mappings?",
+  "Type DIRECT after completing the router configuration:",
 ];
 const ACTIONABLE = /\b(?:error|failed|failure|rejected|denied|expired|unavailable|invalid|refused|could not|cannot|unable)\b/iu;
 

@@ -12,7 +12,7 @@ export interface GatewayConnectorInfo {
   expiresAt?: string;
 }
 
-export async function openGatewayConnectorWindow(waitMilliseconds = 15_000): Promise<GatewayConnectorInfo> {
+export async function openGatewayConnectorWindow(waitMilliseconds = 30_000): Promise<GatewayConnectorInfo> {
   loadEnvironment();
   const config = loadRuntimeConfig();
   const deadline = Date.now() + waitMilliseconds;

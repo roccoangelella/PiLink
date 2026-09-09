@@ -60,25 +60,24 @@ project code may still access whatever the OS user can access. PiLink
 disables optional repository build/test profiles until the operator explicitly
 sets the execution policy.
 
-## Runtime capability modes
+## Runtime capability modes and launch experiences
 
 `PI_RUNTIME_MODE=single` is the least-capability remote catalog: it registers
 the classic workspace harness and omits public chat, tasks, memory, work-loop,
-and remote agent-management tools. A configured provider may back one local
-agent through the separately authenticated loopback VS Code controller; that
-agent receives no coordination permissions. `PI_RUNTIME_MODE=collaboration`
+and remote agent-management tools. `PI_RUNTIME_MODE=collaboration`
 adds orchestration services for an operator who needs them. The additional catalog does
 not imply broader filesystem or process authority; OAuth scopes, workspace
 execution policy, Full-access client allowlists, and execution approvals remain
 independent checks.
 
-The VS Code graphical entry contains both catalogs and is not a security mode.
-Its ChatGPT MCP/Pi Local selector chooses the client/provider surface, not the
-server capability catalog. Mode changes are local operator actions and require
-a restart. A prompt, task, public-chat message, model-visible environment
-value, or workspace file cannot select a mode or elevate a running process.
-See [Runtime mode selection](operations/mode-selection.md) for the migration
-and headless procedures.
+Runtime capability modes (`single` and `collaboration`) are distinct from
+user-facing launch experiences:
+1. **Single agent** (`pilink start --mode single`)
+2. **VS Code** (`pilink start --mode vscode`)
+3. **Agents chat** (`pilink start --mode collaboration`)
+4. **CLI pilink-endpoint** (`pilink start --mode cli` / `pilink serve --mode cli`; `gateway` subcommands remain)
+
+The VS Code graphical launcher writes runtime mode `single` with Project-folder access and does not enable collaboration. The CLI `pilink-endpoint` (LLM Gateway) pins the underlying runtime to `single` mode and exposes only gateway protocol tools on loopback without workspace tools. Neither `vscode` nor `cli` is a separate `PI_RUNTIME_MODE`. Mode changes are local operator actions and require a restart. A prompt, task, public-chat message, model-visible environment value, or workspace file cannot select a mode or elevate a running process. See [Runtime mode selection](operations/mode-selection.md) for the migration and headless procedures.
 
 ## Full access
 

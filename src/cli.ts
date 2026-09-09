@@ -1,6 +1,22 @@
 #!/usr/bin/env node
 
-const command = process.argv[2] ?? "start";
+let command = process.argv[2] ?? "start";
+
+// Keep the fourth launch experience available through the ordinary start/serve
+// surface while retaining the more explicit `pilink gateway ...` commands.
+if (
+  (command === "start" || command === "serve") &&
+  !process.argv.slice(3).some((argument) => argument === "--help" || argument === "-h") &&
+  extractCliMode(process.argv.slice(3))
+) {
+  const forwarded = process.argv.slice(3).filter((argument, index, arguments_) => {
+    if (argument === "--mode" && isCliModeValue(arguments_[index + 1])) return false;
+    if (index > 0 && arguments_[index - 1] === "--mode" && isCliModeValue(argument)) return false;
+    return !(argument.startsWith("--mode=") && isCliModeValue(argument.slice(7)));
+  });
+  process.argv.splice(2, process.argv.length - 2, "gateway", command, ...forwarded);
+  command = "gateway";
+}
 
 if (command !== "gateway") {
   await import("./cli-core.js");
@@ -19,7 +35,9 @@ if (command !== "gateway") {
       process.exitCode = 1;
     } else {
       process.env.PI_LLM_GATEWAY_ENABLED = "true";
+      process.env.PILINK_GATEWAY_LAUNCH = "true";
       process.env.PI_CHAT_CLI = "off";
+      process.env.PI_UNSAFE_FULL_ACCESS = "false";
       try {
         const { installGatewayCompactOutput } = await import("./llm-gateway-output.js");
         installGatewayCompactOutput();
@@ -27,16 +45,21 @@ if (command !== "gateway") {
         await prepareGatewayLaunch(subcommand);
         // The gateway replaces the ordinary MCP catalog, so pin the underlying
         // core runtime to the least-privileged single mode and skip the normal
-        // interactive 1/2/3 experience chooser.
+        // interactive four-experience chooser.
         process.argv.splice(2, 2, subcommand, "--mode", "single");
-        await import("./cli-core.js");
+        const { waitForServerReady } = await import("./cli-core.js");
 
-        // `cli-core` starts asynchronously. Wait for its private local admin
-        // endpoint, then make this explicit local launch open the short DCR
-        // window even when another OAuth client is already stored.
-        const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
-        const info = await openGatewayConnectorWindow();
-        printGatewayReady(info);
+        // Wait for the local server and hosting runtime to become ready.
+        const serverReady = await waitForServerReady();
+        if (serverReady) {
+          // Once the server is ready, open the short DCR window
+          // even when another OAuth client is already stored.
+          const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
+          const info = await openGatewayConnectorWindow();
+          printGatewayReady(info);
+        } else {
+          process.exitCode = process.exitCode || 1;
+        }
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
@@ -69,6 +92,19 @@ if (command !== "gateway") {
     printGatewayUsage();
     process.exitCode = 1;
   }
+}
+
+function extractCliMode(args: string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    const value = argument === "--mode" ? args[index + 1] : argument.startsWith("--mode=") ? argument.slice(7) : undefined;
+    if (isCliModeValue(value)) return true;
+  }
+  return false;
+}
+
+function isCliModeValue(value: string | undefined): boolean {
+  return value !== undefined && ["cli", "gateway", "pilink-endpoint", "endpoint"].includes(value.trim().toLowerCase());
 }
 
 function printGatewayUsage(): void {

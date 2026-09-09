@@ -33,9 +33,12 @@ flowchart LR
     LocalAgent --> Provider
 ```
 
-## Core server modes
+## Core server modes and launch experiences
 
-The PiLink server has two capability modes:
+PiLink distinguishes between **server runtime capability modes** (configured via
+`PI_RUNTIME_MODE`) and user-facing **launch experiences**.
+
+The PiLink server has two core runtime capability modes:
 
 - **Single agent** (`PI_RUNTIME_MODE=single`) is the normal/default bridge. It
   exposes the workspace harness and OAuth/MCP transport without the shared
@@ -43,9 +46,15 @@ The PiLink server has two capability modes:
 - **Collaboration** (`PI_RUNTIME_MODE=collaboration`) adds durable agent chat,
   tasks, memory/work-loop coordination, and remote supervised-agent controls.
 
-`pilink start --mode vscode` is only a graphical handoff into the VS Code
-extension. It is not a third server capability mode and must not be stored as
-`PI_RUNTIME_MODE=vscode`.
+Launch experiences are the entry workflows available to operators:
+
+1. **Single agent** (`pilink start --mode single`) — runs the classic workspace bridge in `single` runtime mode.
+2. **VS Code** (`pilink start --mode vscode`) — graphical handoff into the VS Code extension; writes and uses `single` runtime mode.
+3. **Agents chat** (`pilink start --mode collaboration`) — collaborative public chat orchestration running `collaboration` runtime mode.
+4. **CLI pilink-endpoint** (`pilink start --mode cli` or `pilink serve --mode cli`; `gateway` subcommands remain) — runs the loopback ChatGPT LLM Gateway, pinning underlying runtime mode to `single` and replacing workspace tools with gateway protocol tools.
+
+Neither `vscode` nor `cli` is a third server capability mode and neither must be stored
+as `PI_RUNTIME_MODE`. The core server accepts only `single` and `collaboration`.
 
 Fresh ordinary graphical setups use **Single agent**. The main launcher does not
 advertise collaboration as a peer choice. Existing collaboration configurations
@@ -53,7 +62,7 @@ are detected rather than silently rewritten, and the retained Advanced setup
 compatibility flow may expose a workflow selector to an operator who enters it
 deliberately.
 
-Changing the mode requires a server restart so existing and new MCP transports
+Changing the runtime mode requires a server restart so existing and new MCP transports
 cannot observe different capability catalogs from the same process.
 
 See [Runtime mode selection](operations/mode-selection.md).

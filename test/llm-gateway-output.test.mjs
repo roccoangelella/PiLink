@@ -69,3 +69,39 @@ test("PILINK_TERMINAL_LOGS=verbose restores raw gateway diagnostics", () => {
   assert.match(result.stderr, /\[Gateway\] API key: visible-in-verbose-test/u);
   assert.match(result.stderr, /compact=false/u);
 });
+
+const hostingPromptsScript = String.raw`
+  import { installGatewayCompactOutput } from "./dist/llm-gateway-output.js";
+  installGatewayCompactOutput();
+  process.stderr.write("Select hosting [1/2/3]: ");
+  process.stderr.write("Fixed Cloudflare hostname (for example mcp.example.com): ");
+  process.stderr.write("Cloudflare API token: ");
+  process.stderr.write("Allow PiLink to request these temporary router mappings? [y/N]: ");
+  process.stderr.write("Type DIRECT after completing the router configuration: ");
+  process.stderr.write("routine unprompted buffer without newline");
+`;
+
+test("gateway compact output preserves interactive hosting and network setup prompts without trailing newlines", () => {
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", hostingPromptsScript], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Select hosting \[1\/2\/3\]: /u);
+  assert.match(result.stderr, /Fixed Cloudflare hostname \(for example mcp\.example\.com\): /u);
+  assert.match(result.stderr, /Cloudflare API token: /u);
+  assert.match(result.stderr, /Allow PiLink to request these temporary router mappings\? \[y\/N\]: /u);
+  assert.match(result.stderr, /Type DIRECT after completing the router configuration: /u);
+  assert.doesNotMatch(result.stderr, /routine unprompted buffer without newline/u);
+});
+
+test("filterGatewayTerminalLine preserves hosting prompts and filters noise", async () => {
+  const { filterGatewayTerminalLine } = await import("../dist/llm-gateway-output.js");
+  assert.equal(filterGatewayTerminalLine("Select hosting [1/2/3]: "), "Select hosting [1/2/3]: ");
+  assert.equal(filterGatewayTerminalLine("Fixed Cloudflare hostname (for example mcp.example.com): "), "Fixed Cloudflare hostname (for example mcp.example.com): ");
+  assert.equal(filterGatewayTerminalLine("Cloudflare API token: "), "Cloudflare API token: ");
+  assert.equal(filterGatewayTerminalLine("Allow PiLink to request these temporary router mappings? [y/N]: "), "Allow PiLink to request these temporary router mappings? [y/N]: ");
+  assert.equal(filterGatewayTerminalLine("Type DIRECT after completing the router configuration: "), "Type DIRECT after completing the router configuration: ");
+  assert.equal(filterGatewayTerminalLine("[OAuth] Registration request received"), undefined);
+  assert.equal(filterGatewayTerminalLine("[HTTP] GET /health"), undefined);
+});

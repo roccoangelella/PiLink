@@ -5,16 +5,29 @@ PiLink. Internal agent prompts, research notes, evaluation plans, review
 records, and historical integration ledgers are intentionally excluded from
 the public repository and release packages.
 
+## Launch modes overview
+
+PiLink provides four distinct launch modes, ordered by workflow:
+
+1. **Single agent (`pilink start --mode single`)**:
+   Classic single-agent project bridge. Exposes workspace-scoped project tools (read, search, edit, write, safe Git inspection) to a single MCP client under a project-folder boundary without public collaboration services.
+2. **VS Code (`pilink start --mode vscode`)**:
+   Graphical launcher and status panel. Automatically verifies and bootstraps the PiLink VS Code extension, opening the project with a safe single-agent policy.
+3. **Agents chat (`pilink start --mode collaboration`)**:
+   Collaborative multi-agent orchestration. Enables verified multi-agent chat (`pilink chat`), durable tasks, shared memory, and supervised-agent workflows.
+4. **CLI pilink-endpoint (`pilink start --mode cli`)**:
+   Launches the ChatGPT gateway provider (`pilink-endpoint`), exposing a local OpenAI-compatible endpoint (`http://127.0.0.1:3210/v1`) with native tool calling backed by a ChatGPT session. Existing dedicated gateway subcommands (`pilink gateway start`, `serve`, `connect`, `status`, `release`) remain available. See the [ChatGPT LLM Gateway guide](operations/llm-gateway.md).
+
 ## Start here
 
 | Goal | Guide |
 | --- | --- |
-| Install PiLink or the optional VSPiLink extension | [Installation](INSTALLATION.md) |
+| Install PiLink or the optional VS Code extension | [Installation](INSTALLATION.md) |
 | Start through the simplified VS Code launcher | [Getting started](GETTING_STARTED.md) |
-| Understand the VSPiLink screen, buttons, statuses, and Advanced features | [VSPiLink: how the VS Code extension works](VSCODE_EXTENSION.md) |
+| Understand how the VS Code extension works | [PiLink VS Code extension](VSCODE_EXTENSION.md) |
 | Connect ChatGPT Work | [Connect ChatGPT Work](CONNECT_CHATGPT.md) |
-| Use a ChatGPT conversation as a local OpenAI-compatible model provider with function calling | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
-| Understand Single agent vs Collaboration | [Runtime mode selection](operations/mode-selection.md) |
+| Use ChatGPT as a local OpenAI-compatible model provider with tool calling | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
+| Understand the 4 launch modes and capability split | [Runtime mode selection](operations/mode-selection.md) |
 | Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
 | Diagnose a problem | [Troubleshooting](TROUBLESHOOTING.md) |
 
@@ -31,7 +44,7 @@ the public repository and release packages.
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Usage, models, and costs](USAGE_AND_COSTS.md)
 - [VS Code extension](VSCODE_EXTENSION.md)
-- [Legacy CLI getting-started guide](operations/getting-started.md)
+- [Getting started (CLI operations)](operations/getting-started.md)
 - [Runtime mode selection](operations/mode-selection.md)
 - [Release operations](operations/releasing.md)
 

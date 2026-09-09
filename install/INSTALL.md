@@ -69,6 +69,6 @@ built and reviewed yourself. Never use it for a downloaded bundle, customer
 installation, CI release, or production deployment.
 
 Complete setup, hosting, OAuth, security, and troubleshooting documentation is
-available at <https://github.com/roccoangelella/PiLink/tree/master/docs>. The
+available at <https://github.com/roccoangelella/PiLink/tree/main/docs>. The
 sanitized illustrated walkthrough is at
-<https://github.com/roccoangelella/PiLink/blob/master/docs/ILLUSTRATED_GUIDE.md>.
+<https://github.com/roccoangelella/PiLink/blob/main/docs/ILLUSTRATED_GUIDE.md>.

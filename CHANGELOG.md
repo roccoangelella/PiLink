@@ -13,6 +13,8 @@ All notable PiLink changes are documented in this file.
   monitoring walkthrough.
 - Reproducible release-candidate staging with checksums, SBOM generation,
   artifact inspection, and cross-platform VSIX installers.
+- ChatGPT LLM Gateway with an OpenAI-compatible loopback API, buffered streaming,
+  function-tool dispatch, OAuth pairing, and lifecycle controls.
 
 ### Changed
 
@@ -39,6 +41,8 @@ All notable PiLink changes are documented in this file.
   the incoming connection directly in the local PiLink terminal instead of
   requiring the browser pairing URL/code round trip. Headless and VSPiLink
   flows keep their compatible local-owner verification paths.
+- Added CLI pilink-endpoint as the fourth launch experience (`--mode cli`) after
+  Single agent, VS Code, and Agents chat; dedicated gateway commands remain.
 
 ### Security
 

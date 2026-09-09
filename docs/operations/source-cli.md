@@ -96,7 +96,13 @@ checkout-local CLI instead:
 npm run cli -- start
 npm run cli -- start --setup
 npm run cli -- start --allow-unsafe-full-access
+npm run cli -- start --mode single
+npm run cli -- start --mode vscode
+npm run cli -- start --mode collaboration
+npm run cli -- start --mode cli
 ```
+
+Launcher experiences are presented in order: 1 Single agent (`--mode single`), 2 VS Code (`--mode vscode`), 3 Agents chat (`--mode collaboration`), and 4 CLI pilink-endpoint (`--mode cli` / `pilink gateway start`; gateway subcommands remain). Server runtime capability modes (`single` and `collaboration`) remain strictly distinct from launch experiences.
 
 If you later add a user-owned bin directory to `PATH`, rerun `npm run build`.
 PiLink will create the persistent launcher there. Set

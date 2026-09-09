@@ -82,7 +82,7 @@ test("full-access execution spawn hook preserves credentials while dropping unsp
     cwd: "/tmp/project",
     env: {
       PATH: "/usr/bin",
-      JWT_SECRET: "forwarded",
+      JWT_SECRET: "test-secret-forwarded",
       TERM: "xterm",
       TMPDIR: "bad\0value",
     },
@@ -93,7 +93,7 @@ test("full-access execution spawn hook preserves credentials while dropping unsp
     cwd: original.cwd,
     env: {
       PATH: "/usr/bin",
-      JWT_SECRET: "forwarded",
+      JWT_SECRET: "test-secret-forwarded",
       TERM: "xterm",
     },
   });

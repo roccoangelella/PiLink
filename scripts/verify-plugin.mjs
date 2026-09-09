@@ -61,7 +61,6 @@ function main() {
   const rootPackage = readJson("package.json");
   const manifest = readJson("plugins/pilink/.codex-plugin/plugin.json");
   const mcp = readJson("plugins/pilink/.mcp.json");
-  const marketplace = readJson(".agents/plugins/marketplace.json");
 
   if (manifest.name !== "pilink" || manifest.version !== rootPackage.version || manifest.license !== "MIT") {
     fail("plugin identity, version, or license does not match the release");
@@ -83,17 +82,10 @@ function main() {
   const serializedMcp = JSON.stringify(mcp);
   if (/secret|token|authorization|bearer/iu.test(serializedMcp)) fail("plugin MCP configuration must not contain credentials");
 
-  const entry = marketplace.plugins?.find((candidate) => candidate?.name === "pilink");
-  if (marketplace.name !== "personal" || entry?.source?.source !== "local" ||
-      entry.source.path !== "./plugins/pilink" || entry.policy?.installation !== "AVAILABLE" ||
-      entry.policy?.authentication !== "ON_INSTALL") {
-    fail("repository marketplace entry does not match the PiLink plugin");
-  }
   for (const required of [
     "plugins/pilink/README.md",
     "plugins/pilink/.mcp.json",
     "plugins/pilink/.codex-plugin/plugin.json",
-    ".agents/plugins/marketplace.json",
   ]) {
     if (!fs.statSync(path.join(repositoryRoot, required)).isFile()) fail(`missing plugin file: ${required}`);
   }

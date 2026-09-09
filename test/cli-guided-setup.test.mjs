@@ -83,6 +83,14 @@ test("launch mode flags reject invalid and incompatible choices clearly", async 
   const incompatible = await runCli(["serve", "--mode", "vscode"], root, {});
   assert.equal(incompatible.code, 1);
   assert.match(incompatible.output, /VS Code graphical experience is launched with 'pilink start --mode vscode'/);
+
+  const unsafeEndpoint = await runCli(["start", "--mode", "cli", "--allow-unsafe-full-access"], root, {});
+  assert.equal(unsafeEndpoint.code, 1);
+  assert.match(unsafeEndpoint.output, /Gateway mode exposes no workspace or shell tools/);
+
+  const endpointHelp = await runCli(["start", "--mode", "cli", "--help"], root, {});
+  assert.equal(endpointHelp.code, 0);
+  assert.match(endpointHelp.output, /start --mode cli\s+CLI pilink-endpoint/);
 });
 
 test("VS Code mode installs VSPiLink once and leaves future session control in the extension", async (t) => {

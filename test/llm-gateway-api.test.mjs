@@ -13,7 +13,7 @@ async function fixture(t) {
   await fs.mkdir(workspace);
   const store = new LlmGatewayJobStore({ workspace, dataDir });
   await store.activate();
-  const apiKey = "test_gateway_key";
+  const apiKey = "test-secret-gateway-key";
   const api = startGatewayApi({ store, apiKey, port: 0, log: () => undefined });
   if (!api.server.listening) await new Promise((resolve) => api.server.once("listening", resolve));
   const address = api.server.address();

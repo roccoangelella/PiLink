@@ -6,17 +6,15 @@ import test from "node:test";
 const repositoryUrl = "https://github.com/roccoangelella/PiLink.git";
 
 test("PiLink remains the project brand and the VS Code extension stays optional", async () => {
-  const [readme, rootPackageText, extensionPackageText, marketplaceText, pluginManifestText, serverSource] = await Promise.all([
+  const [readme, rootPackageText, extensionPackageText, pluginManifestText, serverSource] = await Promise.all([
     fs.readFile("README.md", "utf8"),
     fs.readFile("package.json", "utf8"),
     fs.readFile("packages/vscode/package.json", "utf8"),
-    fs.readFile(".agents/plugins/marketplace.json", "utf8"),
     fs.readFile("plugins/pilink/.codex-plugin/plugin.json", "utf8"),
     fs.readFile("src/index.ts", "utf8"),
   ]);
   const rootPackage = JSON.parse(rootPackageText);
   const extensionPackage = JSON.parse(extensionPackageText);
-  const marketplace = JSON.parse(marketplaceText);
   const pluginManifest = JSON.parse(pluginManifestText);
 
   assert.match(readme, /^# PiLink$/mu);
@@ -29,6 +27,7 @@ test("PiLink remains the project brand and the VS Code extension stays optional"
     "pilink start --mode single",
     "pilink start --mode collaboration",
     "pilink start --mode vscode",
+    "pilink start --mode cli",
   ]) {
     assert.match(readme, new RegExp(command.replaceAll(" ", "\\s+"), "u"));
   }
@@ -42,9 +41,6 @@ test("PiLink remains the project brand and the VS Code extension stays optional"
   for (const command of ["vspilink.start", "vspilink.stop", "vspilink.restart"]) {
     assert.ok(extensionPackage.contributes.commands.some((entry) => entry.command === command), `${command} must remain available from the installed extension`);
   }
-  assert.equal(marketplace.interface.displayName, "PiLink Repository");
-  assert.equal(marketplace.plugins[0].name, "pilink");
-  assert.equal(marketplace.plugins[0].source.path, "./plugins/pilink");
   assert.equal(pluginManifest.name, "pilink");
   assert.doesNotMatch(serverSource, /VSPiLink/u);
 });

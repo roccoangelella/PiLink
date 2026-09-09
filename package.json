@@ -1,7 +1,7 @@
 {
   "name": "pilink",
   "version": "2.2.0",
-  "description": "OAuth-protected MCP bridge with single-agent, public-chat orchestration, and optional VS Code workflows",
+  "description": "OAuth-protected MCP bridge with single-agent, public-chat orchestration, optional VS Code, and CLI model endpoint workflows",
   "main": "dist/index.js",
   "bin": {
     "pilink": "dist/cli.js"
@@ -17,8 +17,7 @@
     "SECURITY.md",
     "CHANGELOG.md",
     "docs",
-    "plugins",
-    ".agents/plugins/marketplace.json"
+    "plugins"
   ],
   "engines": {
     "node": "24.18.0"

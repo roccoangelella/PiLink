@@ -30,7 +30,7 @@ import { runAgentAuthCli } from "./agents/auth-cli.js";
 assertRequiredNodeVersion();
 const [, , command = "start", ...args] = process.argv;
 let configPath = process.env.PILINK_CONFIG || defaultConfigPath();
-type LaunchMode = "single" | "collaboration" | "vscode";
+type LaunchMode = "single" | "vscode" | "collaboration" | "cli";
 type HostingMode = "quick-tunnel" | "nip-io" | "cloudflare-fixed";
 interface LaunchOptions {
   mode?: LaunchMode;
@@ -65,20 +65,38 @@ let chatCliProcess: ChildProcess | undefined;
 
 installParentShutdownBridge();
 
+let serverReadySettled = false;
+let resolveServerReady: (ready: boolean) => void = () => undefined;
+const serverReadyPromise = new Promise<boolean>((resolve) => {
+  resolveServerReady = (value: boolean) => {
+    if (serverReadySettled) return;
+    serverReadySettled = true;
+    resolve(value);
+  };
+});
+
+export function waitForServerReady(): Promise<boolean> {
+  return serverReadyPromise;
+}
+
 if (command === "init") {
+  resolveServerReady(false);
   initialize();
 } else if (command === "start") {
   try {
     const options = parseLaunchOptions(args, "start");
     if (options === "help") {
+      resolveServerReady(false);
       printUsage();
     } else {
       void start(options).catch((error: unknown) => {
+        resolveServerReady(false);
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
       });
     }
   } catch (error) {
+    resolveServerReady(false);
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
@@ -86,28 +104,36 @@ if (command === "init") {
   try {
     const options = parseLaunchOptions(args, "serve");
     if (options === "help") {
+      resolveServerReady(false);
       printUsage();
     } else {
       serve(options.unsafe, options.mode);
     }
   } catch (error) {
+    resolveServerReady(false);
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
 } else if (command === "chat") {
+  resolveServerReady(false);
   openChatCli();
 } else if (command === "reset") {
+  resolveServerReady(false);
   void reset(args);
 } else if (command === "hosting") {
+  resolveServerReady(false);
   void runHostingCli(args).then((exitCode) => { process.exitCode = exitCode; });
 } else if (command === "agent-auth") {
+  resolveServerReady(false);
   void runAgentAuthCli(args).then((exitCode) => { process.exitCode = exitCode; });
 } else if (command === "clients") {
+  resolveServerReady(false);
   void manageClients(args).catch(() => {
     console.error("Unable to update the OAuth client store.");
     process.exitCode = 1;
   });
 } else {
+  resolveServerReady(false);
   printUsage();
   process.exitCode = 1;
 }
@@ -117,10 +143,11 @@ function printUsage(): void {
   console.error("");
   console.error("Launch modes:");
   console.error("  pilink start                              Choose an experience interactively in a TTY");
-  console.error("  pilink start --mode single                Classic single-agent PiLink");
-  console.error("  pilink start --mode collaboration         Collaborative public-chat orchestration");
-  console.error("  pilink start --mode vscode                VS Code graphical experience");
-  console.error("  pilink serve --mode <single|collaboration> Start the local server in an explicit mode");
+  console.error("  pilink start --mode single                Single agent");
+  console.error("  pilink start --mode vscode                VS Code");
+  console.error("  pilink start --mode collaboration         Agents chat");
+  console.error("  pilink start --mode cli                   CLI pilink-endpoint");
+  console.error("  pilink serve --mode <single|collaboration|cli>  Serve an explicit server experience");
   console.error("  --allow-unsafe-full-access                Opt in to unrestricted access for explicitly selected clients");
   console.error("  --setup                                   Re-run first-time setup (start only)");
   console.error("");
@@ -159,18 +186,18 @@ function parseLaunchOptions(commandArgs: string[], commandName: "start" | "serve
     if (argument === "--mode") {
       rawMode = commandArgs[index + 1];
       if (!rawMode || rawMode.startsWith("-")) {
-        throw new Error("'--mode' requires one of: single, collaboration, vscode.");
+        throw new Error("'--mode' requires one of: single, vscode, collaboration, cli.");
       }
       index += 1;
     } else if (argument.startsWith("--mode=")) {
       rawMode = argument.slice("--mode=".length);
-      if (!rawMode) throw new Error("'--mode' requires one of: single, collaboration, vscode.");
+      if (!rawMode) throw new Error("'--mode' requires one of: single, vscode, collaboration, cli.");
     }
 
     if (rawMode !== undefined) {
       const normalized = normalizeLaunchMode(rawMode);
       if (!normalized) {
-        throw new Error(`Unknown launch mode '${rawMode}'. Choose single, collaboration, or vscode.`);
+        throw new Error(`Unknown launch mode '${rawMode}'. Choose single, vscode, collaboration, or cli.`);
       }
       if (mode && mode !== normalized) {
         throw new Error(`Launch mode was specified more than once (${mode} and ${normalized}).`);
@@ -183,7 +210,7 @@ function parseLaunchOptions(commandArgs: string[], commandName: "start" | "serve
   }
 
   if (commandName === "serve" && mode === "vscode") {
-    throw new Error("The VS Code graphical experience is launched with 'pilink start --mode vscode'; 'serve' accepts only single or collaboration.");
+    throw new Error("The VS Code graphical experience is launched with 'pilink start --mode vscode'; 'serve' accepts single, collaboration, or cli.");
   }
   if (commandName === "start" && mode === "vscode" && (unsafe || setup)) {
     throw new Error("The VS Code graphical experience cannot be combined with --setup or --allow-unsafe-full-access. Configure those choices from the VS Code sidebar.");
@@ -200,6 +227,12 @@ function normalizeLaunchMode(value: string): LaunchMode | undefined {
     case "single_agent":
       return "single";
     case "2":
+    case "vscode":
+    case "vs-code":
+    case "graphical":
+    case "gui":
+      return "vscode";
+    case "3":
     case "collaboration":
     case "collaborative":
     case "collab":
@@ -207,12 +240,12 @@ function normalizeLaunchMode(value: string): LaunchMode | undefined {
     case "public_chat":
     case "orchestration":
       return "collaboration";
-    case "3":
-    case "vscode":
-    case "vs-code":
-    case "graphical":
-    case "gui":
-      return "vscode";
+    case "4":
+    case "cli":
+    case "gateway":
+    case "endpoint":
+    case "pilink-endpoint":
+      return "cli";
     default:
       return undefined;
   }
@@ -510,7 +543,7 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
 
   const configured = process.env.PI_RUNTIME_MODE?.trim().toLowerCase();
   if (configured && configured !== "single" && configured !== "collaboration") {
-    throw new Error("PI_RUNTIME_MODE must be 'single' or 'collaboration'. Choose a mode with 'pilink start --mode <single|collaboration|vscode>'.");
+    throw new Error("PI_RUNTIME_MODE must be 'single' or 'collaboration'. Choose an experience with 'pilink start --mode <single|vscode|collaboration|cli>'.");
   }
   if (!process.stdin.isTTY || !process.stderr.isTTY || process.env.CI === "true") {
     // Headless and existing automation keep the integrated runtime's default
@@ -520,20 +553,22 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
 
   const defaultMode: "single" | "collaboration" = configured === "single" ? "single" : "collaboration";
   console.error("\n=== Choose your PiLink experience ===");
-  console.error("1. Classic single-agent PiLink");
-  console.error("   One MCP client and one PiLink tool harness, with collaboration surfaces disabled.");
-  console.error("2. Collaborative public-chat orchestration");
-  console.error("   Shared agent chat, task coordination, memory, work loops, and supervised agents.");
-  console.error("3. VS Code graphical experience");
-  console.error("   Open the optional VSPiLink sidebar and use its graphical PiLink controls for either mode.");
-  console.error(`Press Enter to keep the current mode (${defaultMode}).`);
+  console.error("1. Single agent");
+  console.error("   One MCP client and one project-scoped PiLink tool harness.");
+  console.error("2. VS Code");
+  console.error("   Open the optional graphical launcher and status panel.");
+  console.error("3. Agents chat");
+  console.error("   Shared chat, tasks, memory, work loops, and supervised agents.");
+  console.error("4. CLI pilink-endpoint");
+  console.error("   Use a connected ChatGPT conversation as a local OpenAI-compatible provider.");
+  console.error(`Press Enter to keep the current runtime mode (${defaultMode}).`);
 
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const choice = (await readline.question("Select experience [1/2/3]: ")).trim();
+    const choice = (await readline.question("Select experience [1/2/3/4]: ")).trim();
     if (!choice) return defaultMode;
     const selected = normalizeLaunchMode(choice);
-    if (!selected) throw new Error("Launch setup cancelled: choose 1 for single-agent, 2 for collaboration, or 3 for VS Code.");
+    if (!selected) throw new Error("Launch setup cancelled: choose 1 for Single agent, 2 for VS Code, 3 for Agents chat, or 4 for CLI pilink-endpoint.");
     return selected;
   } finally {
     readline.close();
@@ -541,11 +576,26 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
 }
 
 function configureRuntimeMode(mode?: LaunchMode): "single" | "collaboration" | undefined {
-  if (!mode || mode === "vscode") return undefined;
+  if (!mode || mode === "vscode" || mode === "cli") return undefined;
   if (!fs.existsSync(configPath)) initialize();
-  saveConfig({ PI_RUNTIME_MODE: mode });
   process.env.PI_RUNTIME_MODE = mode;
+  if (process.env.PILINK_GATEWAY_LAUNCH !== "true") saveConfig({ PI_RUNTIME_MODE: mode });
   return mode;
+}
+
+async function launchCliEndpoint(): Promise<void> {
+  const launcher = process.argv[1];
+  if (!launcher) throw new Error("PiLink could not resolve its CLI launcher.");
+  const child = spawn(process.execPath, [launcher, "gateway", "start"], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "inherit",
+  });
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+  });
+  if (exitCode !== 0) process.exitCode = exitCode;
 }
 
 async function launchVscodeExperience(): Promise<void> {
@@ -806,6 +856,14 @@ async function start(options: LaunchOptions): Promise<void> {
     await handleSetupMode();
   }
   const mode = await selectLaunchMode(options.mode);
+  if (mode === "cli") {
+    if (options.unsafe) {
+      throw new Error("CLI pilink-endpoint exposes no workspace or shell tools; --allow-unsafe-full-access is not applicable.");
+    }
+    resolveServerReady(false);
+    await launchCliEndpoint();
+    return;
+  }
   if (mode === "vscode") {
     // The graphical handoff does not need a server configuration yet; let the
     // VS Code wizard create or select one so it can own the first-run choices.
@@ -820,6 +878,7 @@ async function start(options: LaunchOptions): Promise<void> {
   try {
     hostingMode = await selectHostingMode(options.setup);
   } catch (error) {
+    resolveServerReady(false);
     console.error(error instanceof Error ? error.message : "Unable to configure hosting");
     process.exitCode = 1;
     return;
@@ -846,6 +905,7 @@ async function startCloudflareNamed(unsafe: boolean, forceSetup: boolean): Promi
   try {
     executable = await ensureCloudflared();
   } catch (error) {
+    resolveServerReady(false);
     console.error(error instanceof Error ? error.message : "Unable to install cloudflared");
     process.exitCode = 1;
     return;
@@ -859,12 +919,14 @@ async function startCloudflareNamed(unsafe: boolean, forceSetup: boolean): Promi
   let shuttingDown = false;
   tunnel.stderr?.on("data", (chunk: Buffer) => writeServerOutput(chunk.toString()));
   tunnel.on("error", (error: NodeJS.ErrnoException) => {
+    resolveServerReady(false);
     if (error.code === "ENOENT") console.error("cloudflared could not be executed after installation.");
     else console.error(`Unable to start the Cloudflare Named Tunnel: ${error.message}`);
     server?.kill("SIGINT");
     process.exitCode = 1;
   });
   tunnel.on("exit", (code) => {
+    resolveServerReady(false);
     if (shuttingDown) return;
     shuttingDown = true;
     console.error(`Cloudflare Named Tunnel exited (${code ?? "signal"}); stopping PiLink.`);
@@ -906,6 +968,7 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
   try {
     executable = await ensureCloudflared();
   } catch (error) {
+    resolveServerReady(false);
     console.error(error instanceof Error ? error.message : "Unable to install cloudflared");
     process.exitCode = 1;
     return;
@@ -920,6 +983,7 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
     if (url) {
       tunnel.stdout?.removeAllListeners("data");
       tunnel.stderr?.removeAllListeners("data");
+      process.env.SERVER_URL = url;
       printQuickTunnelStartupInstructions(url);
       const startedServer = startServer(unsafe, url, tunnel);
       server = startedServer.process;
@@ -932,11 +996,13 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
   tunnel.stdout?.on("data", discoverUrl);
   tunnel.stderr?.on("data", discoverUrl);
   tunnel.on("error", (error: NodeJS.ErrnoException) => {
+    resolveServerReady(false);
     if (error.code === "ENOENT") console.error("cloudflared could not be executed after installation.");
     else console.error(`Unable to start cloudflared: ${error.message}`);
     process.exitCode = 1;
   });
   tunnel.on("exit", (code) => {
+    resolveServerReady(false);
     if (shuttingDown) return;
     shuttingDown = true;
     console.error(`cloudflared exited (${code ?? "signal"}); stopping PiLink.`);
@@ -1136,6 +1202,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
       console.error(`Router mappings active. Public address: https://${hostname}`);
     } catch (error) {
       if (error instanceof DirectNetworkError && !error.canUseManualFallback) {
+        resolveServerReady(false);
         console.error(error.message);
         process.exitCode = 1;
         return;
@@ -1146,6 +1213,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
         await configureManualNipIoHosting();
         hostname = process.env.PI_NIP_IO_HOSTNAME || "";
       } catch (manualError) {
+        resolveServerReady(false);
         console.error(manualError instanceof Error ? manualError.message : "Direct nip.io hosting cancelled.");
         process.exitCode = 1;
         return;
@@ -1153,6 +1221,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
     }
   }
   if (!hostname.endsWith(".nip.io") || !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(hostname)) {
+    resolveServerReady(false);
     console.error("PI_NIP_IO_HOSTNAME must be a valid .nip.io hostname. Run 'pilink reset --yes --start' to choose hosting again.");
     process.exitCode = 1;
     return;
@@ -1163,6 +1232,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   try {
     ({ process: caddy, certificateReady } = await startCaddy(hostname, port));
   } catch (error) {
+    resolveServerReady(false);
     await portMappings?.release().catch(() => undefined);
     console.error(error instanceof Error ? error.message : "Unable to start Caddy");
     process.exitCode = 1;
@@ -1185,6 +1255,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
   process.once("SIGINT", releaseMappings);
   process.once("SIGTERM", releaseMappings);
   caddy.on("error", (error: NodeJS.ErrnoException) => {
+    resolveServerReady(false);
     caddyRunning = false;
     releaseMappings();
     console.error(`Unable to start Caddy: ${error.message}`);
@@ -1192,6 +1263,7 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
     process.exitCode = 1;
   });
   caddy.on("exit", (code) => {
+    resolveServerReady(false);
     caddyRunning = false;
     releaseMappings();
     if (shuttingDown) return;
@@ -1911,6 +1983,7 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
     if (readySettled) return;
     readySettled = true;
     resolveReady(started);
+    resolveServerReady(started);
   };
   let resolveConnected: (connected: boolean) => void;
   const connected = new Promise<boolean>((resolve) => {

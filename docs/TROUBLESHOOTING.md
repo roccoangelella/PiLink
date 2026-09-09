@@ -176,8 +176,8 @@ Use the CLI explicitly:
 pilink start --mode collaboration
 ```
 
-or deliberately enter the retained **Advanced setup...** compatibility flow and
-review its workflow choice. A mode change takes effect after restart and
+or choose option 3 (**Agents chat**) from the interactive launcher. A mode
+change takes effect after restart and
 existing MCP sessions must reconnect to obtain the new tool catalog. Do not
 enable Full access to repair a mode mismatch. See
 [Runtime mode selection](operations/mode-selection.md).

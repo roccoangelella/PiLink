@@ -1,4 +1,8 @@
-# Runtime mode selection
+# Runtime modes and launch experiences
+
+PiLink distinguishes between **server runtime capability modes** (the underlying tool catalog and coordination services configured via `PI_RUNTIME_MODE`) and **launch experiences** (how an operator or developer starts PiLink).
+
+## Core server capability modes
 
 PiLink has two core server capability modes:
 
@@ -7,10 +11,20 @@ PiLink has two core server capability modes:
 | **Single agent** | `PI_RUNTIME_MODE=single` | You want the original PiLink workspace bridge: OAuth/MCP plus project tools without the shared collaboration layer. |
 | **Collaborative public chat** | `PI_RUNTIME_MODE=collaboration` | Authenticated agents must coordinate through PiLink's durable chat, tasks, work loop, memory projections, or remote supervised-agent controls. |
 
-`pilink start --mode vscode` is not a third server capability mode. It is a
-bootstrap/handoff into the optional PiLink VS Code graphical launcher: the CLI
-installs or updates the matching verified extension when needed, then opens the
-project. Subsequent Start/Stop/Restart operations can be performed from VS Code.
+Only `single` and `collaboration` are valid runtime capability modes. Neither `vscode` nor `cli` is a third `PI_RUNTIME_MODE`.
+
+## Launch experiences and launcher order
+
+When running `pilink start` interactively without flags, PiLink presents the launcher experiences in this order:
+
+1. **Single agent** (`pilink start --mode single`)
+   Classic single-agent PiLink bridge running runtime mode `single`.
+2. **VS Code** (`pilink start --mode vscode`)
+   Bootstrap/handoff into the optional VSPiLink graphical launcher; installs or verifies the extension and opens the project. Graphical setup always writes runtime mode `single`.
+3. **Agents chat** (`pilink start --mode collaboration`)
+   Collaborative public-chat orchestration running runtime mode `collaboration` with shared chat, tasks, and coordination.
+4. **CLI pilink-endpoint** (`pilink start --mode cli` or `pilink serve --mode cli`; dedicated `gateway` subcommands remain)
+   Runs the ChatGPT LLM Gateway / loopback OpenAI-compatible endpoint. This pins the underlying runtime to least-privileged `single` mode and replaces the workspace tool catalog with the gateway protocol tools (`gateway_exchange`, `gateway_call_local_tool`).
 
 ## VS Code launcher behavior
 
@@ -42,14 +56,20 @@ or grants Full machine access.
 ## Choose from the CLI
 
 For scripts, services, collaboration, and other operator-controlled launches,
-use an explicit core mode:
+use an explicit launch mode:
 
 ```bash
-# Original single-agent workspace bridge.
+# 1. Original single-agent workspace bridge.
 pilink start --mode single
 
-# Add durable public collaboration services.
+# 2. Graphical handoff into VS Code.
+pilink start --mode vscode
+
+# 3. Add durable public collaboration services (Agents chat).
 pilink start --mode collaboration
+
+# 4. CLI pilink-endpoint (ChatGPT LLM Gateway).
+pilink start --mode cli
 ```
 
 For a local server behind an existing reverse proxy:
@@ -57,21 +77,25 @@ For a local server behind an existing reverse proxy:
 ```bash
 pilink serve --mode single
 pilink serve --mode collaboration
+pilink serve --mode cli
 ```
 
-The graphical handoff remains available:
+The dedicated `gateway` subcommands remain available for managing the LLM Gateway:
 
 ```bash
-pilink start --mode vscode
+pilink gateway start
+pilink gateway serve
+pilink gateway connect
+pilink gateway status
+pilink gateway release "done"
 ```
 
-Do not write `PI_RUNTIME_MODE=vscode`. The core server accepts only `single` and
-`collaboration`.
+Do not write `PI_RUNTIME_MODE=vscode` or `PI_RUNTIME_MODE=cli`. The core server accepts only `single` and `collaboration` as runtime capability modes.
 
-In an interactive terminal, `pilink start` without `--mode` may present the CLI
-entry choices. In headless or automated operation, prefer an explicit mode or a
-reviewed `PI_RUNTIME_MODE` value so the capability catalog does not depend on an
-interactive default.
+In an interactive terminal, `pilink start` without `--mode` presents the launcher
+choices (1 Single agent, 2 VS Code, 3 Agents chat, 4 CLI pilink-endpoint). In headless
+or automated operation, prefer an explicit mode or a reviewed `PI_RUNTIME_MODE` value
+so the capability catalog does not depend on an interactive default.
 
 ## Capability and security boundaries
 

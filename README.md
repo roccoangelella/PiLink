@@ -18,15 +18,14 @@ checking bridge status. It is not a second chat frontend.
   repository execution.
 - OAuth with PKCE, refresh, revocation, client controls, and bounded MCP
   sessions.
-- A default **Single-agent** tool catalog plus an optional collaboration catalog
-  in the core server/CLI.
+- Four distinct launch modes: **Single agent**, **VS Code** graphical launcher,
+  **Agents chat** collaboration, and **CLI pilink-endpoint** (ChatGPT gateway provider).
 - **ChatGPT LLM Gateway:** run a connected ChatGPT conversation as a local
   OpenAI-compatible model provider with native tool-calling for coding agents.
 - Stable Cloudflare fixed-domain hosting, existing HTTPS domains, Quick Tunnel,
   local-only operation, and legacy CLI hosting paths.
 - Explicit opt-ins for repository execution and unrestricted machine access.
-- Optional VS Code launcher, Textual collaboration monitor, and local Codex
-  plugin.
+- Optional VS Code launcher and Textual collaboration monitor.
 
 ## Requirements
 
@@ -66,30 +65,16 @@ workspace exposed to MCP clients.
 See [Installation](docs/INSTALLATION.md) for release installers, VSIX/source
 installation, Remote SSH, managed Node, and upgrade details.
 
-## Start PiLink from the CLI
+## Launch modes
 
-```bash
-pilink start
-pilink start --mode single
-pilink start --mode collaboration
-pilink start --mode vscode
-```
+`pilink start` prompts for four experiences in this order:
 
-Only `single` and `collaboration` are server capability modes. `vscode` is a
-handoff into the optional graphical control surface and is never stored as
-`PI_RUNTIME_MODE=vscode`.
-
-Selecting the VS Code graphical entry also bootstraps the matching PiLink
-extension when needed: the CLI verifies the installed extension version,
-installs the version-matched release VSIX after SHA-256 verification, then opens
-the project. After that, PiLink can be started, stopped, or restarted directly
-from VS Code without launching the CLI again.
-
-| Entry | Purpose |
-| --- | --- |
-| **Single agent** | Original project-tool bridge without public collaboration services |
-| **Collaboration** | Adds verified chat/tasks, memory/work-loop coordination, and remote supervised-agent controls |
-| **VS Code graphical** | Installs/verifies the focused PiLink launcher when needed, then opens it; graphical setup always writes Single agent |
+| Mode | Command | Purpose |
+| --- | --- | --- |
+| **Single agent** | `pilink start --mode single` | Original project-tool bridge for a single MCP client without public collaboration services. Confined to project-folder access. |
+| **VS Code** | `pilink start --mode vscode` | Bootstraps/verifies the PiLink VS Code extension and opens the graphical launcher and status panel with fixed safe single-agent policy. |
+| **Agents chat** | `pilink start --mode collaboration` | Collaborative orchestration adding verified multi-agent chat (`pilink chat`), shared tasks, memory, and supervised agents. |
+| **CLI pilink-endpoint** | `pilink start --mode cli` | Launches the ChatGPT gateway provider as a local OpenAI-compatible endpoint with native tool calling; existing `pilink gateway` subcommands remain. |
 
 For a local server behind an existing reverse proxy:
 
@@ -98,20 +83,7 @@ pilink serve --mode single
 pilink serve --mode collaboration
 ```
 
-Useful commands include:
-
-```bash
-pilink init
-pilink start --setup
-pilink clients list
-pilink hosting --help
-pilink agent-auth --help
-pilink chat
-pilink reset
-```
-
-See [Runtime mode selection](docs/operations/mode-selection.md) for the exact
-capability split.
+See [Runtime mode selection](docs/operations/mode-selection.md) and the [ChatGPT LLM Gateway guide](docs/operations/llm-gateway.md) for details.
 
 ## ChatGPT LLM Gateway
 
@@ -119,7 +91,7 @@ PiLink can run a persistent ChatGPT conversation as a local OpenAI-compatible
 model provider for coding agent harnesses (such as [Pi Agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)):
 
 ```bash
-pilink gateway start
+pilink start --mode cli       # or: pilink gateway start
 ```
 
 - **OpenAI-compatible endpoint:** Loopback API at `http://127.0.0.1:3210/v1`
@@ -136,8 +108,7 @@ pilink gateway start
   chunks, multi-part text messages, and standard client parameters (`store`,
   `max_completion_tokens`, `temperature`, `top_p`, etc.).
 
-See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for complete protocol,
-lifecycle, and configuration details.
+See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for protocol and setup details.
 
 ## Start PiLink from VS Code
 
@@ -218,10 +189,12 @@ See [Installation](docs/INSTALLATION.md) for provisioning details.
   endpoint.
 - **PiLink VS Code extension:** optional graphical launcher/status panel for the
   same server, with a fixed safe policy.
-- **Collaboration / provider-backed agents / unrestricted access:** explicit
-  core PiLink CLI/operator capabilities, not VS Code product modes.
-- **Codex:** the optional local plugin under `plugins/pilink` targets a loopback
-  PiLink instance.
+- **Agents chat / collaboration:** verified multi-agent chat, task coordination,
+  memory, and supervised agent controls via `--mode collaboration` and `pilink chat`.
+- **ChatGPT LLM Gateway:** run ChatGPT as a local OpenAI-compatible model
+  provider with native tool-calling via `--mode cli` or `pilink gateway` subcommands.
+- **Full machine access:** explicit CLI-only opt-in (`--allow-unsafe-full-access`)
+  for reviewed OAuth clients.
 
 ## Security
 
@@ -260,7 +233,6 @@ npm run test:all
 npm run release:check
 ```
 
-PiLink is distributed under the [MIT License](LICENSE) and uses the Pi Agent
-tool harness from
-[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
-The repository history and [NOTICE](NOTICE.md) retain contributor attribution.
+PiLink uses the [MIT License](LICENSE) and the
+[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) harness.
+The repository history and [NOTICE](NOTICE.md) retain attribution.

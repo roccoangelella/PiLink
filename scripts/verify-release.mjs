@@ -37,7 +37,6 @@ const requiredNpmPluginEntries = [
   ["package/plugins/pilink/.codex-plugin/plugin.json", "plugins/pilink/.codex-plugin/plugin.json"],
   ["package/plugins/pilink/.mcp.json", "plugins/pilink/.mcp.json"],
   ["package/plugins/pilink/assets/logo.png", "plugins/pilink/assets/logo.png"],
-  ["package/.agents/plugins/marketplace.json", ".agents/plugins/marketplace.json"],
 ];
 const userFacingSourceFiles = [
   "packages/vscode/package.json",
