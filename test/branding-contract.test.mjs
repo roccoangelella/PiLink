@@ -26,7 +26,7 @@ test("PiLink remains the project brand and the VS Code extension stays optional"
   for (const command of [
     "pilink start --mode single",
     "pilink start --mode collaboration",
-    "pilink start --mode vscode",
+    "pilink install-vscode-plugin",
     "pilink start --mode cli",
   ]) {
     assert.match(readme, new RegExp(command.replaceAll(" ", "\\s+"), "u"));

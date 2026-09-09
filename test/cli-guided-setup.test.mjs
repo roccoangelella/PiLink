@@ -80,9 +80,10 @@ test("launch mode flags reject invalid and incompatible choices clearly", async 
   assert.equal(invalid.code, 1);
   assert.match(invalid.output, /Unknown launch mode 'unsupported'/);
 
-  const incompatible = await runCli(["serve", "--mode", "vscode"], root, {});
+  const incompatible = await runCli(["start", "--mode", "vscode"], root, {});
   assert.equal(incompatible.code, 1);
-  assert.match(incompatible.output, /VS Code graphical experience is launched with 'pilink start --mode vscode'/);
+  assert.match(incompatible.output, /VS Code is no longer a PiLink launch mode/);
+  assert.match(incompatible.output, /pilink install-vscode-plugin/);
 
   const unsafeEndpoint = await runCli(["start", "--mode", "cli", "--allow-unsafe-full-access"], root, {});
   assert.equal(unsafeEndpoint.code, 1);
@@ -93,7 +94,7 @@ test("launch mode flags reject invalid and incompatible choices clearly", async 
   assert.match(endpointHelp.output, /start --mode cli\s+CLI pilink-endpoint/);
 });
 
-test("VS Code mode installs VSPiLink once and leaves future session control in the extension", async (t) => {
+test("install-vscode-plugin installs VSPiLink once without starting PiLink or opening VS Code", async (t) => {
   if (process.platform === "win32") {
     t.skip("fake executable fixture is POSIX-only");
     return;
@@ -132,30 +133,22 @@ process.exit(2);
     PI_VSCODE_COMMAND: fakeCode,
     PI_VSCODE_VSIX_PATH: localVsix,
   };
-  const first = await runCli(["start", "--mode", "vscode"], root, environment);
+  const help = await runCli(["install-vscode-plugin", "--help"], root, environment);
+  assert.equal(help.code, 0, help.output);
+  assert.match(help.output, /without starting PiLink or opening a workspace/);
+
+  const first = await runCli(["install-vscode-plugin"], root, environment);
   assert.equal(first.code, 0, first.output);
   assert.match(first.output, new RegExp(`Installed and verified: 0xfunboy\\.vspilink@${escapeRegExp(packageJson.version)}`));
-  assert.match(first.output, /start, stop, or restart the related PiLink session without returning to the CLI/);
-  await waitFor(async () => {
-    try {
-      const calls = (await fs.readFile(callLog, "utf8")).trim().split(/\r?\n/).map((line) => JSON.parse(line));
-      return calls.some((call) => call[0] === "--reuse-window");
-    } catch {
-      return false;
-    }
-  });
+  assert.match(first.output, /PiLink for VS Code is ready/);
 
-  const second = await runCli(["start", "--mode", "vscode"], root, environment);
+  const second = await runCli(["install-vscode-plugin"], root, environment);
   assert.equal(second.code, 0, second.output);
   assert.match(second.output, new RegExp(`VSPiLink ${escapeRegExp(packageJson.version)} is already installed`));
-  await waitFor(async () => {
-    const calls = (await fs.readFile(callLog, "utf8")).trim().split(/\r?\n/).map((line) => JSON.parse(line));
-    return calls.filter((call) => call[0] === "--reuse-window").length >= 2;
-  });
 
   const calls = (await fs.readFile(callLog, "utf8")).trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.equal(calls.filter((call) => call[0] === "--install-extension").length, 1);
-  assert.equal(calls.filter((call) => call[0] === "--reuse-window").length, 2);
+  assert.equal(calls.filter((call) => call[0] === "--reuse-window").length, 0);
 });
 
 test("serve honors the VS Code IPC shutdown bridge", async (t) => {

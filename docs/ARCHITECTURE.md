@@ -46,15 +46,13 @@ The PiLink server has two core runtime capability modes:
 - **Collaboration** (`PI_RUNTIME_MODE=collaboration`) adds durable agent chat,
   tasks, memory/work-loop coordination, and remote supervised-agent controls.
 
-Launch experiences are the entry workflows available to operators:
+Launch experiences are the CLI entry workflows available to operators:
 
 1. **Single agent** (`pilink start --mode single`) — runs the classic workspace bridge in `single` runtime mode.
-2. **VS Code** (`pilink start --mode vscode`) — graphical handoff into the VS Code extension; writes and uses `single` runtime mode.
-3. **Agents chat** (`pilink start --mode collaboration`) — collaborative public chat orchestration running `collaboration` runtime mode.
-4. **CLI pilink-endpoint** (`pilink start --mode cli` or `pilink serve --mode cli`; `gateway` subcommands remain) — runs the loopback ChatGPT LLM Gateway, pinning underlying runtime mode to `single` and replacing workspace tools with gateway protocol tools.
+2. **Agents chat** (`pilink start --mode collaboration`) — collaborative public chat orchestration running `collaboration` runtime mode.
+3. **CLI pilink-endpoint** (`pilink start --mode cli` or `pilink serve --mode cli`; `gateway` subcommands remain) — runs the loopback ChatGPT LLM Gateway, pinning underlying runtime mode to `single` and replacing workspace tools with gateway protocol tools.
 
-Neither `vscode` nor `cli` is a third server capability mode and neither must be stored
-as `PI_RUNTIME_MODE`. The core server accepts only `single` and `collaboration`.
+PiLink for VS Code is a separately installed control surface (`pilink install-vscode-plugin`), not a launch mode. Its graphical setup writes and uses `single` runtime mode. `cli` is not a third server capability mode and must not be stored as `PI_RUNTIME_MODE`. The core server accepts only `single` and `collaboration`.
 
 Fresh ordinary graphical setups use **Single agent**. The main launcher does not
 advertise collaboration as a peer choice. Existing collaboration configurations

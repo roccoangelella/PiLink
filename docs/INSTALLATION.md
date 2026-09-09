@@ -61,21 +61,26 @@ npm run dev:server   # run the raw development server
 
 For ordinary use, prefer `pilink start` or `npm run cli -- start`.
 
-## Automatic VS Code graphical bootstrap
+## Install PiLink for VS Code from the CLI
 
-Selecting **VS Code graphical** from `pilink start`, or running
-`pilink start --mode vscode`, checks the VS Code profile reached by the selected
-`code` command for the matching PiLink extension version. If it is missing or
-outdated, PiLink uses a matching local release VSIX when available; otherwise it
-downloads the exact versioned VSIX and `SHA256SUMS` from the corresponding
-PiLink GitHub release, verifies the SHA-256, installs the extension, verifies the
-installed version, and opens the project.
+Run:
 
-After this one-time bootstrap, use the PiLink Activity Bar view or the
-**PiLink: Start PiLink**, **PiLink: Stop PiLink**, and **PiLink: Restart PiLink**
-commands for normal session lifecycle control. The CLI is not required for each
-VS Code session. For an offline/reviewed local build, `PI_VSCODE_VSIX_PATH` may
-point to a trusted local VSIX.
+```bash
+pilink install-vscode-plugin
+```
+
+The command checks the VS Code profile reached by the selected `code` command
+for the matching PiLink extension version. If it is missing or outdated, PiLink
+uses a matching local release VSIX when available; otherwise it downloads the
+exact versioned VSIX and `SHA256SUMS` from the corresponding PiLink GitHub
+release, verifies the SHA-256, installs the extension, and verifies the installed
+version. It then exits without starting PiLink or opening a workspace.
+
+After installation, open or reload VS Code and use the PiLink Activity Bar view
+or the **PiLink: Start PiLink**, **PiLink: Stop PiLink**, and **PiLink: Restart
+PiLink** commands for normal session lifecycle control. The CLI is not required
+for each VS Code session. For an offline/reviewed local build,
+`PI_VSCODE_VSIX_PATH` may point to a trusted local VSIX.
 
 ## Recommended VS Code release install
 

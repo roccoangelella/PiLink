@@ -2,7 +2,7 @@
 
 let command = process.argv[2] ?? "start";
 
-// Keep the fourth launch experience available through the ordinary start/serve
+// Keep the CLI endpoint available through the ordinary start/serve
 // surface while retaining the more explicit `pilink gateway ...` commands.
 if (
   (command === "start" || command === "serve") &&
@@ -45,7 +45,7 @@ if (command !== "gateway") {
         await prepareGatewayLaunch(subcommand);
         // The gateway replaces the ordinary MCP catalog, so pin the underlying
         // core runtime to the least-privileged single mode and skip the normal
-        // interactive four-experience chooser.
+        // interactive launch chooser.
         process.argv.splice(2, 2, subcommand, "--mode", "single");
         const { waitForServerReady } = await import("./cli-core.js");
 

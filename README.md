@@ -18,8 +18,8 @@ checking bridge status. It is not a second chat frontend.
   repository execution.
 - OAuth with PKCE, refresh, revocation, client controls, and bounded MCP
   sessions.
-- Four distinct launch modes: **Single agent**, **VS Code** graphical launcher,
-  **Agents chat** collaboration, and **CLI pilink-endpoint** (ChatGPT gateway provider).
+- Three CLI launch experiences: **Single agent**, **Agents chat** collaboration,
+  and **CLI pilink-endpoint**; PiLink for VS Code installs separately.
 - **ChatGPT LLM Gateway:** run a connected ChatGPT conversation as a local
   OpenAI-compatible model provider with native tool-calling for coding agents.
 - Stable Cloudflare fixed-domain hosting, existing HTTPS domains, Quick Tunnel,
@@ -67,14 +67,15 @@ installation, Remote SSH, managed Node, and upgrade details.
 
 ## Launch modes
 
-`pilink start` prompts for four experiences in this order:
+`pilink start` prompts for three experiences in this order:
 
 | Mode | Command | Purpose |
 | --- | --- | --- |
 | **Single agent** | `pilink start --mode single` | Original project-tool bridge for a single MCP client without public collaboration services. Confined to project-folder access. |
-| **VS Code** | `pilink start --mode vscode` | Bootstraps/verifies the PiLink VS Code extension and opens the graphical launcher and status panel with fixed safe single-agent policy. |
 | **Agents chat** | `pilink start --mode collaboration` | Collaborative orchestration adding verified multi-agent chat (`pilink chat`), shared tasks, memory, and supervised agents. |
 | **CLI pilink-endpoint** | `pilink start --mode cli` | Launches the ChatGPT gateway provider as a local OpenAI-compatible endpoint with native tool calling; existing `pilink gateway` subcommands remain. |
+
+PiLink for VS Code is separate from launch-mode selection: `pilink install-vscode-plugin`.
 
 For a local server behind an existing reverse proxy:
 
@@ -115,7 +116,7 @@ See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for protocol and setup
 The graphical path intentionally fixes the security/workflow policy and asks
 only for the endpoint choice:
 
-1. open the project and trust the VS Code window;
+1. install/update the extension once with `pilink install-vscode-plugin`, then open and trust the project;
 2. open **PiLink** from the Activity Bar;
 3. choose **Set up stable endpoint** (recommended), **Temporary quick start**,
    or **Local only**;
@@ -233,6 +234,5 @@ npm run test:all
 npm run release:check
 ```
 
-PiLink uses the [MIT License](LICENSE) and the
-[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) harness.
+PiLink uses the [MIT License](LICENSE) and the [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) harness.
 The repository history and [NOTICE](NOTICE.md) retain attribution.

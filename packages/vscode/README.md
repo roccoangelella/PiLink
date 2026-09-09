@@ -105,23 +105,18 @@ manage them from the CLI/service manager.
 
 ## Install
 
-Use the installer shipped with a PiLink VS Code release. It verifies release
-checksums, installs the VSIX, and provisions the supported Node.js runtime when
-needed.
-
-Linux/macOS:
+If PiLink's CLI is already installed, install or update the extension with:
 
 ```bash
-./install.sh
+pilink install-vscode-plugin
 ```
 
-Windows PowerShell:
+The command verifies the matching release VSIX before installation and does not
+start PiLink or open a workspace. Then reload or open VS Code and select
+**PiLink** in the Activity Bar.
 
-```powershell
-.\install.ps1
-```
-
-Then reload VS Code and select **PiLink** in the Activity Bar.
+The release-bundle installers remain useful when you also need the supported
+sidecar Node.js runtime provisioned automatically.
 
 For source builds, Remote SSH, and upgrade details, see
 [Installation](../../docs/INSTALLATION.md).

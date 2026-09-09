@@ -11,7 +11,7 @@ PiLink has two core server capability modes:
 | **Single agent** | `PI_RUNTIME_MODE=single` | You want the original PiLink workspace bridge: OAuth/MCP plus project tools without the shared collaboration layer. |
 | **Collaborative public chat** | `PI_RUNTIME_MODE=collaboration` | Authenticated agents must coordinate through PiLink's durable chat, tasks, work loop, memory projections, or remote supervised-agent controls. |
 
-Only `single` and `collaboration` are valid runtime capability modes. Neither `vscode` nor `cli` is a third `PI_RUNTIME_MODE`.
+Only `single` and `collaboration` are valid runtime capability modes. `cli` is a launch surface that pins the underlying runtime to `single`; VS Code is installed separately and is not a launch mode.
 
 ## Launch experiences and launcher order
 
@@ -19,14 +19,14 @@ When running `pilink start` interactively without flags, PiLink presents the lau
 
 1. **Single agent** (`pilink start --mode single`)
    Classic single-agent PiLink bridge running runtime mode `single`.
-2. **VS Code** (`pilink start --mode vscode`)
-   Bootstrap/handoff into the optional VSPiLink graphical launcher; installs or verifies the extension and opens the project. Graphical setup always writes runtime mode `single`.
-3. **Agents chat** (`pilink start --mode collaboration`)
+2. **Agents chat** (`pilink start --mode collaboration`)
    Collaborative public-chat orchestration running runtime mode `collaboration` with shared chat, tasks, and coordination.
-4. **CLI pilink-endpoint** (`pilink start --mode cli` or `pilink serve --mode cli`; dedicated `gateway` subcommands remain)
+3. **CLI pilink-endpoint** (`pilink start --mode cli` or `pilink serve --mode cli`; dedicated `gateway` subcommands remain)
    Runs the ChatGPT LLM Gateway / loopback OpenAI-compatible endpoint. This pins the underlying runtime to least-privileged `single` mode and replaces the workspace tool catalog with the gateway protocol tools (`gateway_exchange`, `gateway_call_local_tool`).
 
-## VS Code launcher behavior
+PiLink for VS Code is installed or updated separately with `pilink install-vscode-plugin`. That command does not start PiLink or open a workspace.
+
+## VS Code control-surface behavior
 
 A fresh VSPiLink installation uses **Single agent**. More strongly, the current
 graphical setup and endpoint-reconfiguration paths always write
@@ -62,14 +62,14 @@ use an explicit launch mode:
 # 1. Original single-agent workspace bridge.
 pilink start --mode single
 
-# 2. Graphical handoff into VS Code.
-pilink start --mode vscode
-
-# 3. Add durable public collaboration services (Agents chat).
+# 2. Add durable public collaboration services (Agents chat).
 pilink start --mode collaboration
 
-# 4. CLI pilink-endpoint (ChatGPT LLM Gateway).
+# 3. CLI pilink-endpoint (ChatGPT LLM Gateway).
 pilink start --mode cli
+
+# Install/update the optional VS Code control surface separately.
+pilink install-vscode-plugin
 ```
 
 For a local server behind an existing reverse proxy:
@@ -90,11 +90,11 @@ pilink gateway status
 pilink gateway release "done"
 ```
 
-Do not write `PI_RUNTIME_MODE=vscode` or `PI_RUNTIME_MODE=cli`. The core server accepts only `single` and `collaboration` as runtime capability modes.
+Do not write `PI_RUNTIME_MODE=vscode` or `PI_RUNTIME_MODE=cli`. The core server accepts only `single` and `collaboration` as runtime capability modes. `pilink start --mode vscode` is no longer accepted; use `pilink install-vscode-plugin`.
 
 In an interactive terminal, `pilink start` without `--mode` presents the launcher
-choices (1 Single agent, 2 VS Code, 3 Agents chat, 4 CLI pilink-endpoint). In headless
-or automated operation, prefer an explicit mode or a reviewed `PI_RUNTIME_MODE` value
+choices (1 Single agent, 2 Agents chat, 3 CLI pilink-endpoint). In headless or
+automated operation, prefer an explicit mode or a reviewed `PI_RUNTIME_MODE` value
 so the capability catalog does not depend on an interactive default.
 
 ## Capability and security boundaries

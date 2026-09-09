@@ -30,7 +30,7 @@ import { runAgentAuthCli } from "./agents/auth-cli.js";
 assertRequiredNodeVersion();
 const [, , command = "start", ...args] = process.argv;
 let configPath = process.env.PILINK_CONFIG || defaultConfigPath();
-type LaunchMode = "single" | "vscode" | "collaboration" | "cli";
+type LaunchMode = "single" | "collaboration" | "cli";
 type HostingMode = "quick-tunnel" | "nip-io" | "cloudflare-fixed";
 interface LaunchOptions {
   mode?: LaunchMode;
@@ -117,6 +117,12 @@ if (command === "init") {
 } else if (command === "chat") {
   resolveServerReady(false);
   openChatCli();
+} else if (command === "install-vscode-plugin") {
+  resolveServerReady(false);
+  void installVscodePlugin(args).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 } else if (command === "reset") {
   resolveServerReady(false);
   void reset(args);
@@ -139,12 +145,11 @@ if (command === "init") {
 }
 
 function printUsage(): void {
-  console.error("Usage: pilink <init|start|serve|chat|reset|hosting|agent-auth|clients> [options]");
+  console.error("Usage: pilink <init|start|serve|chat|install-vscode-plugin|reset|hosting|agent-auth|clients> [options]");
   console.error("");
   console.error("Launch modes:");
   console.error("  pilink start                              Choose an experience interactively in a TTY");
   console.error("  pilink start --mode single                Single agent");
-  console.error("  pilink start --mode vscode                VS Code");
   console.error("  pilink start --mode collaboration         Agents chat");
   console.error("  pilink start --mode cli                   CLI pilink-endpoint");
   console.error("  pilink serve --mode <single|collaboration|cli>  Serve an explicit server experience");
@@ -152,6 +157,7 @@ function printUsage(): void {
   console.error("  --setup                                   Re-run first-time setup (start only)");
   console.error("");
   console.error("Other commands:");
+  console.error("  pilink install-vscode-plugin              Install or update PiLink for VS Code");
   console.error("  pilink chat");
   console.error("  pilink clients list");
   console.error("  pilink clients disable <client-id>");
@@ -186,18 +192,21 @@ function parseLaunchOptions(commandArgs: string[], commandName: "start" | "serve
     if (argument === "--mode") {
       rawMode = commandArgs[index + 1];
       if (!rawMode || rawMode.startsWith("-")) {
-        throw new Error("'--mode' requires one of: single, vscode, collaboration, cli.");
+        throw new Error("'--mode' requires one of: single, collaboration, cli.");
       }
       index += 1;
     } else if (argument.startsWith("--mode=")) {
       rawMode = argument.slice("--mode=".length);
-      if (!rawMode) throw new Error("'--mode' requires one of: single, vscode, collaboration, cli.");
+      if (!rawMode) throw new Error("'--mode' requires one of: single, collaboration, cli.");
     }
 
     if (rawMode !== undefined) {
       const normalized = normalizeLaunchMode(rawMode);
       if (!normalized) {
-        throw new Error(`Unknown launch mode '${rawMode}'. Choose single, vscode, collaboration, or cli.`);
+        if (isLegacyVscodeLaunchMode(rawMode)) {
+          throw new Error("VS Code is no longer a PiLink launch mode. Run 'pilink install-vscode-plugin' once, then open PiLink from the VS Code Activity Bar.");
+        }
+        throw new Error(`Unknown launch mode '${rawMode}'. Choose single, collaboration, or cli.`);
       }
       if (mode && mode !== normalized) {
         throw new Error(`Launch mode was specified more than once (${mode} and ${normalized}).`);
@@ -209,12 +218,6 @@ function parseLaunchOptions(commandArgs: string[], commandName: "start" | "serve
     throw new Error(`Unknown option '${argument}' for 'pilink ${commandName}'. Run 'pilink ${commandName} --help'.`);
   }
 
-  if (commandName === "serve" && mode === "vscode") {
-    throw new Error("The VS Code graphical experience is launched with 'pilink start --mode vscode'; 'serve' accepts single, collaboration, or cli.");
-  }
-  if (commandName === "start" && mode === "vscode" && (unsafe || setup)) {
-    throw new Error("The VS Code graphical experience cannot be combined with --setup or --allow-unsafe-full-access. Configure those choices from the VS Code sidebar.");
-  }
   return { mode, unsafe, setup };
 }
 
@@ -227,12 +230,6 @@ function normalizeLaunchMode(value: string): LaunchMode | undefined {
     case "single_agent":
       return "single";
     case "2":
-    case "vscode":
-    case "vs-code":
-    case "graphical":
-    case "gui":
-      return "vscode";
-    case "3":
     case "collaboration":
     case "collaborative":
     case "collab":
@@ -240,7 +237,7 @@ function normalizeLaunchMode(value: string): LaunchMode | undefined {
     case "public_chat":
     case "orchestration":
       return "collaboration";
-    case "4":
+    case "3":
     case "cli":
     case "gateway":
     case "endpoint":
@@ -249,6 +246,10 @@ function normalizeLaunchMode(value: string): LaunchMode | undefined {
     default:
       return undefined;
   }
+}
+
+function isLegacyVscodeLaunchMode(value: string): boolean {
+  return ["vscode", "vs-code", "graphical", "gui"].includes(value.trim().toLowerCase());
 }
 
 async function manageClients(commandArgs: string[]): Promise<void> {
@@ -543,7 +544,7 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
 
   const configured = process.env.PI_RUNTIME_MODE?.trim().toLowerCase();
   if (configured && configured !== "single" && configured !== "collaboration") {
-    throw new Error("PI_RUNTIME_MODE must be 'single' or 'collaboration'. Choose an experience with 'pilink start --mode <single|vscode|collaboration|cli>'.");
+    throw new Error("PI_RUNTIME_MODE must be 'single' or 'collaboration'. Choose an experience with 'pilink start --mode <single|collaboration|cli>'.");
   }
   if (!process.stdin.isTTY || !process.stderr.isTTY || process.env.CI === "true") {
     // Headless and existing automation keep the integrated runtime's default
@@ -555,20 +556,19 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
   console.error("\n=== Choose your PiLink experience ===");
   console.error("1. Single agent");
   console.error("   One MCP client and one project-scoped PiLink tool harness.");
-  console.error("2. VS Code");
-  console.error("   Open the optional graphical launcher and status panel.");
-  console.error("3. Agents chat");
+  console.error("2. Agents chat");
   console.error("   Shared chat, tasks, memory, work loops, and supervised agents.");
-  console.error("4. CLI pilink-endpoint");
+  console.error("3. CLI pilink-endpoint");
   console.error("   Use a connected ChatGPT conversation as a local OpenAI-compatible provider.");
+  console.error("PiLink for VS Code is installed separately with 'pilink install-vscode-plugin'.");
   console.error(`Press Enter to keep the current runtime mode (${defaultMode}).`);
 
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const choice = (await readline.question("Select experience [1/2/3/4]: ")).trim();
+    const choice = (await readline.question("Select experience [1/2/3]: ")).trim();
     if (!choice) return defaultMode;
     const selected = normalizeLaunchMode(choice);
-    if (!selected) throw new Error("Launch setup cancelled: choose 1 for Single agent, 2 for VS Code, 3 for Agents chat, or 4 for CLI pilink-endpoint.");
+    if (!selected) throw new Error("Launch setup cancelled: choose 1 for Single agent, 2 for Agents chat, or 3 for CLI pilink-endpoint.");
     return selected;
   } finally {
     readline.close();
@@ -576,7 +576,7 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
 }
 
 function configureRuntimeMode(mode?: LaunchMode): "single" | "collaboration" | undefined {
-  if (!mode || mode === "vscode" || mode === "cli") return undefined;
+  if (!mode || mode === "cli") return undefined;
   if (!fs.existsSync(configPath)) initialize();
   process.env.PI_RUNTIME_MODE = mode;
   if (process.env.PILINK_GATEWAY_LAUNCH !== "true") saveConfig({ PI_RUNTIME_MODE: mode });
@@ -598,8 +598,16 @@ async function launchCliEndpoint(): Promise<void> {
   if (exitCode !== 0) process.exitCode = exitCode;
 }
 
-async function launchVscodeExperience(): Promise<void> {
-  const workspace = path.resolve(process.env.PI_WORK_DIR || process.cwd());
+async function installVscodePlugin(commandArgs: string[]): Promise<void> {
+  if (commandArgs.length === 1 && (commandArgs[0] === "--help" || commandArgs[0] === "-h")) {
+    console.error("Usage: pilink install-vscode-plugin");
+    console.error("Install or update the matching PiLink for VS Code extension without starting PiLink or opening a workspace.");
+    return;
+  }
+  if (commandArgs.length > 0) {
+    throw new Error("'pilink install-vscode-plugin' does not accept options. Run 'pilink install-vscode-plugin --help'.");
+  }
+
   const configuredCommand = process.env.PI_VSCODE_COMMAND?.trim();
   const command = configuredCommand || (process.platform === "win32" ? "code.cmd" : "code");
   if (!command || /[\u0000\r\n]/u.test(command)) {
@@ -608,29 +616,14 @@ async function launchVscodeExperience(): Promise<void> {
   if (!canRun(command)) {
     throw new Error(
       `VS Code's '${command}' command was not found. Install VS Code and enable its 'code' command, or set PI_VSCODE_COMMAND. ` +
-      "Then run 'pilink start --mode vscode' again.",
+      "Then run 'pilink install-vscode-plugin' again.",
     );
   }
 
-  console.error("\n=== VS Code graphical experience ===");
+  console.error("\n=== Install PiLink for VS Code ===");
   const extensionVersion = currentPackageVersion();
   await ensureVscodeExtensionInstalled(command, extensionVersion);
-  console.error(`Opening workspace: ${workspace}`);
-  console.error("VSPiLink now owns graphical PiLink startup and shutdown. Open its VS Code view to start, stop, or restart the related PiLink session without returning to the CLI.");
-  try {
-    const child = spawn(command, ["--reuse-window", workspace], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.once("error", (error) => {
-      console.error(`Could not open VS Code: ${error.message}`);
-      process.exitCode = 1;
-    });
-    child.unref();
-  } catch (error) {
-    throw new Error(`Could not open VS Code: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  console.error("PiLink for VS Code is ready. Reload or open VS Code, then select PiLink in the Activity Bar.");
 }
 
 function currentPackageVersion(): string {
@@ -862,14 +855,6 @@ async function start(options: LaunchOptions): Promise<void> {
     }
     resolveServerReady(false);
     await launchCliEndpoint();
-    return;
-  }
-  if (mode === "vscode") {
-    // The graphical handoff does not need a server configuration yet; let the
-    // VS Code wizard create or select one so it can own the first-run choices.
-    // Selecting it also bootstraps the matching extension so future lifecycle
-    // operations can happen entirely inside VS Code.
-    await launchVscodeExperience();
     return;
   }
   if (!fs.existsSync(configPath)) initialize();

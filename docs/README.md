@@ -7,16 +7,16 @@ the public repository and release packages.
 
 ## Launch modes overview
 
-PiLink provides four distinct launch modes, ordered by workflow:
+PiLink provides three CLI launch experiences, ordered by workflow:
 
 1. **Single agent (`pilink start --mode single`)**:
    Classic single-agent project bridge. Exposes workspace-scoped project tools (read, search, edit, write, safe Git inspection) to a single MCP client under a project-folder boundary without public collaboration services.
-2. **VS Code (`pilink start --mode vscode`)**:
-   Graphical launcher and status panel. Automatically verifies and bootstraps the PiLink VS Code extension, opening the project with a safe single-agent policy.
-3. **Agents chat (`pilink start --mode collaboration`)**:
+2. **Agents chat (`pilink start --mode collaboration`)**:
    Collaborative multi-agent orchestration. Enables verified multi-agent chat (`pilink chat`), durable tasks, shared memory, and supervised-agent workflows.
-4. **CLI pilink-endpoint (`pilink start --mode cli`)**:
+3. **CLI pilink-endpoint (`pilink start --mode cli`)**:
    Launches the ChatGPT gateway provider (`pilink-endpoint`), exposing a local OpenAI-compatible endpoint (`http://127.0.0.1:3210/v1`) with native tool calling backed by a ChatGPT session. Existing dedicated gateway subcommands (`pilink gateway start`, `serve`, `connect`, `status`, `release`) remain available. See the [ChatGPT LLM Gateway guide](operations/llm-gateway.md).
+
+PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; it is not a launch mode.
 
 ## Start here
 
@@ -27,7 +27,7 @@ PiLink provides four distinct launch modes, ordered by workflow:
 | Understand how the VS Code extension works | [PiLink VS Code extension](VSCODE_EXTENSION.md) |
 | Connect ChatGPT Work | [Connect ChatGPT Work](CONNECT_CHATGPT.md) |
 | Use ChatGPT as a local OpenAI-compatible model provider with tool calling | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
-| Understand the 4 launch modes and capability split | [Runtime mode selection](operations/mode-selection.md) |
+| Understand runtime modes and launch surfaces | [Runtime mode selection](operations/mode-selection.md) |
 | Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
 | Diagnose a problem | [Troubleshooting](TROUBLESHOOTING.md) |
 

@@ -2,13 +2,14 @@
 
 PiLink bridges an interactive ChatGPT web conversation as a local, private OpenAI-compatible model provider (`http://127.0.0.1:3210/v1`) via reverse-RPC over an OAuth/SSE MCP transport, requiring no browser automation or scraping.
 
-## Launcher Modes
+## Launcher modes
 
-PiLink provides four launcher workflows:
+PiLink provides three CLI launcher workflows:
 1. **Single agent** (`pilink start --mode single`): Dedicated single-agent workspace MCP bridge.
-2. **VS Code** (`pilink start --mode vscode`): Graphical launcher and extension controls.
-3. **Agents chat** (`pilink start --mode collaboration`): Shared multi-agent chat, task coordination, and memory.
-4. **CLI pilink-endpoint** (`pilink start --mode cli` / `pilink serve --mode cli`, or the equivalent `pilink gateway start` / `serve`): Pins runtime to least-privileged `single` mode, replaces workspace tools with gateway protocol tools (`gateway_exchange`, `gateway_call_local_tool`), and exposes the OpenAI-compatible loopback API.
+2. **Agents chat** (`pilink start --mode collaboration`): Shared multi-agent chat, task coordination, and memory.
+3. **CLI pilink-endpoint** (`pilink start --mode cli` / `pilink serve --mode cli`, or the equivalent `pilink gateway start` / `serve`): Pins runtime to least-privileged `single` mode, replaces workspace tools with gateway protocol tools (`gateway_exchange`, `gateway_call_local_tool`), and exposes the OpenAI-compatible loopback API.
+
+PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; it is not a gateway or runtime launch mode.
 
 ## Setup & Connection
 

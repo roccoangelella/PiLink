@@ -71,13 +71,12 @@ execution policy, Full-access client allowlists, and execution approvals remain
 independent checks.
 
 Runtime capability modes (`single` and `collaboration`) are distinct from
-user-facing launch experiences:
+user-facing CLI launch experiences:
 1. **Single agent** (`pilink start --mode single`)
-2. **VS Code** (`pilink start --mode vscode`)
-3. **Agents chat** (`pilink start --mode collaboration`)
-4. **CLI pilink-endpoint** (`pilink start --mode cli` / `pilink serve --mode cli`; `gateway` subcommands remain)
+2. **Agents chat** (`pilink start --mode collaboration`)
+3. **CLI pilink-endpoint** (`pilink start --mode cli` / `pilink serve --mode cli`; `gateway` subcommands remain)
 
-The VS Code graphical launcher writes runtime mode `single` with Project-folder access and does not enable collaboration. The CLI `pilink-endpoint` (LLM Gateway) pins the underlying runtime to `single` mode and exposes only gateway protocol tools on loopback without workspace tools. Neither `vscode` nor `cli` is a separate `PI_RUNTIME_MODE`. Mode changes are local operator actions and require a restart. A prompt, task, public-chat message, model-visible environment value, or workspace file cannot select a mode or elevate a running process. See [Runtime mode selection](operations/mode-selection.md) for the migration and headless procedures.
+PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; it is not a launch mode. The graphical launcher writes runtime mode `single` with Project-folder access and does not enable collaboration. The CLI `pilink-endpoint` (LLM Gateway) pins the underlying runtime to `single` mode and exposes only gateway protocol tools on loopback without workspace tools. `cli` is not a separate `PI_RUNTIME_MODE`, and `vscode` is not accepted as a runtime or launch mode. Mode changes are local operator actions and require a restart. A prompt, task, public-chat message, model-visible environment value, or workspace file cannot select a mode or elevate a running process. See [Runtime mode selection](operations/mode-selection.md) for the migration and headless procedures.
 
 ## Full access
 
