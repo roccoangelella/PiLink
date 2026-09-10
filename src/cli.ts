@@ -104,7 +104,7 @@ function extractCliMode(args: string[]): boolean {
 }
 
 function isCliModeValue(value: string | undefined): boolean {
-  return value !== undefined && ["cli", "gateway", "pilink-endpoint", "endpoint"].includes(value.trim().toLowerCase());
+  return value !== undefined && ["3", "cli", "gateway", "pilink-endpoint", "endpoint"].includes(value.trim().toLowerCase());
 }
 
 function printGatewayUsage(): void {

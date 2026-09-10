@@ -259,6 +259,19 @@ test("waitForResult throws GatewayRequestQueueTimeoutError fast when queued past
   assert.ok(durationMs >= 900 && durationMs < 3000, `Expected fast queue timeout around 1s, got ${durationMs}ms`);
 });
 
+test("request deadlines remain bounded when the durable state clock is frozen", async (t) => {
+  const fixed = new Date();
+  const { store } = await fixture(t, { now: () => fixed });
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "frozen clock" }],
+  });
+  await assert.rejects(
+    store.waitForResult(queued.requestId, 1, undefined, 1),
+    (error) => error instanceof GatewayRequestQueueTimeoutError,
+  );
+});
+
 test("waitForResult throws GatewayRequestTimeoutError when execution exceeds executionTimeoutSeconds after being claimed", async (t) => {
   const { store } = await fixture(t);
   const waiting = store.exchange("session-exec-timeout", undefined, 5);

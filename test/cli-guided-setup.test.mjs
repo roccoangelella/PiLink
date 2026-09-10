@@ -24,6 +24,7 @@ test("init creates a private configuration for the current workspace", async (t)
   assert.match(config, new RegExp(`PI_WORK_DIR=${escapeRegExp(root)}`));
   assert.match(config, /JWT_SECRET=.{32,}/);
   assert.match(config, /PI_BOOTSTRAP_SECRET=.{32,}/);
+  assert.match(config, /^PI_RUNTIME_MODE=single$/m);
   assert.equal((await fs.stat(configPath)).mode & 0o777, 0o600);
 });
 
@@ -91,7 +92,7 @@ test("launch mode flags reject invalid and incompatible choices clearly", async 
 
   const endpointHelp = await runCli(["start", "--mode", "cli", "--help"], root, {});
   assert.equal(endpointHelp.code, 0);
-  assert.match(endpointHelp.output, /start --mode cli\s+CLI pilink-endpoint/);
+  assert.match(endpointHelp.output, /start --mode cli\s+ChatGPT model gateway/);
 });
 
 test("install-vscode-plugin installs VSPiLink once without starting PiLink or opening VS Code", async (t) => {
@@ -215,7 +216,7 @@ test("first start guides callback registration and persists a ChatGPT OAuth clie
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("Select hosting [1/2/3]:"));
-  assert.match(output, /Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session/);
+  assert.match(output, /public URL changes[\s\S]*reconnect ChatGPT and repeat OAuth setup/);
   cliProcess.stdin.write("1\n");
   await waitFor(() => output.includes("Paste callback URL here:")).catch((error) => {
     throw new Error(`${error.message}\nCLI output:\n${output}`);

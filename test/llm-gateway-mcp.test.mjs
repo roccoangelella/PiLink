@@ -250,6 +250,53 @@ test("same OAuth worker survives ChatGPT MCP transport replacement", async (t) =
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 });
 
+test("a connected replacement transport prevents the old transport from fencing its claim", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-gateway-reconnect-gap-"));
+  const workspace = path.join(root, "workspace");
+  const dataDir = path.join(root, "private");
+  await fs.mkdir(workspace);
+  const store = new LlmGatewayJobStore({ workspace, dataDir });
+  await store.activate();
+  const workerId = gatewayWorkerSessionId("pi_reconnect_gap_client");
+  const handleA = createGatewayMcpServer("mcp:tools", { store }, workerId);
+  const clientA = new Client({ name: "gateway-reconnect-gap-a", version: "1.0.0" });
+  const [clientTransportA, serverTransportA] = InMemoryTransport.createLinkedPair();
+  await Promise.all([clientA.connect(clientTransportA), handleA.connect(serverTransportA)]);
+
+  const firstWait = clientA.callTool({
+    name: "gateway_exchange",
+    arguments: { maximum_wait_seconds: 2 },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const queued = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "preserve this claim" }],
+  });
+  const firstClaim = JSON.parse((await firstWait).content[0].text);
+
+  const handleB = createGatewayMcpServer("mcp:tools", { store }, workerId);
+  const clientB = new Client({ name: "gateway-reconnect-gap-b", version: "1.0.0" });
+  const [clientTransportB, serverTransportB] = InMemoryTransport.createLinkedPair();
+  await Promise.all([clientB.connect(clientTransportB), handleB.connect(serverTransportB)]);
+  await clientA.close();
+  await handleA.close();
+
+  const replacement = await clientB.callTool({
+    name: "gateway_exchange",
+    arguments: { maximum_wait_seconds: 1 },
+  });
+  const replacementClaim = JSON.parse(replacement.content[0].text);
+  assert.equal(replacementClaim.state, "request");
+  assert.equal(replacementClaim.request.request_id, queued.requestId);
+  assert.equal(replacementClaim.request.claim_token, firstClaim.request.claim_token);
+
+  await store.release("test cleanup");
+  await clientB.close();
+  await handleB.close();
+  await fs.rm(root, { recursive: true, force: true });
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+});
+
 test("gateway_exchange rejects partial completion tuples", async (t) => {
   const { client } = await connected(t);
   const result = await client.callTool({

@@ -45,7 +45,7 @@ export function chatCliAutoLaunchEnabled(
     stderrIsTTY: process.stderr.isTTY,
   },
 ): boolean {
-  const configured = (env.PI_CHAT_CLI || "auto").trim().toLowerCase();
+  const configured = (env.PI_CHAT_CLI || "off").trim().toLowerCase();
   if (["off", "false", "0", "no", "disabled", "manual"].includes(configured)) return false;
   if (!["auto", "on", "true", "1", "yes"].includes(configured)) {
     throw new Error("PI_CHAT_CLI must be 'auto' or 'off'");

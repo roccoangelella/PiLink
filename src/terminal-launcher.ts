@@ -13,9 +13,23 @@ const moduleDirectory = path.dirname(modulePath);
 const coreCliPath = path.join(moduleDirectory, "cli.js");
 const terminalChildPath = path.join(moduleDirectory, "terminal-child.js");
 const QUIET_RUNTIME_PREFIXES = ["[HTTP]", "[MCP]"] as const;
+const ROUTINE_RUNTIME_PREFIXES = ["[OAuth]", "[Agents]"] as const;
 const BOX_DRAWING_PREFIXES = ["╔", "║", "╠", "╚"] as const;
 const PROXY_STDOUT_TTY = "PILINK_INTERNAL_PROXY_STDOUT_TTY";
 const PROXY_STDERR_TTY = "PILINK_INTERNAL_PROXY_STDERR_TTY";
+const STATUS_FD_ENV = "PILINK_INTERNAL_TERMINAL_STATUS_FD";
+const GATEWAY_MODE_VALUES = new Set(["3", "cli", "gateway", "pilink-endpoint", "endpoint"]);
+const ACTIONABLE_RUNTIME_LINE = /\b(?:error|failed|failure|refused|denied|unavailable|invalid|warning|warn|danger|expired|conflict|cannot|could not|rejected)\b/iu;
+
+export interface TerminalStatusField {
+  label: string;
+  value: string;
+}
+
+export interface TerminalStatusSnapshot {
+  title: string;
+  fields: TerminalStatusField[];
+}
 
 export function resolveNodeExecutable(
   currentVersion = process.version,
@@ -40,14 +54,42 @@ export function terminalLogsAreVerbose(value = process.env.PILINK_TERMINAL_LOGS)
   return /^(?:1|true|yes|on|verbose|debug)$/iu.test(value?.trim() ?? "");
 }
 
-export function shouldQuietInteractiveStart(
+export function launchUsesGateway(argv: readonly string[] = process.argv.slice(2)): boolean {
+  const command = argv[0] ?? "start";
+  if (command === "gateway") return true;
+  if (command !== "start" && command !== "serve") return false;
+  for (let index = 1; index < argv.length; index += 1) {
+    const argument = argv[index];
+    const rawMode = argument === "--mode"
+      ? argv[index + 1]
+      : argument.startsWith("--mode=")
+        ? argument.slice("--mode=".length)
+        : undefined;
+    if (rawMode && GATEWAY_MODE_VALUES.has(rawMode.trim().toLowerCase())) return true;
+  }
+  return false;
+}
+
+export function chatMonitorAutoLaunchRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(?:auto|on|true|1|yes)$/iu.test(env.PI_CHAT_CLI?.trim() ?? "");
+}
+
+export function shouldUseCompactTerminalOutput(
   argv: readonly string[] = process.argv.slice(2),
   stderrIsTty = process.stderr.isTTY === true,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const command = argv[0] ?? "start";
-  return command === "start" && stderrIsTty && !terminalLogsAreVerbose(env.PILINK_TERMINAL_LOGS);
+  return (command === "start" || command === "serve") &&
+    stderrIsTty &&
+    !terminalLogsAreVerbose(env.PILINK_TERMINAL_LOGS) &&
+    !chatMonitorAutoLaunchRequested(env) &&
+    !launchUsesGateway(argv);
 }
+
+// Kept as an exported compatibility alias for tests/downstream callers that
+// used the old name before compact output also covered `serve`.
+export const shouldQuietInteractiveStart = shouldUseCompactTerminalOutput;
 
 export function terminalProxyEnvironment(
   env: NodeJS.ProcessEnv = process.env,
@@ -61,12 +103,18 @@ export function terminalProxyEnvironment(
   else delete childEnv[PROXY_STDOUT_TTY];
   if (stderrIsTty) childEnv[PROXY_STDERR_TTY] = "1";
   else delete childEnv[PROXY_STDERR_TTY];
+  delete childEnv[STATUS_FD_ENV];
   return childEnv;
 }
 
 export function filterInteractiveTerminalLine(line: string): string | undefined {
   const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
-  if (QUIET_RUNTIME_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return undefined;
+  if (QUIET_RUNTIME_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+    return ACTIONABLE_RUNTIME_LINE.test(normalized) ? normalized : undefined;
+  }
+  if (ROUTINE_RUNTIME_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+    return ACTIONABLE_RUNTIME_LINE.test(normalized) ? normalized : undefined;
+  }
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s/u.test(normalized)) return undefined;
   if (/^\d{4}\/\d{2}\/\d{2}\s/u.test(normalized)) return undefined;
   if (BOX_DRAWING_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return undefined;
@@ -109,7 +157,95 @@ export class InteractiveTerminalOutputFilter {
 function couldBeRuntimeNoisePrefix(value: string): boolean {
   if (/^\d/u.test(value)) return true;
   if (BOX_DRAWING_PREFIXES.some((prefix) => value.startsWith(prefix))) return true;
-  return QUIET_RUNTIME_PREFIXES.some((prefix) => prefix.startsWith(value) || value.startsWith(prefix));
+  const prefixes = [...QUIET_RUNTIME_PREFIXES, ...ROUTINE_RUNTIME_PREFIXES];
+  return prefixes.some((prefix) => prefix.startsWith(value) || value.startsWith(prefix));
+}
+
+function sanitizeStatusText(value: unknown, maximumLength = 4096): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/gu, " ").trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, maximumLength);
+}
+
+export function parseTerminalStatusSnapshot(line: string): TerminalStatusSnapshot | undefined {
+  if (Buffer.byteLength(line, "utf8") > 64 * 1024) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const title = sanitizeStatusText(record.title, 160);
+  if (!title || !Array.isArray(record.fields) || record.fields.length > 12) return undefined;
+  const fields: TerminalStatusField[] = [];
+  for (const entry of record.fields) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+    const field = entry as Record<string, unknown>;
+    const label = sanitizeStatusText(field.label, 40);
+    const fieldValue = sanitizeStatusText(field.value, 4096);
+    if (!label || !fieldValue) return undefined;
+    fields.push({ label, value: fieldValue });
+  }
+  return { title, fields };
+}
+
+export function renderTerminalStatusLines(snapshot: TerminalStatusSnapshot, columns = 120): string[] {
+  const width = Number.isSafeInteger(columns) && columns > 20 ? columns : 120;
+  const lines = [`PiLink · ${snapshot.title}`];
+  for (const { label, value } of snapshot.fields) lines.push(`${label}: ${value}`);
+  return lines.map((line) => fitTerminalLine(line, width));
+}
+
+function fitTerminalLine(line: string, columns: number): string {
+  if (line.length <= columns) return line;
+  if (columns <= 1) return line.slice(0, columns);
+  return `${line.slice(0, Math.max(1, columns - 1))}…`;
+}
+
+export class PinnedTerminalStatus {
+  private lines: string[] = [];
+  private visible = false;
+
+  constructor(
+    private readonly write: (value: string) => void,
+    private readonly columns: () => number = () => process.stderr.columns || 120,
+  ) {}
+
+  set(snapshot: TerminalStatusSnapshot): void {
+    this.clear();
+    this.lines = renderTerminalStatusLines(snapshot, this.columns());
+    this.render();
+  }
+
+  beforeOutput(): void {
+    this.clear();
+  }
+
+  afterOutput(output: string): void {
+    if (output.endsWith("\n")) this.render();
+  }
+
+  clear(): void {
+    if (!this.visible || this.lines.length === 0) return;
+    for (let index = 0; index < this.lines.length; index += 1) {
+      this.write("\x1b[1A\r\x1b[2K");
+    }
+    this.visible = false;
+  }
+
+  dispose(): void {
+    this.clear();
+    this.lines = [];
+  }
+
+  private render(): void {
+    if (this.visible || this.lines.length === 0) return;
+    this.write(`\n${this.lines.join("\n")}\n`);
+    this.visible = true;
+  }
 }
 
 function runTerminalLauncher(): void {
@@ -122,22 +258,45 @@ function runTerminalLauncher(): void {
   }
 
   const argv = process.argv.slice(2);
-  const quiet = shouldQuietInteractiveStart(argv);
-  const child = spawn(nodeExecutable, [quiet ? terminalChildPath : coreCliPath, ...argv], {
-    env: quiet ? terminalProxyEnvironment() : process.env,
-    stdio: quiet ? ["inherit", "pipe", "pipe"] : "inherit",
+  const compact = shouldUseCompactTerminalOutput(argv);
+  const childEnv = compact ? terminalProxyEnvironment() : process.env;
+  if (compact) childEnv[STATUS_FD_ENV] = "3";
+  const child = spawn(nodeExecutable, [compact ? terminalChildPath : coreCliPath, ...argv], {
+    env: childEnv,
+    stdio: compact ? ["inherit", "pipe", "pipe", "pipe"] : "inherit",
   });
 
-  const stdoutFilter = quiet ? new InteractiveTerminalOutputFilter() : undefined;
-  const stderrFilter = quiet ? new InteractiveTerminalOutputFilter() : undefined;
-  if (quiet) {
+  const stdoutFilter = compact ? new InteractiveTerminalOutputFilter() : undefined;
+  const stderrFilter = compact ? new InteractiveTerminalOutputFilter() : undefined;
+  const pinnedStatus = compact ? new PinnedTerminalStatus((value) => process.stderr.write(value)) : undefined;
+  let statusBuffer = "";
+
+  const writeVisible = (target: NodeJS.WriteStream, output: string) => {
+    if (!output) return;
+    pinnedStatus?.beforeOutput();
+    target.write(output);
+    pinnedStatus?.afterOutput(output);
+  };
+
+  if (compact) {
     child.stdout?.on("data", (chunk: Buffer) => {
-      const output = stdoutFilter?.push(chunk) ?? "";
-      if (output) process.stdout.write(output);
+      writeVisible(process.stdout, stdoutFilter?.push(chunk) ?? "");
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      const output = stderrFilter?.push(chunk) ?? "";
-      if (output) process.stderr.write(output);
+      writeVisible(process.stderr, stderrFilter?.push(chunk) ?? "");
+    });
+    const statusStream = child.stdio[3] as NodeJS.ReadableStream | null;
+    statusStream?.on("data", (chunk: Buffer) => {
+      statusBuffer += chunk.toString("utf8");
+      if (statusBuffer.length > 128 * 1024) statusBuffer = statusBuffer.slice(-64 * 1024);
+      while (true) {
+        const newline = statusBuffer.indexOf("\n");
+        if (newline < 0) break;
+        const line = statusBuffer.slice(0, newline);
+        statusBuffer = statusBuffer.slice(newline + 1);
+        const snapshot = parseTerminalStatusSnapshot(line);
+        if (snapshot) pinnedStatus?.set(snapshot);
+      }
     });
   }
 
@@ -145,6 +304,7 @@ function runTerminalLauncher(): void {
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
   for (const signal of signals) {
     const handler = () => {
+      pinnedStatus?.dispose();
       if (child.exitCode === null && child.signalCode === null) child.kill(signal);
     };
     signalHandlers.set(signal, handler);
@@ -152,11 +312,13 @@ function runTerminalLauncher(): void {
   }
 
   child.once("error", (error) => {
+    pinnedStatus?.dispose();
     console.error(`Unable to start the PiLink CLI: ${error.message}`);
     process.exitCode = 1;
   });
   child.once("close", (code, signal) => {
     for (const [name, handler] of signalHandlers) process.off(name, handler);
+    pinnedStatus?.dispose();
     const stdoutTail = stdoutFilter?.flush() ?? "";
     const stderrTail = stderrFilter?.flush() ?? "";
     if (stdoutTail) process.stdout.write(stdoutTail);

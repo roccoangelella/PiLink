@@ -12,6 +12,7 @@ test("development scripts separate compilation from raw server startup", () => {
   assert.equal(packageJson.scripts["dev:server"], "tsx watch src/index.ts");
 });
 
-test("source checkout exposes an explicit CLI fallback through the terminal launcher", () => {
+test("source and installed CLIs enter through the terminal launcher", () => {
   assert.equal(packageJson.scripts.cli, "node dist/terminal-launcher.js");
+  assert.equal(packageJson.bin.pilink, "dist/terminal-launcher.js");
 });

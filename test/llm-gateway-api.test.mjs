@@ -15,10 +15,10 @@ async function fixture(t, apiOptions = {}) {
   await store.activate();
   const apiKey = "test-secret-gateway-key";
   const api = startGatewayApi({ store, apiKey, port: 0, log: () => undefined, ...apiOptions });
-  if (!api.server.listening) await new Promise((resolve) => api.server.once("listening", resolve));
-  const address = api.server.address();
-  assert.ok(address && typeof address === "object");
-  const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  await api.ready;
+  assert.ok(api.server.listening);
+  assert.match(api.baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/v1$/u);
+  const baseUrl = api.baseUrl;
   t.after(async () => {
     await api.close().catch(() => undefined);
     await fs.rm(root, { recursive: true, force: true });
@@ -346,6 +346,205 @@ test("OpenAI endpoint accepts Pi Agent payload and executes multi-turn tool loop
 
   await store.release("test cleanup");
   await cleanupWait;
+});
+
+test("an HTTP client disconnect cancels its claimed gateway job", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t);
+  const workerWait = store.exchange("api-disconnect-worker", undefined, 5);
+  await sleep(20);
+  const controller = new AbortController();
+  const responsePromise = fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [{ role: "user", content: "cancel me" }],
+    }),
+    signal: controller.signal,
+  });
+  const claimed = await workerWait;
+  assert.equal(claimed.state, "request");
+  controller.abort();
+  await assert.rejects(responsePromise, /aborted|abort|terminated|fetch failed/iu);
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if ((await store.job(claimed.request.request_id)).status === "cancelled") break;
+    await sleep(10);
+  }
+  const cancelled = await store.job(claimed.request.request_id);
+  assert.equal(cancelled.status, "cancelled");
+  assert.match(cancelled.error, /disconnected|cancelled/iu);
+  await store.release("test cleanup");
+});
+
+test("capabilities require the gateway bearer key and describe the explicit profiles", async (t) => {
+  const { apiKey, baseUrl } = await fixture(t);
+  const unauthenticated = await fetch(`${baseUrl}/gateway/capabilities`);
+  assert.equal(unauthenticated.status, 401);
+
+  const response = await fetch(`${baseUrl}/gateway/capabilities`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.model, "pilink");
+  assert.deepEqual(body.contract.accepted_models, ["pilink"]);
+  assert.deepEqual(body.contract.n.accepted, [1]);
+  assert.equal(body.contract.n.rejects_other, true);
+  assert.equal(body.default_profile, "compatibility");
+  assert.equal(body.configured_profile, "compatibility");
+  assert.equal(body.contract.streaming, "buffered");
+  assert.equal(body.contract.usage, "unavailable");
+  assert.equal(body.profiles.strict.opt_in, true);
+  assert.equal(body.profiles.strict.rejects_unavailable_usage_options, true);
+});
+
+test("authentication and request-size caps return JSON errors before enqueue", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t);
+  const unauthorized = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{",
+  });
+  assert.equal(unauthorized.status, 401);
+  assert.match(unauthorized.headers.get("content-type") ?? "", /^application\/json/u);
+  assert.equal((await unauthorized.json()).error.type, "invalid_api_key");
+
+  const malformed = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: "{",
+  });
+  assert.equal(malformed.status, 400);
+  assert.match(malformed.headers.get("content-type") ?? "", /^application\/json/u);
+  assert.equal((await malformed.json()).error.type, "invalid_request_error");
+
+  const oversized = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: " ".repeat(2 * 1024 * 1024 + 1),
+  });
+  assert.equal(oversized.status, 413);
+  assert.equal((await oversized.json()).error.type, "invalid_request_error");
+  assert.equal((await store.status()).queued, 0);
+});
+
+test("compatibility preserves ignored Pi controls but discloses bounded warnings", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t);
+  const workerWait = store.exchange("compat-warning-worker", undefined, 5);
+  const responsePromise = fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [{ role: "user", content: "compatibility" }],
+      temperature: 0.2,
+      max_completion_tokens: 128,
+      response_format: { type: "json_schema", json_schema: { name: "answer" } },
+      tools: [{
+        type: "function",
+        function: {
+          name: "bash",
+          strict: true,
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+    }),
+  });
+  const claimed = await workerWait;
+  assert.equal(claimed.request.model, "pilink");
+  assert.equal(claimed.request.tools[0].function.strict, true);
+  await store.exchange("compat-warning-worker", {
+    requestId: claimed.request.request_id,
+    claimToken: claimed.request.claim_token,
+    response: "accepted",
+  }, 1);
+  const response = await responsePromise;
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("x-pilink-gateway-warnings") ?? "", /temperature/iu);
+  assert.match(response.headers.get("x-pilink-gateway-warnings") ?? "", /response_format/iu);
+  assert.match(response.headers.get("x-pilink-gateway-warnings") ?? "", /strict/iu);
+  assert.equal(response.headers.get("x-pilink-gateway-usage"), "unavailable");
+  const body = await response.json();
+  assert.equal(body.model, "pilink");
+  assert.deepEqual(body.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  await store.release("test cleanup");
+});
+
+test("strict opt-in rejects unsupported controls before enqueue", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t);
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { ...headers(apiKey), "x-pilink-gateway-profile": "strict" },
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [{ role: "user", content: "must not queue" }],
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+    }),
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.type, "unsupported_parameter");
+  assert.equal(body.error.param, "temperature");
+  assert.equal((await store.status()).queued, 0);
+});
+
+test("unknown models and n other than one are rejected before enqueue", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t);
+  const unknown = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({ model: "unknown", messages: [{ role: "user", content: "no" }] }),
+  });
+  assert.equal(unknown.status, 404);
+  assert.equal((await unknown.json()).error.type, "model_not_found");
+
+  const multiple = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({ model: "pilink", messages: [{ role: "user", content: "no" }], n: 2 }),
+  });
+  assert.equal(multiple.status, 400);
+  assert.equal((await multiple.json()).error.param, "n");
+  const status = await store.status();
+  assert.equal(status.queued, 0);
+  assert.equal(status.claimed, 0);
+});
+
+test("strict responses omit unavailable usage metadata", async (t) => {
+  const { store, apiKey, baseUrl } = await fixture(t, { profile: "strict" });
+  const capabilities = await fetch(`${baseUrl}/gateway/capabilities`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  const capabilityBody = await capabilities.json();
+  assert.equal(capabilityBody.default_profile, "strict");
+  assert.equal(capabilityBody.profiles.compatibility.default, false);
+  assert.equal(capabilityBody.profiles.strict.default, true);
+  assert.equal(capabilityBody.profiles.strict.opt_in, false);
+  const workerWait = store.exchange("strict-worker", undefined, 5);
+  const responsePromise = fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model: "pilink",
+      messages: [{ role: "user", content: "strict" }],
+      n: 1,
+    }),
+  });
+  const claimed = await workerWait;
+  await store.exchange("strict-worker", {
+    requestId: claimed.request.request_id,
+    claimToken: claimed.request.claim_token,
+    response: "done",
+  }, 1);
+  const response = await responsePromise;
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.model, "pilink");
+  assert.equal("usage" in body, false);
+  assert.equal(response.headers.get("x-pilink-gateway-profile"), "strict");
+  await store.release("test cleanup");
 });
 
 test("unclaimed request times out fast with 504 gateway_timeout and wake guidance", async (t) => {

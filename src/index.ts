@@ -19,6 +19,7 @@ import { loadEnvironment, loadRuntimeConfig, MCP_TOOL_CATALOG_REVISION, VERSION 
 import { createCorsAndOriginProtection, createRateLimiter } from "./security.js";
 import { createHealthProof, HEALTH_AUTH_SCHEME, isHealthChallenge } from "./health-proof.js";
 import { assertRequiredNodeVersion } from "./runtime.js";
+import { gatewayModeEnabled, getLlmGatewayRuntime } from "./llm-gateway-runtime.js";
 import { hasBootstrapAccess, isLocalAdminRequest, requestHostname } from "./oauth-owner.js";
 import { recordMcpInitialized, serviceActivitySnapshot, setActiveMcpSessions, type ClientActivity } from "./service-status.js";
 import { AgentCoordinationStore } from "./agents/coordination.js";
@@ -41,6 +42,15 @@ assertRequiredNodeVersion();
 loadEnvironment();
 const config = loadRuntimeConfig();
 const policy = createHarnessPolicy(config);
+let gatewayStartupReady: Promise<void> | undefined;
+let gatewayStartupFailure: Error | undefined;
+if (gatewayModeEnabled()) {
+  try {
+    gatewayStartupReady = getLlmGatewayRuntime().ready;
+  } catch (error) {
+    gatewayStartupFailure = error instanceof Error ? error : new Error(String(error));
+  }
+}
 const { port: PORT, host: HOST, serverUrl: SERVER_URL } = config;
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -77,6 +87,7 @@ interface SharedAgentRuntime {
 
 const sharedAgentRuntime = initializeSharedAgentRuntime();
 const launchEventFd = parseLaunchEventFd(process.env.PI_LAUNCH_EVENT_FD);
+let launchReadyEventSent = false;
 let launchConnectionEventSent = false;
 let collaborationAdminFailureLogged = false;
 
@@ -86,14 +97,24 @@ function parseLaunchEventFd(value: string | undefined): number | undefined {
   return Number.isSafeInteger(descriptor) && descriptor >= 3 ? descriptor : undefined;
 }
 
-function notifyParentOfMcpConnection(): void {
-  if (launchConnectionEventSent || launchEventFd === undefined) return;
-  launchConnectionEventSent = true;
+function notifyParentLaunchEvent(event: "ready" | "mcp-connected"): void {
+  if (launchEventFd === undefined) return;
+  if (event === "ready") {
+    if (launchReadyEventSent) return;
+    launchReadyEventSent = true;
+  } else {
+    if (launchConnectionEventSent) return;
+    launchConnectionEventSent = true;
+  }
   try {
-    fs.writeSync(launchEventFd, "mcp-connected\n", undefined, "utf8");
+    fs.writeSync(launchEventFd, `${event}\n`, undefined, "utf8");
   } catch {
     // The optional launcher channel must never affect the MCP service.
   }
+}
+
+function notifyParentOfMcpConnection(): void {
+  notifyParentLaunchEvent("mcp-connected");
 }
 
 function initializeSharedAgentRuntime(): SharedAgentRuntime {
@@ -1550,7 +1571,7 @@ app.use((_req, res) => {
 app.use(safeHttpErrorHandler);
 
 // ── Start server ─────────────────────────────────────────────
-const server = app.listen(PORT, HOST, () => {
+function printServerBanner(): void {
   console.error(`
 ╔══════════════════════════════════════════════════╗
 ║              PiLink Server v${VERSION.padEnd(21)}║
@@ -1568,6 +1589,27 @@ const server = app.listen(PORT, HOST, () => {
 ║    Register: ${(SERVER_URL + "/oauth/register").padEnd(35)}║
 ╚══════════════════════════════════════════════════╝
   `);
+}
+
+const server = app.listen(PORT, HOST, () => {
+  const readiness = gatewayStartupFailure
+    ? Promise.reject(gatewayStartupFailure)
+    : gatewayStartupReady ?? Promise.resolve();
+  if (!gatewayStartupReady && !gatewayStartupFailure) {
+    printServerBanner();
+    notifyParentLaunchEvent("ready");
+    return;
+  }
+  void readiness.then(() => {
+    // Gateway mode is not ready until its durable store, local API bind, and
+    // authenticated /v1/models probe have all succeeded.
+    if (!server.listening) return;
+    printServerBanner();
+    notifyParentLaunchEvent("ready");
+  }).catch((error) => {
+    console.error(`[Gateway] Startup readiness failed: ${error instanceof Error ? error.message : String(error)}`);
+    server.close(() => process.exit(1));
+  });
 });
 server.once("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {

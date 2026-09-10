@@ -62,6 +62,7 @@ let deferredServerOutput = "";
 let deferredServerOutputTruncated = false;
 let chatCliActive = false;
 let chatCliProcess: ChildProcess | undefined;
+const terminalStatusFd = parseInternalFileDescriptor(process.env.PILINK_INTERNAL_TERMINAL_STATUS_FD);
 
 installParentShutdownBridge();
 
@@ -147,22 +148,28 @@ if (command === "init") {
 function printUsage(): void {
   console.error("Usage: pilink <init|start|serve|chat|install-vscode-plugin|reset|hosting|agent-auth|clients> [options]");
   console.error("");
-  console.error("Launch modes:");
-  console.error("  pilink start                              Choose an experience interactively in a TTY");
-  console.error("  pilink start --mode single                Single agent");
-  console.error("  pilink start --mode collaboration         Agents chat");
-  console.error("  pilink start --mode cli                   CLI pilink-endpoint");
-  console.error("  pilink serve --mode <single|collaboration|cli>  Serve an explicit server experience");
-  console.error("  --allow-unsafe-full-access                Opt in to unrestricted access for explicitly selected clients");
-  console.error("  --setup                                   Re-run first-time setup (start only)");
+  console.error("Start a public ChatGPT-facing PiLink endpoint:");
+  console.error("  pilink start                              Choose an experience, then configure managed HTTPS hosting");
+  console.error("  pilink start --mode single                Single agent: project-scoped MCP tools");
+  console.error("  pilink start --mode collaboration         Agents chat: shared coordination and supervised agents");
+  console.error("  pilink start --mode cli                   ChatGPT model gateway: local OpenAI-compatible provider");
+  console.error("");
+  console.error("Start only the configured local server (no managed public-hosting wizard):");
+  console.error("  pilink serve --mode <single|collaboration|cli>");
+  console.error("");
+  console.error("Launch options:");
+  console.error("  --allow-unsafe-full-access                Allow unrestricted machine access only for selected OAuth clients");
+  console.error("  --setup                                   Re-run setup before 'start'");
   console.error("");
   console.error("Other commands:");
   console.error("  pilink install-vscode-plugin              Install or update PiLink for VS Code");
-  console.error("  pilink chat");
+  console.error("  pilink chat                               Open the collaboration monitor manually");
   console.error("  pilink clients list");
   console.error("  pilink clients disable <client-id>");
   console.error("  pilink clients enable <client-id>");
   console.error("  pilink clients rotate-secret <client-id>");
+  console.error("");
+  console.error("Interactive start/serve output is compact by default. Set PILINK_TERMINAL_LOGS=verbose for raw diagnostics.");
 }
 
 function parseLaunchOptions(commandArgs: string[], commandName: "start" | "serve"): LaunchOptions | "help" {
@@ -329,6 +336,73 @@ function terminalField(value: string): string {
   return JSON.stringify(safe).slice(1, -1);
 }
 
+interface TerminalStatusField {
+  label: string;
+  value: string;
+}
+
+interface TerminalStatusSnapshot {
+  title: string;
+  fields: TerminalStatusField[];
+}
+
+interface TerminalStatusOptions {
+  hosting: string;
+  next: string;
+  readiness?: Promise<boolean>;
+}
+
+function parseInternalFileDescriptor(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/u.test(value)) return undefined;
+  const descriptor = Number(value);
+  return Number.isSafeInteger(descriptor) && descriptor >= 3 ? descriptor : undefined;
+}
+
+function publishTerminalStatus(snapshot: TerminalStatusSnapshot): void {
+  if (terminalStatusFd === undefined) return;
+  try {
+    fs.writeSync(terminalStatusFd, `${JSON.stringify(snapshot)}\n`, undefined, "utf8");
+  } catch {
+    // The optional terminal-rendering channel must never affect the service.
+  }
+}
+
+function runtimeModeDisplayName(mode: RuntimeConfig["runtimeMode"]): string {
+  return mode === "collaboration" ? "Agents chat" : "Single agent";
+}
+
+function armTerminalStatus(server: StartedServer, options: TerminalStatusOptions): void {
+  if (terminalStatusFd === undefined) return;
+  const endpoint = `${server.config.serverUrl.replace(/\/$/u, "")}/sse`;
+  const fields = (next: string): TerminalStatusField[] => [
+    { label: "Mode", value: runtimeModeDisplayName(server.config.runtimeMode) },
+    { label: "Hosting", value: options.hosting },
+    { label: "MCP", value: endpoint },
+    { label: "Next", value: next },
+    { label: "Logs", value: "compact · PILINK_TERMINAL_LOGS=verbose for raw diagnostics" },
+    { label: "Stop", value: "Ctrl+C" },
+  ];
+
+  publishTerminalStatus({
+    title: "Starting",
+    fields: fields("Waiting for the server to become ready."),
+  });
+
+  const ready = options.readiness ?? server.ready;
+  void ready.then((isReady) => {
+    if (!isReady || server.process.exitCode !== null || server.process.killed) return;
+    publishTerminalStatus({ title: "Ready", fields: fields(options.next) });
+  }).catch(() => undefined);
+
+  void server.connected.then((connected) => {
+    if (!connected || server.process.exitCode !== null || server.process.killed) return;
+    publishTerminalStatus({
+      title: "ChatGPT connected",
+      fields: fields("Authenticated MCP session active. PiLink is ready for tool calls."),
+    });
+  }).catch(() => undefined);
+}
+
 function installParentShutdownBridge(): void {
   if (!process.channel) return;
   let shutdownRequested = false;
@@ -358,7 +432,7 @@ function initialize(portOverride?: number): void {
     `PI_WORK_DIR=${workspace}`,
     `PI_DATA_DIR=${path.dirname(configPath)}`,
     `PI_COORDINATION_DATA_DIR=${defaultCoordinationDataDir(configPath)}`,
-    "PI_RUNTIME_MODE=collaboration",
+    "PI_RUNTIME_MODE=single",
     `PORT=${portOverride ?? 3200}`,
     `JWT_SECRET=${secret()}`,
     `PI_BOOTSTRAP_SECRET=${secret()}`,
@@ -377,7 +451,7 @@ function initialize(portOverride?: number): void {
     "# PI_AGENT_API_KEY=store-only-in-this-private-file",
     "# PI_ALLOW_WORKSPACE_EXECUTION=false",
     "# PI_REQUIRE_EXECUTION_APPROVAL=false",
-    "# PI_CHAT_CLI=auto  # open the original read-only monitor after the first authenticated MCP connection; set off to disable",
+    "# PI_CHAT_CLI=auto  # optional: replace the launch terminal with the collaboration monitor after the first authenticated MCP connection",
     "# PI_UNSAFE_FULL_ACCESS=false",
     "# PI_FULL_ACCESS_CLIENT_IDS=",
     "# CORS_ORIGINS=https://client.example",
@@ -504,6 +578,10 @@ async function handleSetupMode(): Promise<void> {
 function serve(unsafe: boolean, requestedMode?: LaunchMode): void {
   configureRuntimeMode(requestedMode);
   const server = startServer(unsafe);
+  armTerminalStatus(server, {
+    hosting: "Local server only (no managed public tunnel)",
+    next: "Connect through your configured reverse proxy or local MCP client.",
+  });
   armChatCliAutoLaunch(server, Promise.resolve());
 }
 
@@ -547,28 +625,31 @@ async function selectLaunchMode(requestedMode?: LaunchMode): Promise<LaunchMode 
     throw new Error("PI_RUNTIME_MODE must be 'single' or 'collaboration'. Choose an experience with 'pilink start --mode <single|collaboration|cli>'.");
   }
   if (!process.stdin.isTTY || !process.stderr.isTTY || process.env.CI === "true") {
-    // Headless and existing automation keep the integrated runtime's default
-    // (collaboration) and never block waiting for a terminal answer.
+    // Headless and existing automation never block waiting for a terminal answer.
+    // Existing configurations retain their explicit mode; a fresh `pilink init`
+    // writes the safer single-agent baseline.
     return configured as "single" | "collaboration" | undefined;
   }
 
-  const defaultMode: "single" | "collaboration" = configured === "single" ? "single" : "collaboration";
+  const defaultMode: "single" | "collaboration" = configured === "collaboration" ? "collaboration" : "single";
   console.error("\n=== Choose your PiLink experience ===");
-  console.error("1. Single agent");
-  console.error("   One MCP client and one project-scoped PiLink tool harness.");
+  console.error("1. Single agent (recommended default)");
+  console.error("   Project-scoped MCP tools for one ordinary client. No shared collaboration services.");
   console.error("2. Agents chat");
-  console.error("   Shared chat, tasks, memory, work loops, and supervised agents.");
-  console.error("3. CLI pilink-endpoint");
-  console.error("   Use a connected ChatGPT conversation as a local OpenAI-compatible provider.");
+  console.error("   Adds shared chat, tasks, memory, work loops, and supervised-agent coordination.");
+  console.error("3. ChatGPT model gateway");
+  console.error("   Uses a connected ChatGPT conversation as a local OpenAI-compatible model provider; it exposes no workspace tools itself.");
   console.error("PiLink for VS Code is installed separately with 'pilink install-vscode-plugin'.");
-  console.error(`Press Enter to keep the current runtime mode (${defaultMode}).`);
+  console.error(configured
+    ? `Press Enter to keep the configured runtime mode (${defaultMode}).`
+    : "Press Enter for Single agent.");
 
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const choice = (await readline.question("Select experience [1/2/3]: ")).trim();
     if (!choice) return defaultMode;
     const selected = normalizeLaunchMode(choice);
-    if (!selected) throw new Error("Launch setup cancelled: choose 1 for Single agent, 2 for Agents chat, or 3 for CLI pilink-endpoint.");
+    if (!selected) throw new Error("Launch setup cancelled: choose 1 for Single agent, 2 for Agents chat, or 3 for ChatGPT model gateway.");
     return selected;
   } finally {
     readline.close();
@@ -851,7 +932,7 @@ async function start(options: LaunchOptions): Promise<void> {
   const mode = await selectLaunchMode(options.mode);
   if (mode === "cli") {
     if (options.unsafe) {
-      throw new Error("CLI pilink-endpoint exposes no workspace or shell tools; --allow-unsafe-full-access is not applicable.");
+      throw new Error("ChatGPT model gateway exposes no workspace or shell tools; --allow-unsafe-full-access is not applicable.");
     }
     resolveServerReady(false);
     await launchCliEndpoint();
@@ -925,6 +1006,10 @@ async function startCloudflareNamed(unsafe: boolean, forceSetup: boolean): Promi
   const setup = startedServer.ready.then((serverReady) => {
     if (serverReady) return runFirstTimeSetup(serverUrl, forceSetup);
   });
+  armTerminalStatus(startedServer, {
+    hosting: "Cloudflare fixed domain (stable URL)",
+    next: "Connect ChatGPT to the MCP URL below; approve OAuth locally when prompted.",
+  });
   armChatCliAutoLaunch(startedServer, setup);
 }
 
@@ -975,6 +1060,10 @@ async function startQuickTunnel(unsafe: boolean, forceSetup: boolean): Promise<v
       const setup = startedServer.ready.then((serverReady) => {
         if (serverReady) return runFirstTimeSetup(url, forceSetup, true);
       });
+      armTerminalStatus(startedServer, {
+        hosting: "Cloudflare Quick Tunnel (temporary URL)",
+        next: "Connect ChatGPT to the MCP URL below; this URL changes when the tunnel is recreated.",
+      });
       armChatCliAutoLaunch(startedServer, setup);
     }
   };
@@ -1008,12 +1097,12 @@ async function selectHostingMode(forceSetup: boolean): Promise<HostingMode> {
 
   if (forceSetup) console.error("\n=== Reconfigure public hosting ===");
   console.error("\n=== Choose public hosting ===");
-  console.error("1. Cloudflare Quick Tunnel (recommended for a first test)");
-  console.error("   No account, router changes, or extra setup. Its URL changes every restart, so ChatGPT requires a new connector and OAuth client each session.");
-  console.error("2. Direct nip.io HTTPS hosting");
-  console.error("   Keeps the same URL while your public IPv4 address stays the same. It exposes this computer to the Internet and requires router port forwarding plus a reachable public IPv4 address.");
-  console.error("3. Cloudflare fixed domain (Named Tunnel)");
-  console.error("   Uses a hostname you own, such as mcp.example.com. The SSE/OAuth URLs stay the same across PiLink restarts; no inbound router ports are required.");
+  console.error("1. Cloudflare Quick Tunnel (fastest temporary test; default)");
+  console.error("   No account or router changes. The public URL changes when the tunnel is recreated, so expect to reconnect ChatGPT and repeat OAuth setup.");
+  console.error("2. Direct nip.io HTTPS (advanced network setup)");
+  console.error("   Exposes this computer directly. Requires a reachable public IPv4 address plus automatic or manual router mappings; the URL changes if your public IP changes.");
+  console.error("3. Cloudflare fixed domain (best for repeated use)");
+  console.error("   Uses a hostname you own. The MCP/OAuth URLs remain stable across restarts and no inbound router ports are required.");
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   const choice = (await readline.question("Select hosting [1/2/3]: ")).trim();
   readline.close();
@@ -1257,8 +1346,16 @@ async function startNipIo(unsafe: boolean, forceSetup: boolean): Promise<void> {
     server.kill("SIGINT");
     process.exitCode = code === 0 ? 0 : 1;
   });
-  const setup = Promise.all([startedServer.ready, certificateReady]).then(([serverReady, certificateObtained]) => {
-    if (serverReady && certificateObtained && caddyRunning) return runFirstTimeSetup(serverUrl, forceSetup);
+  const publicReady = Promise.all([startedServer.ready, certificateReady]).then(
+    ([serverReady, certificateObtained]) => serverReady && certificateObtained && caddyRunning,
+  );
+  const setup = publicReady.then((ready) => {
+    if (ready) return runFirstTimeSetup(serverUrl, forceSetup);
+  });
+  armTerminalStatus(startedServer, {
+    hosting: "Direct nip.io HTTPS (public router exposure)",
+    next: "Wait for public TLS readiness, then connect ChatGPT to the MCP URL below.",
+    readiness: publicReady,
   });
   armChatCliAutoLaunch(startedServer, setup);
 }
@@ -2007,18 +2104,13 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
       if (newline === -1) break;
       const event = eventBuffer.slice(0, newline).trim();
       eventBuffer = eventBuffer.slice(newline + 1);
+      if (event === "ready") settleReady(true);
       if (event === "mcp-connected") settleConnected(true);
     }
   });
 
-  let stderrBuffer = "";
   server.stderr?.on("data", (chunk: Buffer) => {
-    const text = chunk.toString();
-    writeServerOutput(text);
-    stderrBuffer += text;
-    if (stderrBuffer.includes("╚══════════════════════════════════════════════════╝")) {
-      settleReady(true);
-    }
+    writeServerOutput(chunk.toString());
   });
 
   const shutdown = () => {

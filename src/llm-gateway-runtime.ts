@@ -6,8 +6,11 @@ import {
   GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS,
   GATEWAY_DEFAULT_REQUEST_TIMEOUT_SECONDS,
   GATEWAY_DEFAULT_STALE_SECONDS,
+  GATEWAY_MODEL,
   LlmGatewayJobStore,
 } from "./llm-gateway-store.js";
+
+export const GATEWAY_STARTUP_PROBE_TIMEOUT_MS = 3_000;
 
 export interface LlmGatewayRuntime {
   store: LlmGatewayJobStore;
@@ -50,25 +53,81 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
   const defaultGatewayPort = gatewayApiPortForMcp(config.port);
   const gatewayPort = gatewayPortValue(process.env.PI_LLM_GATEWAY_PORT, defaultGatewayPort);
   const apiKey = process.env.PI_LLM_GATEWAY_API_KEY?.trim() || deriveGatewayApiKey(config.jwtSecret);
+  const profile = gatewayProfile(process.env.PI_LLM_GATEWAY_PROFILE);
   const store = new LlmGatewayJobStore({
     workspace: config.workspace,
     dataDir: config.dataDir,
     staleAfterSeconds,
     claimLeaseSeconds,
   });
-  const ready = store.activate();
-  ready.catch((error) => {
-    console.error(`[Gateway] Unable to initialize durable gateway state: ${error instanceof Error ? error.message : String(error)}`);
-  });
-  const api = startGatewayApi({
-    store,
-    apiKey,
-    port: gatewayPort,
-    requestTimeoutSeconds,
-    queueTimeoutSeconds,
+  const activation = store.activate();
+  let api: StartedGatewayApi;
+  try {
+    api = startGatewayApi({
+      store,
+      apiKey,
+      port: gatewayPort,
+      requestTimeoutSeconds,
+      queueTimeoutSeconds,
+      profile,
+    });
+  } catch (error) {
+    // Activation starts before synchronous API validation/bind setup. Consume
+    // its rejection if API construction fails so startup cannot orphan an
+    // unhandled durable-store promise.
+    void activation.catch(() => undefined);
+    throw error;
+  }
+  // Attach to both startup branches immediately. In particular, an occupied
+  // API port can fail before a slower durable-store activation completes.
+  const ready = Promise.all([activation, api.ready]).then(() =>
+    probeGatewayReadiness(api.baseUrl, apiKey),
+  );
+  ready.catch((error: unknown) => {
+    console.error(`[Gateway] Unable to become ready: ${error instanceof Error ? error.message : String(error)}`);
+    void api.close().catch(() => undefined);
   });
   sharedRuntime = { store, api, apiKey, ready };
   return sharedRuntime;
+}
+
+export async function probeGatewayReadiness(
+  baseUrl: string,
+  apiKey: string,
+  request: typeof fetch = fetch,
+  timeoutMs = GATEWAY_STARTUP_PROBE_TIMEOUT_MS,
+): Promise<void> {
+  const controller = new AbortController();
+  let timedOut = false;
+  let rejectDeadline: (reason?: unknown) => void = () => undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    rejectDeadline(new Error("Gateway readiness probe deadline elapsed"));
+  }, timeoutMs);
+  timer.unref();
+  try {
+    const response = await Promise.race([
+      request(`${baseUrl}/models`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+      }),
+      deadline,
+    ]);
+    if (!response.ok) throw new Error(`Gateway readiness probe returned HTTP ${response.status}`);
+    const body = await Promise.race([response.json() as Promise<{ data?: Array<{ id?: unknown }> }>, deadline]);
+    if (body.data?.[0]?.id !== GATEWAY_MODEL) {
+      throw new Error("Gateway readiness probe did not expose the pilink model");
+    }
+  } catch (error) {
+    if (timedOut) throw new Error(`Gateway readiness probe timed out after ${timeoutMs}ms`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function gatewayInteger(value: string | undefined, fallback: number, name: string): number {
@@ -79,6 +138,13 @@ function gatewayInteger(value: string | undefined, fallback: number, name: strin
     throw new Error(`${name} must be between 1 and 86400 seconds`);
   }
   return parsed;
+}
+
+function gatewayProfile(value: string | undefined): "compatibility" | "strict" {
+  if (value === undefined || !value.trim()) return "compatibility";
+  const profile = value.trim().toLowerCase();
+  if (profile === "compatibility" || profile === "strict") return profile;
+  throw new Error("PI_LLM_GATEWAY_PROFILE must be 'compatibility' or 'strict'");
 }
 
 function gatewayPortValue(value: string | undefined, fallback: number): number {

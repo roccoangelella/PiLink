@@ -31,13 +31,14 @@ test("chat CLI resolves the canonical private project state files", async (t) =>
   assert.equal(paths.tasksFile, path.join(paths.projectDir, "agent-tasks.json"));
 });
 
-test("chat CLI auto-launch requires an interactive terminal and supports opt-out", () => {
+test("chat CLI auto-launch is opt-in and requires an interactive terminal", () => {
   const tty = { stdinIsTTY: true, stdoutIsTTY: true, stderrIsTTY: true };
-  assert.equal(chatCliAutoLaunchEnabled({}, tty), true);
+  assert.equal(chatCliAutoLaunchEnabled({}, tty), false);
+  assert.equal(chatCliAutoLaunchEnabled({ PI_CHAT_CLI: "auto" }, tty), true);
   assert.equal(chatCliAutoLaunchEnabled({ PI_CHAT_CLI: "off" }, tty), false);
   assert.equal(chatCliAutoLaunchEnabled({ PI_CHAT_CLI: "manual" }, tty), false);
   assert.equal(chatCliAutoLaunchEnabled({ PI_CHAT_CLI: "auto", CI: "true" }, tty), false);
-  assert.equal(chatCliAutoLaunchEnabled({}, { ...tty, stdinIsTTY: false }), false);
+  assert.equal(chatCliAutoLaunchEnabled({ PI_CHAT_CLI: "auto" }, { ...tty, stdinIsTTY: false }), false);
   assert.throws(() => chatCliAutoLaunchEnabled({ PI_CHAT_CLI: "sometimes" }, tty), /must be 'auto' or 'off'/);
 });
 
