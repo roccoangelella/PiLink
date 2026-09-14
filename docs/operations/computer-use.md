@@ -49,8 +49,8 @@ PI_COMPUTER_CONTROL_CLIENT_IDS=pi_0123456789abcdef
 When the authenticated connection is eligible, PiLink adds exactly two tools:
 
 - `computer_observe` captures the current desktop and returns a PNG MCP image
-  block plus structured width, height, cursor, capture time, and backend
-  metadata. It requires `mcp:read` or `mcp:tools`.
+  block plus structured width, height, capture time, and backend metadata. It
+  requires `mcp:read` or `mcp:tools`.
 - `computer_action` performs one click, double-click, move, drag, scroll, type,
   keypress, or wait action, waits briefly for the UI to settle, and returns a
   fresh PNG screenshot. It requires `mcp:write` or `mcp:tools`.
@@ -69,14 +69,9 @@ Tool audit records contain metadata only (tool name, client/session identity,
 timing, outcome, and existing access-mode classification). Screenshot pixels,
 typed text, and coordinates are not written into the tool audit log.
 
-## Platform support in this branch
+## Linux X11
 
-The first backend supports **Linux X11**. It intentionally rejects Wayland
-input injection rather than bypassing the compositor security model. Windows,
-macOS, and portal-based Wayland support should be separate backends behind the
-same `ComputerBackend` interface.
-
-For Linux X11:
+The X11 backend uses ordinary user-session helpers:
 
 - `DISPLAY` must identify the interactive desktop session;
 - mouse/keyboard actions require `xdotool` in the PiLink user's `PATH`;
@@ -86,6 +81,53 @@ For Linux X11:
 If screenshot support is present but `xdotool` is absent, observation can work
 while state-changing actions fail with an explicit dependency error.
 
+## Linux Wayland
+
+Wayland uses the compositor-approved XDG Desktop Portal path rather than X11
+input injection or a privileged virtual-input daemon. PiLink creates one
+combined `RemoteDesktop` + `ScreenCast` session, requests keyboard and pointer
+control, opens the session's PipeWire stream, and keeps that session alive for
+the observe/act loop.
+
+The first `computer_observe` or state-changing `computer_action` normally causes
+the desktop to show its own local screen sharing / remote control permission UI.
+The user chooses the monitor and approves the requested control locally. PiLink
+cannot bypass a denial and does not persist a restore token in this preview.
+
+PiLink's Wayland helper requires the normal desktop portal stack plus Python GI
+and GStreamer. On Ubuntu/Debian-family desktops the relevant packages are
+typically:
+
+```bash
+sudo apt install python3-gi gir1.2-gstreamer-1.0 \
+  gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  xdg-desktop-portal
+```
+
+The desktop-specific portal backend must also be installed and running (for
+example the GNOME or KDE portal supplied by the desktop environment). PiLink
+uses the existing user session D-Bus and PipeWire services; it does not start a
+root daemon and does not require `ydotool`.
+
+The PipeWire stream is converted to PNG frames in the helper process. For
+absolute mouse operations, PiLink maps screenshot pixels back into the portal
+stream's logical coordinate space, which is important on scaled/HiDPI Wayland
+desktops.
+
+The initial implementation requests one monitor (`multiple=false`) and embeds
+the pointer into the captured stream when the portal supports that cursor mode.
+Multi-monitor composition and persistent restore tokens are intentionally left
+for a later iteration.
+
+### Wayland troubleshooting
+
+If Computer Use reports that Python GI or GStreamer is unavailable, verify that
+`python3` can import `gi` and that the PipeWire GStreamer plugin is installed.
+If the permission dialog never appears, verify the user session has a working
+`xdg-desktop-portal` implementation and a session D-Bus/PipeWire environment.
+If the user cancels or denies the portal prompt, PiLink returns that denial to
+the MCP client and does not fall back to unrestricted input injection.
+
 ## Security boundary
 
 Computer Use is high authority even without a shell. A GUI action can send a
@@ -93,7 +135,7 @@ message, modify cloud data, launch programs, disclose visible secrets, or
 trigger irreversible actions in another application. Enable it only for a
 trusted OAuth client and only while the local desktop is safe to expose.
 
-The current safeguards are intentionally layered:
+The safeguards are intentionally layered:
 
 1. explicit local launch opt-in (`--allow-computer-control`) or equivalent
    private environment configuration;
@@ -101,9 +143,10 @@ The current safeguards are intentionally layered:
 3. per-client allowlist policy;
 4. normal OAuth scope checks (`mcp:read` for observation and `mcp:write` for
    actions, with `mcp:tools` covering both);
-5. bounded and validated coordinates, scroll counts, text sizes, key names,
+5. X11 helper validation or Wayland compositor/portal authorization;
+6. bounded and validated coordinates, scroll counts, text sizes, key names,
    waits, image sizes, helper output, and helper runtime;
-6. metadata-only tool auditing.
+7. metadata-only tool auditing.
 
-Future backends should preserve the same policy boundary rather than tying
-Computer Use to `PI_UNSAFE_FULL_ACCESS`.
+Future Windows/macOS backends should preserve the same policy boundary rather
+than tying Computer Use to `PI_UNSAFE_FULL_ACCESS`.
