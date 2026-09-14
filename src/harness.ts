@@ -9,6 +9,8 @@ export interface HarnessPolicy {
   /** Default base for relative tool paths and process cwd. */
   workingDirectory?: string;
   unsafeFullAccess: boolean;
+  /** Single Agent-only desktop observation/input capability. */
+  computerControl?: boolean;
   /** Explicit opt-in for fixed profiles that execute trusted workspace code. */
   allowWorkspaceExecution?: boolean;
   /** Optional client-side elicitation gate for process execution. */
@@ -20,6 +22,9 @@ const authenticatedClientIds = new WeakMap<object, string>();
 export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): HarnessPolicy {
   const configuredClientIds = config.fullAccessClientIds ?? [];
   const clientMayUseFullAccess = clientId === undefined || configuredClientIds.includes("*") || configuredClientIds.includes(clientId);
+  const computerClientIds = config.computerControlClientIds ?? [];
+  const clientMayUseComputerControl = clientId !== undefined &&
+    (computerClientIds.includes("*") || computerClientIds.includes(clientId));
   const workspace = path.resolve(config.workspace);
   const policy: HarnessPolicy = {
     workspace,
@@ -28,6 +33,7 @@ export function createHarnessPolicy(config: RuntimeConfig, clientId?: string): H
     // and explicit cwd values remain unrestricted for authorized clients.
     workingDirectory: workspace,
     unsafeFullAccess: config.unsafeFullAccess && clientMayUseFullAccess,
+    computerControl: config.runtimeMode === "single" && config.computerControl && clientMayUseComputerControl,
     allowWorkspaceExecution: config.allowWorkspaceExecution,
     requireExecutionApproval: config.requireExecutionApproval,
   };

@@ -18,7 +18,10 @@ const BOX_DRAWING_PREFIXES = ["╔", "║", "╠", "╚"] as const;
 const PROXY_STDOUT_TTY = "PILINK_INTERNAL_PROXY_STDOUT_TTY";
 const PROXY_STDERR_TTY = "PILINK_INTERNAL_PROXY_STDERR_TTY";
 const STATUS_FD_ENV = "PILINK_INTERNAL_TERMINAL_STATUS_FD";
+const COMPUTER_CONTROL_FLAG = "--allow-computer-control";
 const GATEWAY_MODE_VALUES = new Set(["3", "cli", "gateway", "pilink-endpoint", "endpoint"]);
+const COLLABORATION_MODE_VALUES = new Set(["2", "collaboration", "collaborative", "collab", "public-chat", "public_chat", "orchestration"]);
+const COMPUTER_CONTROL_COMMANDS = new Set(["start", "serve", "single-agent", "single-agents"]);
 const ACTIONABLE_RUNTIME_LINE = /\b(?:error|failed|failure|refused|denied|unavailable|invalid|warning|warn|danger|expired|conflict|cannot|could not|rejected)\b/iu;
 
 export interface TerminalStatusField {
@@ -29,6 +32,12 @@ export interface TerminalStatusField {
 export interface TerminalStatusSnapshot {
   title: string;
   fields: TerminalStatusField[];
+}
+
+export interface PreparedComputerControlLaunch {
+  argv: string[];
+  env: NodeJS.ProcessEnv;
+  computerControl: boolean;
 }
 
 export function resolveNodeExecutable(
@@ -58,16 +67,47 @@ export function launchUsesGateway(argv: readonly string[] = process.argv.slice(2
   const command = argv[0] ?? "start";
   if (command === "gateway") return true;
   if (command !== "start" && command !== "serve") return false;
+  const rawMode = explicitLaunchMode(argv);
+  return rawMode !== undefined && GATEWAY_MODE_VALUES.has(rawMode.trim().toLowerCase());
+}
+
+export function prepareComputerControlLaunch(
+  inputArgv: readonly string[],
+  inputEnv: NodeJS.ProcessEnv = process.env,
+): PreparedComputerControlLaunch {
+  const occurrences = inputArgv.filter((argument) => argument === COMPUTER_CONTROL_FLAG).length;
+  const argv = inputArgv.filter((argument) => argument !== COMPUTER_CONTROL_FLAG);
+  const env = { ...inputEnv };
+  if (occurrences === 0) return { argv, env, computerControl: false };
+  if (occurrences > 1) throw new Error(`${COMPUTER_CONTROL_FLAG} may be specified only once.`);
+
+  const command = argv[0] ?? "start";
+  if (!COMPUTER_CONTROL_COMMANDS.has(command)) {
+    throw new Error("Computer control is currently available only as a Single agent add-on.");
+  }
+  if (launchUsesGateway(argv)) {
+    throw new Error("Computer control is unavailable in CLI pilink-endpoint / gateway mode.");
+  }
+  const rawMode = explicitLaunchMode(argv)?.trim().toLowerCase();
+  if (rawMode && COLLABORATION_MODE_VALUES.has(rawMode)) {
+    throw new Error("Computer control is currently available only in Single agent mode, not Agents chat.");
+  }
+  if (!rawMode && (command === "start" || command === "serve")) {
+    argv.push("--mode", "single");
+  }
+
+  env.PI_COMPUTER_CONTROL = "true";
+  if (!env.PI_COMPUTER_CONTROL_CLIENT_IDS?.trim()) env.PI_COMPUTER_CONTROL_CLIENT_IDS = "*";
+  return { argv, env, computerControl: true };
+}
+
+function explicitLaunchMode(argv: readonly string[]): string | undefined {
   for (let index = 1; index < argv.length; index += 1) {
     const argument = argv[index];
-    const rawMode = argument === "--mode"
-      ? argv[index + 1]
-      : argument.startsWith("--mode=")
-        ? argument.slice("--mode=".length)
-        : undefined;
-    if (rawMode && GATEWAY_MODE_VALUES.has(rawMode.trim().toLowerCase())) return true;
+    if (argument === "--mode") return argv[index + 1];
+    if (argument.startsWith("--mode=")) return argument.slice("--mode=".length);
   }
-  return false;
+  return undefined;
 }
 
 export function chatMonitorAutoLaunchRequested(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -257,10 +297,26 @@ export function runTerminalLauncher(explicitArgv?: readonly string[]): void {
     return;
   }
 
-  const argv = explicitArgv ? [...explicitArgv] : process.argv.slice(2);
-  const compact = shouldUseCompactTerminalOutput(argv);
-  const childEnv = compact ? terminalProxyEnvironment() : process.env;
+  let prepared: PreparedComputerControlLaunch;
+  try {
+    prepared = prepareComputerControlLaunch(explicitArgv ? [...explicitArgv] : process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return;
+  }
+  const argv = prepared.argv;
+  if ((argv[0] === "start" || argv[0] === "serve") && argv.slice(1).some((argument) => argument === "--help" || argument === "-h")) {
+    console.error("Single agent add-on: --allow-computer-control enables screenshot-based desktop observation plus mouse/keyboard actions for this launch.");
+  }
+  const compact = shouldUseCompactTerminalOutput(argv, process.stderr.isTTY === true, prepared.env);
+  const childEnv = compact
+    ? terminalProxyEnvironment(prepared.env)
+    : prepared.env;
   if (compact) childEnv[STATUS_FD_ENV] = "3";
+  if (prepared.computerControl) {
+    console.error("DANGER: Computer Use is enabled for this Single agent launch. The authorized client can see the desktop and inject mouse/keyboard input.");
+  }
   const child = spawn(nodeExecutable, [compact ? terminalChildPath : coreCliPath, ...argv], {
     env: childEnv,
     stdio: compact ? ["inherit", "pipe", "pipe", "pipe"] : "inherit",

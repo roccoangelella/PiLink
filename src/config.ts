@@ -6,7 +6,7 @@ import path from "node:path";
 
 export const VERSION = "2.2.0";
 /** Increment whenever the externally advertised MCP tool contract changes. */
-export const MCP_TOOL_CATALOG_REVISION = 4;
+export const MCP_TOOL_CATALOG_REVISION = 5;
 export const RUNTIME_MODES = ["single", "collaboration"] as const;
 export type RuntimeMode = typeof RUNTIME_MODES[number];
 
@@ -27,6 +27,8 @@ export interface RuntimeConfig {
   publicChatGptDcr: boolean;
   unsafeFullAccess: boolean;
   fullAccessClientIds: readonly string[];
+  computerControl: boolean;
+  computerControlClientIds: readonly string[];
   allowWorkspaceExecution: boolean;
   requireExecutionApproval: boolean;
   maxMcpSessionsTotal: number;
@@ -138,6 +140,14 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const activeConfigPath = env.PILINK_CONFIG || defaultConfigPath();
   const dataDir = path.resolve(env.PI_DATA_DIR || path.dirname(activeConfigPath));
   const fullAccessClientIds = parseFullAccessClientIds(env.PI_FULL_ACCESS_CLIENT_IDS);
+  const computerControl = env.PI_COMPUTER_CONTROL === "true";
+  const computerControlClientIds = parseComputerControlClientIds(env.PI_COMPUTER_CONTROL_CLIENT_IDS);
+  if (computerControl && runtimeMode !== "single") {
+    throw new Error("PI_COMPUTER_CONTROL is available only when PI_RUNTIME_MODE=single");
+  }
+  if (computerControl && computerControlClientIds.length === 0) {
+    throw new Error("PI_COMPUTER_CONTROL requires PI_COMPUTER_CONTROL_CLIENT_IDS or the --allow-computer-control launch flag");
+  }
 
   return {
     runtimeMode: runtimeMode as RuntimeMode,
@@ -156,6 +166,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     publicChatGptDcr: env.PI_OAUTH_PUBLIC_CHATGPT_DCR === "true",
     unsafeFullAccess: env.PI_UNSAFE_FULL_ACCESS === "true",
     fullAccessClientIds,
+    computerControl,
+    computerControlClientIds,
     allowWorkspaceExecution: env.PI_ALLOW_WORKSPACE_EXECUTION === "true",
     requireExecutionApproval: env.PI_REQUIRE_EXECUTION_APPROVAL === "true",
     maxMcpSessionsTotal,
@@ -201,11 +213,19 @@ export function normalizeHttpOrigin(value: string, field = "Origin"): string {
 }
 
 export function parseFullAccessClientIds(value: string | undefined): readonly string[] {
+  return parseClientIdList(value, "PI_FULL_ACCESS_CLIENT_IDS");
+}
+
+export function parseComputerControlClientIds(value: string | undefined): readonly string[] {
+  return parseClientIdList(value, "PI_COMPUTER_CONTROL_CLIENT_IDS");
+}
+
+function parseClientIdList(value: string | undefined, name: string): readonly string[] {
   if (!value?.trim()) return Object.freeze([]);
   const entries = value.split(/[\s,]+/u).map((entry) => entry.trim()).filter(Boolean);
   for (const entry of entries) {
     if (entry !== "*" && !/^pi_[a-f0-9]{16}$/iu.test(entry)) {
-      throw new Error("PI_FULL_ACCESS_CLIENT_IDS must contain OAuth client IDs separated by commas");
+      throw new Error(`${name} must contain OAuth client IDs separated by commas`);
     }
   }
   return Object.freeze([...new Set(entries)]);

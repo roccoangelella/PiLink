@@ -1,4 +1,5 @@
 import { createMcpServer as createCoreMcpServer } from "./mcp-core.js";
+import { registerComputerTools } from "./computer-mcp.js";
 import { authenticatedHarnessClientId } from "./harness.js";
 import { createGatewayMcpServer, gatewayWorkerSessionId } from "./llm-gateway-mcp.js";
 import { gatewayModeEnabled, getLlmGatewayRuntime } from "./llm-gateway-runtime.js";
@@ -21,7 +22,17 @@ if (gatewayModeEnabled()) {
 export function createMcpServer(
   ...args: Parameters<typeof createCoreMcpServer>
 ): ReturnType<typeof createCoreMcpServer> {
-  if (!gatewayModeEnabled()) return createCoreMcpServer(...args);
+  if (!gatewayModeEnabled()) {
+    const handle = createCoreMcpServer(...args);
+    registerComputerTools(
+      handle.server,
+      args[0],
+      args[1],
+      args[4],
+      authenticatedHarnessClientId(args[0]),
+    );
+    return handle;
+  }
 
   const runtime = getLlmGatewayRuntime();
   const scopes = args[1];

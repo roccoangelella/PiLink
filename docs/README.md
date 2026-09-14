@@ -10,7 +10,7 @@ the public repository and release packages.
 PiLink provides three CLI launch experiences, ordered by workflow:
 
 1. **Single agent (`pilink start --mode single`)**:
-   Classic single-agent project bridge. Exposes workspace-scoped project tools (read, search, edit, write, safe Git inspection) to a single MCP client under a project-folder boundary without public collaboration services.
+   Classic single-agent project bridge. Exposes workspace-scoped project tools (read, search, edit, write, safe Git inspection) to a single MCP client under a project-folder boundary without public collaboration services. The optional [Computer Use preview](operations/computer-use.md) adds screenshot-based desktop observation and mouse/keyboard actions only when explicitly enabled.
 2. **Agents chat (`pilink start --mode collaboration`)**:
    Collaborative multi-agent orchestration. Enables verified multi-agent chat (`pilink chat`), durable tasks, shared memory, and supervised-agent workflows.
 3. **CLI pilink-endpoint (`pilink start --mode cli`)**:
@@ -26,6 +26,7 @@ PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; 
 | Start through the simplified VS Code launcher | [Getting started](GETTING_STARTED.md) |
 | Understand how the VS Code extension works | [PiLink VS Code extension](VSCODE_EXTENSION.md) |
 | Connect ChatGPT Work | [Connect ChatGPT Work](CONNECT_CHATGPT.md) |
+| Add screenshot/mouse/keyboard Computer Use to Single agent | [Computer Use preview](operations/computer-use.md) |
 | Use ChatGPT as a local OpenAI-compatible model provider with tool calling | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
 | Understand runtime modes and launch surfaces | [Runtime mode selection](operations/mode-selection.md) |
 | Run/develop from source or repair the `pilink` launcher | [Source CLI workflow](operations/source-cli.md) |
@@ -39,6 +40,7 @@ PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; 
 - [Illustrated extension setup](ILLUSTRATED_GUIDE.md)
 - [Installation](INSTALLATION.md)
 - [Security model](SECURITY_MODEL.md)
+- [Computer Use preview](operations/computer-use.md)
 - [ChatGPT LLM Gateway](operations/llm-gateway.md)
 - [Source CLI workflow and launcher recovery](operations/source-cli.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
