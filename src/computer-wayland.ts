@@ -183,6 +183,12 @@ class LinuxWaylandPortalComputerBackend implements ComputerBackend {
         return;
       }
       const pending = this.pending;
+      if (pending && response.id == null && response.ok === false && typeof response.error === "string") {
+        clearTimeout(pending.timer);
+        this.pending = undefined;
+        pending.reject(new Error(safeMessage(response.error)));
+        return;
+      }
       if (!pending || response.id !== pending.id) {
         this.failHelper(new Error("Wayland portal helper returned an unexpected response"));
         this.stopHelper();
