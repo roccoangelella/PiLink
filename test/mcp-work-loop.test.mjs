@@ -160,7 +160,7 @@ test("bounded wait wakes on task change and only a verified manager can permanen
 
   const initial = json(await worker.client.callTool({ name: "agent_work_wait", arguments: {} }));
   assert.equal(initial.outcome, "snapshot");
-  assert.equal(initial.work_state.lifecycle, "working");
+  assert.equal(initial.work_state.lifecycle, "waiting_for_task");
   assert.match(initial.task_board_token, /^wt_/);
 
   const pendingWait = worker.client.callTool({
@@ -582,13 +582,13 @@ test("disposing one shared logical handle does not mark another active handle of
   });
   try {
     const initial = json(await first.client.callTool({ name: "agent_work_wait", arguments: {} }));
-    assert.equal(initial.work_state.lifecycle, "working");
+    assert.equal(initial.work_state.lifecycle, "waiting_for_task");
     const prompt = await second.client.callTool({ name: "get_system_prompt", arguments: {} });
     assert.notEqual(prompt.isError, true);
 
     await close(first);
     const afterOneClose = await value.workLoopStore.get(sessionId);
-    assert.equal(afterOneClose.lifecycle, "working");
+    assert.equal(afterOneClose.lifecycle, "waiting_for_task");
   } finally {
     await close(second);
   }

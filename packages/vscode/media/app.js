@@ -8,7 +8,11 @@
   const root = document.getElementById("app");
   const logoUri = root && root.dataset ? root.dataset.logoUri || "" : "";
   const storedUi = typeof vscode.getState === "function" ? vscode.getState() : {};
-  let uiState = { advancedOpen: Boolean(storedUi && storedUi.advancedOpen) };
+  let uiState = {
+    advancedOpen: Boolean(storedUi && storedUi.advancedOpen),
+    selectedTaskId: text(storedUi && storedUi.selectedTaskId, 256),
+    boardScrollLeft: integer(storedUi && storedUi.boardScrollLeft),
+  };
   let currentState = normalizeState({});
   let lastSignature = "";
 
@@ -24,10 +28,24 @@
 
   if (root) {
     root.addEventListener("click", function (event) {
+      const selected = event.target instanceof Element ? event.target.closest("[data-task-select]") : null;
+      if (selected) {
+        const taskId = selected.getAttribute("data-task-select") || "";
+        uiState.selectedTaskId = uiState.selectedTaskId === taskId ? "" : taskId;
+        vscode.setState(uiState);
+        render();
+        return;
+      }
       const target = event.target instanceof Element ? event.target.closest("[data-command]") : null;
       if (!target || target.hasAttribute("disabled") || currentState.operation) return;
       const command = target.getAttribute("data-command");
-      if (command) vscode.postMessage({ type: "command", command: command });
+      if (!command) return;
+      const message = { type: "command", command: command };
+      const taskId = target.getAttribute("data-task-id");
+      const revision = Number(target.getAttribute("data-task-revision"));
+      if (taskId) message.taskId = taskId;
+      if (Number.isSafeInteger(revision) && revision > 0) message.revision = revision;
+      vscode.postMessage(message);
     });
     root.addEventListener("toggle", function (event) {
       const details = event.target;
@@ -41,6 +59,7 @@
     const source = record(value);
     const process = record(source.process);
     const externalMcp = record(source.externalMcp);
+    const collaboration = record(source.collaboration);
     return {
       trusted: source.trusted === true,
       trustKnown: typeof source.trusted === "boolean",
@@ -64,14 +83,98 @@
         active: externalMcp.active === true,
         activeSessions: integer(externalMcp.activeSessions),
       },
+      collaboration: {
+        status: ["ready", "stale", "error"].includes(text(collaboration.status, 20)) ? text(collaboration.status, 20) : "error",
+        tasks: Array.isArray(collaboration.tasks) ? collaboration.tasks.slice(0, 200).map(normalizeTask).filter(Boolean) : [],
+        participants: Array.isArray(collaboration.participants) ? collaboration.participants.slice(0, 100).map(normalizeParticipant).filter(Boolean) : [],
+        refreshedAt: text(collaboration.refreshedAt, 80),
+        sourceTimestamp: text(collaboration.sourceTimestamp, 80),
+        error: text(collaboration.error, 800),
+      },
       version: text(source.version, 80),
       nodeVersion: text(source.nodeVersion, 80),
       error: text(source.error, 1200),
     };
   }
 
+  function normalizeTask(value) {
+    const source = record(value);
+    const taskId = text(source.taskId, 256);
+    const title = text(source.title, 256);
+    const status = text(source.status, 40);
+    const priority = text(source.priority, 10);
+    const risk = text(source.risk, 20);
+    const revision = integer(source.revision);
+    if (!taskId || !title || !["open", "working", "input_required", "completed", "failed", "cancelled"].includes(status) ||
+        !["P0", "P1", "P2", "P3"].includes(priority) || !["low", "medium", "high"].includes(risk) || revision < 1) return null;
+    const actions = record(source.actions);
+    return {
+      taskId: taskId,
+      title: title,
+      details: text(source.details, 8192),
+      status: status,
+      statusMessage: text(source.statusMessage, 8192),
+      artifact: text(source.artifact, 16384),
+      priority: priority,
+      dependencies: Array.isArray(source.dependencies) ? source.dependencies.slice(0, 50).map(function (value) {
+        const dependency = record(value);
+        const dependencyTaskId = text(dependency.taskId, 256);
+        const condition = text(dependency.condition, 20);
+        return dependencyTaskId && (condition === "completed" || condition === "terminal")
+          ? { taskId: dependencyTaskId, condition: condition }
+          : null;
+      }).filter(Boolean) : [],
+      eligibleRoleIds: stringArray(source.eligibleRoleIds, 20, 128),
+      requiredCapabilities: stringArray(source.requiredCapabilities, 20, 128),
+      risk: risk,
+      notBefore: text(source.notBefore, 80),
+      createdBy: text(source.createdBy, 100),
+      createdBySessionId: text(source.createdBySessionId, 256),
+      owner: text(source.owner, 100),
+      ownerSessionId: text(source.ownerSessionId, 256),
+      ownerRoleId: text(source.ownerRoleId, 128),
+      ownerRoleLabel: text(source.ownerRoleLabel, 128),
+      leaseExpiresAt: text(source.leaseExpiresAt, 80),
+      createdAt: text(source.createdAt, 80),
+      updatedAt: text(source.updatedAt, 80),
+      revision: revision,
+      actions: {
+        provideInput: actions.provideInput === true,
+        cancel: actions.cancel === true,
+        release: actions.release === true,
+      },
+    };
+  }
+
+  function normalizeParticipant(value) {
+    const source = record(value);
+    const collaborationSessionId = text(source.collaborationSessionId, 256);
+    const agentName = text(source.agentName, 100);
+    const canonicalRoleId = text(source.canonicalRoleId, 128);
+    const occupancyLabel = text(source.occupancyLabel, 128);
+    const lifecycle = text(source.lifecycle, 40);
+    const revision = integer(source.revision);
+    if (!collaborationSessionId || !agentName || !canonicalRoleId || !occupancyLabel ||
+        !["working", "waiting_for_task", "offline", "released"].includes(lifecycle) || revision < 1) return null;
+    return {
+      collaborationSessionId: collaborationSessionId,
+      agentName: agentName,
+      canonicalRoleId: canonicalRoleId,
+      occupancyLabel: occupancyLabel,
+      lifecycle: lifecycle,
+      updatedAt: text(source.updatedAt, 80),
+      revision: revision,
+    };
+  }
+
   function render() {
     if (!root) return;
+    const boardBefore = root.querySelector(".kanban");
+    if (boardBefore) uiState.boardScrollLeft = Math.max(0, Math.floor(boardBefore.scrollLeft));
+    const focusedTaskId = document.activeElement instanceof Element
+      ? document.activeElement.getAttribute("data-task-select") || ""
+      : "";
+    const pageScrollY = window.scrollY;
     const shell = el("main", "shell");
     shell.appendChild(renderHeader());
     if (!currentState.trustKnown) shell.appendChild(renderLoading());
@@ -80,12 +183,24 @@
       shell.appendChild(renderPrimaryCard());
       if (currentState.error) shell.appendChild(renderError(currentState.error));
       if (currentState.unsafeFullAccess) shell.appendChild(renderFullAccessNotice());
-      if (currentState.runtimeMode === "collaboration") shell.appendChild(renderCollaborationNotice());
+      if (currentState.runtimeMode === "collaboration") {
+        shell.appendChild(renderCollaborationNotice());
+        shell.appendChild(renderCollaborationBoard());
+      }
       if (isExternalRuntime()) shell.appendChild(renderExternalRuntimeNotice());
       shell.appendChild(renderAdvanced());
     }
     shell.appendChild(renderFooter());
     root.replaceChildren(shell);
+    const boardAfter = root.querySelector(".kanban");
+    if (boardAfter) boardAfter.scrollLeft = uiState.boardScrollLeft || 0;
+    if (focusedTaskId) {
+      const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(focusedTaskId) : focusedTaskId.replace(/[^A-Za-z0-9_.:@-]/g, "");
+      const focused = root.querySelector(`[data-task-select="${escaped}"]`);
+      if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+    }
+    window.scrollTo({ top: pageScrollY });
+    vscode.setState(uiState);
   }
 
   function renderHeader() {
@@ -328,11 +443,229 @@
     return notice;
   }
 
+  function renderCollaborationBoard() {
+    const board = currentState.collaboration;
+    const section = el("section", "section-card collaboration-board");
+    section.setAttribute("aria-labelledby", "collaboration-board-title");
+    const header = el("div", "section-card__header");
+    const copy = el("div", "");
+    copy.appendChild(el("div", "eyebrow", "MULTI-AGENT CONTROL ROOM"));
+    const title = el("h2", "section-card__title", "Collaboration task board");
+    title.id = "collaboration-board-title";
+    copy.appendChild(title);
+    copy.appendChild(el("p", "section-card__hint", participantSummary(board.participants)));
+    header.appendChild(copy);
+    const controls = el("div", "board-controls");
+    controls.appendChild(chip(board.status === "ready" ? "Live" : board.status === "stale" ? "Stale" : "Unavailable", board.status === "ready" ? "success" : board.status === "stale" ? "warning" : "danger"));
+    const createButton = commandButton("Create task", "createTask", "primary");
+    if (board.status !== "ready") createButton.disabled = true;
+    controls.appendChild(createButton);
+    header.appendChild(controls);
+    section.appendChild(header);
+
+    if (board.status !== "ready") {
+      const notice = el("div", "board-health board-health--" + board.status);
+      notice.setAttribute("role", board.status === "error" ? "alert" : "status");
+      notice.appendChild(el("strong", "", board.status === "stale" ? "Showing the last good task snapshot." : "Task board data is unavailable."));
+      if (board.error) notice.appendChild(el("span", "", " " + board.error));
+      section.appendChild(notice);
+    }
+
+    const kanban = el("div", "kanban");
+    kanban.setAttribute("role", "region");
+    kanban.setAttribute("aria-label", "Canonical collaboration tasks");
+    kanban.tabIndex = 0;
+    const definitions = [
+      { id: "open", label: "Open / Ready" },
+      { id: "working", label: "Working" },
+      { id: "blocked", label: "Needs input / Blocked" },
+      { id: "done", label: "Done / Failed" },
+    ];
+    definitions.forEach(function (definition) {
+      const tasks = board.tasks.filter(function (task) { return taskColumn(task, board.tasks) === definition.id; });
+      kanban.appendChild(renderKanbanColumn(definition.id, definition.label, tasks));
+    });
+    section.appendChild(kanban);
+    section.appendChild(renderParticipantRoster(board.participants));
+    section.appendChild(el("p", "section-card__hint", "This board shows authoritative durable collaboration tasks. Local supervised-agent operations are a separate runtime surface and are not merged into these columns. Worker release is a separate manager-authorized lifecycle action, not task cancellation."));
+    return section;
+  }
+
+  function renderParticipantRoster(participants) {
+    const roster = el("section", "participant-roster");
+    roster.setAttribute("aria-label", "Collaboration worker lifecycle");
+    const header = el("div", "participant-roster__header");
+    header.appendChild(el("h3", "participant-roster__title", "Workers"));
+    header.appendChild(el("span", "participant-roster__hint", "Durable lifecycle"));
+    roster.appendChild(header);
+    const list = el("div", "participant-list");
+    if (!participants.length) list.appendChild(el("p", "kanban-empty", "No registered workers"));
+    participants.forEach(function (participant) {
+      const row = el("div", "participant-row");
+      const identity = el("div", "participant-row__identity");
+      identity.appendChild(el("strong", "", participant.occupancyLabel || participant.agentName));
+      identity.appendChild(el("span", "participant-row__meta", participant.canonicalRoleId + " · " + shortId(participant.collaborationSessionId)));
+      row.appendChild(identity);
+      const lifecycle = participant.lifecycle === "waiting_for_task" ? "Waiting for task" :
+        participant.lifecycle === "working" ? "Working" :
+        participant.lifecycle === "released" ? "Released" : "Offline";
+      row.appendChild(chip(lifecycle, participant.lifecycle === "working" ? "success" : participant.lifecycle === "waiting_for_task" ? "warning" : participant.lifecycle === "released" ? "danger" : "neutral"));
+      list.appendChild(row);
+    });
+    roster.appendChild(list);
+    return roster;
+  }
+
+  function renderKanbanColumn(id, label, tasks) {
+    const column = el("section", "kanban-column kanban-column--" + id);
+    const heading = el("div", "kanban-column__header");
+    heading.appendChild(el("h3", "kanban-column__title", label));
+    heading.appendChild(chip(String(tasks.length), "neutral"));
+    column.appendChild(heading);
+    const body = el("div", "kanban-column__body");
+    if (!tasks.length) body.appendChild(el("p", "kanban-empty", "No tasks"));
+    tasks.forEach(function (task) { body.appendChild(renderTaskCard(task)); });
+    column.appendChild(body);
+    return column;
+  }
+
+  function renderTaskCard(task) {
+    const selected = uiState.selectedTaskId === task.taskId;
+    const card = el("article", "task-card" + (selected ? " task-card--selected" : ""));
+    card.dataset.taskId = task.taskId;
+    const summary = document.createElement("button");
+    summary.type = "button";
+    summary.className = "task-card__summary";
+    summary.dataset.taskSelect = task.taskId;
+    summary.setAttribute("aria-expanded", selected ? "true" : "false");
+    summary.setAttribute("aria-label", `${task.title}. ${taskStatusLabel(task)}. ${dependencyLabel(task)}.`);
+    const top = el("span", "task-card__top");
+    top.appendChild(el("span", "task-card__title", task.title));
+    top.appendChild(chip(task.priority, task.priority === "P0" ? "danger" : task.priority === "P1" ? "warning" : "neutral"));
+    summary.appendChild(top);
+    const compact = el("span", "task-card__compact");
+    compact.appendChild(el("span", "", taskStatusLabel(task)));
+    compact.appendChild(el("span", "", dependencyLabel(task)));
+    summary.appendChild(compact);
+    card.appendChild(summary);
+
+    if (selected) {
+      const details = el("div", "task-card__details");
+      if (task.details) details.appendChild(el("p", "task-card__description", task.details));
+      const grid = el("dl", "task-detail-grid");
+      taskDetailRow(grid, "Task ID", task.taskId);
+      taskDetailRow(grid, "Owner", task.owner || "Unassigned");
+      if (task.ownerSessionId) taskDetailRow(grid, "Session", shortId(task.ownerSessionId));
+      if (task.ownerRoleLabel || task.ownerRoleId) taskDetailRow(grid, "Role", task.ownerRoleLabel || task.ownerRoleId);
+      taskDetailRow(grid, "Priority / risk", `${task.priority} · ${task.risk}`);
+      taskDetailRow(grid, "Dependencies", dependencyDetail(task));
+      if (task.eligibleRoleIds.length) taskDetailRow(grid, "Eligible roles", task.eligibleRoleIds.join(", "));
+      if (task.requiredCapabilities.length) taskDetailRow(grid, "Capabilities", task.requiredCapabilities.join(", "));
+      taskDetailRow(grid, "Lease", task.leaseExpiresAt ? leaseLabel(task.leaseExpiresAt) : "No active lease");
+      taskDetailRow(grid, "Updated", timeLabel(task.updatedAt));
+      if (task.statusMessage) taskDetailRow(grid, "Status", task.statusMessage);
+      if (task.artifact) taskDetailRow(grid, "Artifact", task.artifact);
+      details.appendChild(grid);
+      if (task.actions.provideInput || task.actions.cancel) {
+        const actions = el("div", "button-row");
+        if (task.actions.provideInput) actions.appendChild(taskCommandButton("Provide input", "provideTaskInput", "primary", task));
+        if (task.actions.cancel) actions.appendChild(taskCommandButton("Cancel task", "cancelTask", "secondary", task));
+        details.appendChild(actions);
+      }
+      card.appendChild(details);
+    }
+    return card;
+  }
+
+  function taskDetailRow(list, label, value) {
+    const row = el("div", "task-detail-grid__row");
+    row.appendChild(el("dt", "task-detail-grid__label", label));
+    row.appendChild(el("dd", "task-detail-grid__value", value));
+    list.appendChild(row);
+  }
+
+  function taskColumn(task, tasks) {
+    if (task.status === "working") return "working";
+    if (task.status === "input_required") return "blocked";
+    if (task.status === "completed" || task.status === "failed" || task.status === "cancelled") return "done";
+    if (dependencyLabelForTasks(task, tasks) !== "Ready") return "blocked";
+    if (task.notBefore && Date.parse(task.notBefore) > Date.now()) return "blocked";
+    return "open";
+  }
+
+  function taskStatusLabel(task) {
+    const labels = {
+      open: "Open",
+      working: "Working",
+      input_required: "Needs input",
+      completed: "Completed",
+      failed: "Failed",
+      cancelled: "Cancelled",
+    };
+    return labels[task.status] || task.status;
+  }
+
+  function dependencyLabel(task) {
+    return dependencyLabelForTasks(task, currentState.collaboration.tasks);
+  }
+
+  function dependencyLabelForTasks(task, tasks) {
+    if (!task.dependencies.length) return task.status === "open" ? "Ready" : "No blockers";
+    const byId = new Map(tasks.map(function (candidate) { return [candidate.taskId, candidate]; }));
+    const unsatisfied = task.dependencies.filter(function (dependency) {
+      const candidate = byId.get(dependency.taskId);
+      if (!candidate) return true;
+      return dependency.condition === "completed"
+        ? candidate.status !== "completed"
+        : !["completed", "failed", "cancelled"].includes(candidate.status);
+    });
+    return unsatisfied.length ? `${unsatisfied.length} blocker${unsatisfied.length === 1 ? "" : "s"}` : "Ready";
+  }
+
+  function dependencyDetail(task) {
+    if (!task.dependencies.length) return "None";
+    return task.dependencies.map(function (dependency) {
+      return `${shortId(dependency.taskId)} (${dependency.condition})`;
+    }).join(", ");
+  }
+
+  function participantSummary(participants) {
+    if (!participants.length) return "Durable coordination state · no registered workers";
+    const active = participants.filter(function (participant) { return participant.lifecycle === "working"; }).length;
+    const waiting = participants.filter(function (participant) { return participant.lifecycle === "waiting_for_task"; }).length;
+    return `${participants.length} workers · ${active} working · ${waiting} waiting`;
+  }
+
+  function leaseLabel(value) {
+    const milliseconds = Date.parse(value) - Date.now();
+    if (!Number.isFinite(milliseconds)) return "Unknown";
+    if (milliseconds <= 0) return "Expired";
+    const minutes = Math.max(1, Math.ceil(milliseconds / 60000));
+    return `${minutes}m remaining`;
+  }
+
+  function timeLabel(value) {
+    const milliseconds = Date.parse(value);
+    if (!Number.isFinite(milliseconds)) return value || "Unknown";
+    const delta = Math.max(0, Date.now() - milliseconds);
+    const minutes = Math.floor(delta / 60000);
+    if (minutes < 1) return "Just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return new Date(milliseconds).toLocaleString();
+  }
+
+  function shortId(value) {
+    if (!value) return "";
+    return value.length > 18 ? value.slice(0, 9) + "…" + value.slice(-6) : value;
+  }
+
   function renderCollaborationNotice() {
     const notice = el("section", "notice notice--info");
     const body = el("div", "notice__body");
-    body.appendChild(el("strong", "notice__title", "Advanced collaboration configuration detected"));
-    body.appendChild(el("p", "notice__copy", "This project uses PiLink's collaboration tool catalog. The VS Code launcher now defaults to the simpler single-agent bridge."));
+    body.appendChild(el("strong", "notice__title", "Collaboration mode is active"));
+    body.appendChild(el("p", "notice__copy", "The control room below reads canonical durable coordination state. Task ownership and scheduling decisions remain server-authoritative."));
     notice.appendChild(body);
     if (!isExternalRuntime()) notice.appendChild(commandButton("Switch to single-agent", "switchToSingle", "secondary"));
     return notice;
@@ -465,6 +798,14 @@
     return button;
   }
 
+  function taskCommandButton(label, command, variant, task) {
+    const button = commandButton(label, command, variant);
+    button.dataset.taskId = task.taskId;
+    button.dataset.taskRevision = String(task.revision);
+    if (currentState.collaboration.status !== "ready") button.disabled = true;
+    return button;
+  }
+
   function isOnline() {
     return currentState.process.status === "running" || currentState.process.status === "starting";
   }
@@ -528,6 +869,11 @@
 
   function integer(value) {
     return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  }
+
+  function stringArray(value, maximumItems, maximumText) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, maximumItems).map(function (candidate) { return text(candidate, maximumText); }).filter(Boolean);
   }
 
   function text(value, maximum) {

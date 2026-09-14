@@ -500,3 +500,22 @@ test("a failed stop remains active, blocks over-capacity spawn, and can be retri
   assert.equal((await manager.stop(spawned.agentId)).status, "stopped");
   assert.equal((await manager.spawn(request(value.workspace))).status, "running");
 });
+
+test("local collaboration admin routes preserve durable task-store authority", async () => {
+  const source = await fs.readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.match(source, /app\.get\("\/admin\/collaboration\/board", requireLocalAdmin/);
+  const boardStart = source.indexOf('app.get("/admin/collaboration/board"');
+  const boardEnd = source.indexOf('app.post("/admin/collaboration/tasks"', boardStart);
+  assert.ok(boardStart >= 0 && boardEnd > boardStart);
+  const boardRoute = source.slice(boardStart, boardEnd);
+  assert.match(boardRoute, /participants: participants\.map\(publicAdminWorkParticipant\)/);
+  assert.doesNotMatch(boardRoute, /chat:|tool_activity|clients:|bootstrapSecret/);
+  assert.match(source, /app\.post\("\/admin\/collaboration\/tasks", requireLocalAdmin/);
+  assert.match(source, /getAgentTaskStore\(\)\.create\(/);
+  assert.match(source, /app\.post\("\/admin\/collaboration\/tasks\/:taskId\/input", requireLocalAdmin/);
+  assert.match(source, /getAgentTaskStore\(\)\.provideInput\(/);
+  assert.match(source, /app\.post\("\/admin\/collaboration\/tasks\/:taskId\/cancel", requireLocalAdmin/);
+  assert.match(source, /getAgentTaskStore\(\)\.cancel\(/);
+  assert.match(source, /release: false/);
+  assert.doesNotMatch(source, /app\.post\("\/admin\/collaboration\/tasks\/:taskId\/release"/);
+});

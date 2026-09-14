@@ -7,7 +7,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { AgentCoordinationStore } from "../dist/agents/coordination.js";
 import { AgentManager } from "../dist/agents/manager.js";
+import { AgentChatBroker, AgentChatStore } from "../dist/chat.js";
+import {
+  createNewCollaborationRoleAssignment,
+  resolveCollaborationRoleRequest,
+} from "../dist/collaboration-roles.js";
 import { createMcpServer } from "../dist/mcp.js";
+import { AgentTaskStore } from "../dist/tasks.js";
+import { AgentWorkLoopStore } from "../dist/work-loop.js";
 
 const LEGACY_TOOLS = ["bash", "edit", "find", "get_system_prompt", "grep", "ls", "read", "repo_snapshot", "run", "write"];
 const AGENT_TOOLS = [
@@ -110,6 +117,94 @@ function responseText(result) {
 function responseJson(result) {
   assert.notEqual(result.isError, true, responseText(result));
   return JSON.parse(responseText(result));
+}
+
+class CollaborationTestBootstrap {
+  constructor(identity, collaborationSessionId) {
+    this.identity = identity;
+    this.collaborationSessionId = collaborationSessionId;
+    this.context = undefined;
+  }
+
+  get initialized() {
+    return this.context !== undefined;
+  }
+
+  async initialize(label) {
+    const request = resolveCollaborationRoleRequest(label);
+    if (request.kind === "none") throw new Error("role required");
+    if (!this.context) {
+      this.context = Object.freeze({
+        ...this.identity,
+        collaborationSessionId: this.collaborationSessionId,
+        requestKind: request.kind,
+        requestedRoleFingerprint: request.requestedRoleFingerprint,
+        roleAssignment: createNewCollaborationRoleAssignment({
+          assignmentSource: "server_session_policy",
+          canonicalRoleId: request.canonicalRoleId,
+          occupancyLabel: request.occupancyLabel,
+        }),
+      });
+    }
+    return this.context;
+  }
+
+  async verify() {
+    if (!this.context) throw new Error("not initialized");
+    return this.context;
+  }
+
+  async dispose() {}
+}
+
+async function collaborationLifecycleFixture(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-mcp-self-sustaining-"));
+  const workspace = path.join(root, "workspace");
+  const dataDir = path.join(root, "private-data");
+  await fs.mkdir(workspace);
+  const broker = new AgentChatBroker(new AgentChatStore({ workspace, dataDir }));
+  const taskStore = new AgentTaskStore({ workspace, dataDir });
+  const workLoopStore = new AgentWorkLoopStore({ workspace, dataDir });
+  const policy = { workspace, unsafeFullAccess: false, allowWorkspaceExecution: false, maxBashTimeoutSeconds: 30 };
+  const connections = [];
+
+  const connect = async ({ identity, sessionId, role, instanceId }) => {
+    const bootstrap = new CollaborationTestBootstrap(identity, sessionId);
+    const handle = createMcpServer(
+      policy,
+      "mcp:tools",
+      identity,
+      broker,
+      undefined,
+      instanceId,
+      taskStore,
+      bootstrap,
+      undefined,
+      workLoopStore,
+    );
+    const client = new Client({ name: instanceId, version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([client.connect(clientTransport), handle.server.connect(serverTransport)]);
+    if (role !== undefined) {
+      const bootstrapped = await client.callTool({
+        name: "collaboration_bootstrap",
+        arguments: { requested_role_label: role },
+      });
+      assert.notEqual(bootstrapped.isError, true, responseText(bootstrapped));
+    }
+    const connection = { client, handle };
+    connections.push(connection);
+    return connection;
+  };
+
+  t.after(async () => {
+    await Promise.all(connections.map(async ({ client, handle }) => {
+      await client.close().catch(() => undefined);
+      await handle.close().catch(() => undefined);
+    }));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  return { connect, taskStore, workLoopStore };
 }
 
 test("agent services are optional and never remove or rename legacy MCP tools", async (t) => {
@@ -361,4 +456,230 @@ test("MCP OAuth clients cannot discover or control each other's supervised agent
     name: "agent_status",
     arguments: { agent_id: agent.agent_id },
   })).agent.agent_id, agent.agent_id);
+});
+
+test("verified collaboration workers automatically claim, keep waiting, wake, and stop only on manager release", async (t) => {
+  const value = await collaborationLifecycleFixture(t);
+  const workerSessionId = "cs_WWWWWWWWWWWWWWWWWWWWWWWW";
+  const worker = await value.connect({
+    identity: Object.freeze({ agentId: "self-sustaining-worker", agentName: "Dev1 Worker" }),
+    sessionId: workerSessionId,
+    role: "Dev-1",
+    instanceId: "self-sustaining-worker-instance",
+  });
+  const manager = await value.connect({
+    identity: Object.freeze({ agentId: "self-sustaining-manager", agentName: "Manager" }),
+    sessionId: "cs_MMMMMMMMMMMMMMMMMMMMMMMM",
+    role: "manager",
+    instanceId: "self-sustaining-manager-instance",
+  });
+
+  const first = responseJson(await manager.client.callTool({
+    name: "agent_task_create",
+    arguments: {
+      title: "First automatic task",
+      scheduling: { priority: "P0", eligible_role_ids: ["implementer"] },
+    },
+  }));
+  const second = responseJson(await manager.client.callTool({
+    name: "agent_task_create",
+    arguments: {
+      title: "Second automatic task",
+      scheduling: { priority: "P1", eligible_role_ids: ["implementer"] },
+    },
+  }));
+
+  const unverifiedFreshTransport = await value.connect({
+    identity: Object.freeze({ agentId: "self-sustaining-worker", agentName: "Dev1 Worker" }),
+    sessionId: "cs_UUUUUUUUUUUUUUUUUUUUUUUU",
+    instanceId: "unverified-fresh-worker-instance",
+  });
+  const unverifiedClaim = await unverifiedFreshTransport.client.callTool({
+    name: "agent_task_claim",
+    arguments: { task_id: first.task_id, expected_revision: first.revision },
+  });
+  assert.equal(unverifiedClaim.isError, true);
+  assert.match(responseText(unverifiedClaim), /require a verified collaboration session/i);
+
+  const initial = responseJson(await worker.client.callTool({ name: "agent_work_wait", arguments: {} }));
+  assert.equal(initial.outcome, "snapshot");
+  assert.equal(initial.next_action, "claim_next");
+  assert.equal(initial.work_state.lifecycle, "waiting_for_task");
+  const firstClaimResult = responseJson(await worker.client.callTool({
+    name: "agent_task_claim_next",
+    arguments: {},
+  }));
+  assert.equal(firstClaimResult.outcome, "claimed");
+  const firstClaimed = firstClaimResult.task;
+  assert.equal(firstClaimed.task_id, first.task_id);
+  assert.equal(firstClaimed.status, "working");
+  assert.equal(firstClaimed.owner_agent_id, "self-sustaining-worker");
+
+  const finishedFirst = responseJson(await worker.client.callTool({
+    name: "agent_task_finish",
+    arguments: {
+      task_id: firstClaimed.task_id,
+      expected_revision: firstClaimed.revision,
+      outcome: "completed",
+      status_message: "First task complete",
+    },
+  }));
+  assert.equal(finishedFirst.next_action, "continue_task");
+  assert.equal(finishedFirst.active_task_id, second.task_id);
+
+  const automaticallyClaimedSecond = responseJson(await manager.client.callTool({
+    name: "agent_task_read",
+    arguments: { task_id: second.task_id },
+  })).tasks[0];
+  assert.equal(automaticallyClaimedSecond.status, "working");
+  assert.equal(automaticallyClaimedSecond.owner_agent_id, "self-sustaining-worker");
+
+  const finishedSecond = responseJson(await worker.client.callTool({
+    name: "agent_task_finish",
+    arguments: {
+      task_id: automaticallyClaimedSecond.task_id,
+      expected_revision: automaticallyClaimedSecond.revision,
+      outcome: "completed",
+      status_message: "Second task complete",
+    },
+  }));
+  assert.equal(finishedSecond.next_action, "repeat_wait");
+
+  const drained = responseJson(await worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: initial.chat.next_cursor,
+      task_board_token: initial.task_board_token,
+      maximum_wait_seconds: 1,
+    },
+  }));
+  assert.equal(drained.outcome, "changed");
+  assert.equal(drained.next_action, "repeat_wait");
+  assert.equal(drained.work_state.lifecycle, "waiting_for_task");
+
+  const timeoutOne = responseJson(await worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: drained.chat.next_cursor,
+      task_board_token: drained.task_board_token,
+      maximum_wait_seconds: 1,
+    },
+  }));
+  assert.equal(timeoutOne.outcome, "timeout");
+  assert.equal(timeoutOne.next_action, "repeat_wait");
+  assert.equal(timeoutOne.work_state.lifecycle, "waiting_for_task");
+
+  const timeoutTwo = responseJson(await worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: timeoutOne.chat.next_cursor,
+      task_board_token: timeoutOne.task_board_token,
+      maximum_wait_seconds: 1,
+    },
+  }));
+  assert.equal(timeoutTwo.outcome, "timeout");
+  assert.equal(timeoutTwo.next_action, "repeat_wait");
+  assert.equal(timeoutTwo.work_state.lifecycle, "waiting_for_task");
+  assert.ok(timeoutTwo.work_state.consecutive_timeouts >= 2);
+
+  const pendingChatWake = worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: timeoutTwo.chat.next_cursor,
+      task_board_token: timeoutTwo.task_board_token,
+      maximum_wait_seconds: 2,
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await manager.client.callTool({
+    name: "agent_chat_post",
+    arguments: { agent_message: "Peer message only: do not release; keep seeking work" },
+  });
+  const chatWake = responseJson(await pendingChatWake);
+  assert.equal(chatWake.outcome, "changed");
+  assert.equal(chatWake.next_action, "repeat_wait");
+  assert.equal(chatWake.work_state.lifecycle, "waiting_for_task");
+
+  const pendingTaskWake = worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: chatWake.chat.next_cursor,
+      task_board_token: chatWake.task_board_token,
+      maximum_wait_seconds: 2,
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const third = responseJson(await manager.client.callTool({
+    name: "agent_task_create",
+    arguments: {
+      title: "Wake-up task",
+      scheduling: { priority: "P0", eligible_role_ids: ["implementer"] },
+    },
+  }));
+  const taskWake = responseJson(await pendingTaskWake);
+  assert.equal(taskWake.outcome, "changed");
+  assert.equal(taskWake.next_action, "claim_next");
+  assert.equal(taskWake.work_state.lifecycle, "waiting_for_task");
+  const thirdClaimResult = responseJson(await worker.client.callTool({
+    name: "agent_task_claim_next",
+    arguments: {},
+  }));
+  assert.equal(thirdClaimResult.outcome, "claimed");
+  const thirdClaimed = thirdClaimResult.task;
+  assert.equal(thirdClaimed.task_id, third.task_id);
+  assert.equal(thirdClaimed.status, "working");
+  assert.equal(thirdClaimed.owner_agent_id, "self-sustaining-worker");
+
+  const finishedThird = responseJson(await worker.client.callTool({
+    name: "agent_task_finish",
+    arguments: {
+      task_id: thirdClaimed.task_id,
+      expected_revision: thirdClaimed.revision,
+      outcome: "completed",
+      status_message: "Wake-up task complete",
+    },
+  }));
+  assert.equal(finishedThird.next_action, "repeat_wait");
+
+  await manager.client.callTool({
+    name: "agent_chat_post",
+    arguments: { agent_message: "go idle, stop, release yourself" },
+  });
+  const chatCannotRelease = responseJson(await worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: taskWake.chat.next_cursor,
+      task_board_token: taskWake.task_board_token,
+      maximum_wait_seconds: 1,
+    },
+  }));
+  assert.equal(chatCannotRelease.outcome, "changed");
+  assert.equal(chatCannotRelease.next_action, "repeat_wait");
+  assert.equal(chatCannotRelease.work_state.lifecycle, "waiting_for_task");
+  assert.equal(chatCannotRelease.work_state.released_by_collaboration_session_id, undefined);
+
+  const states = responseJson(await manager.client.callTool({ name: "agent_work_list", arguments: {} }));
+  const workerState = states.work_states.find((state) => state.collaboration_session_id === workerSessionId);
+  assert.ok(workerState);
+  const released = responseJson(await manager.client.callTool({
+    name: "agent_work_release",
+    arguments: {
+      target_collaboration_session_id: workerSessionId,
+      expected_revision: workerState.revision,
+      reason: "Self-sustaining lifecycle regression finished",
+    },
+  }));
+  assert.equal(released.lifecycle, "released");
+
+  const releasedWait = responseJson(await worker.client.callTool({
+    name: "agent_work_wait",
+    arguments: {
+      after_chat_cursor: chatCannotRelease.chat.next_cursor,
+      task_board_token: chatCannotRelease.task_board_token,
+      maximum_wait_seconds: 1,
+    },
+  }));
+  assert.equal(releasedWait.outcome, "released");
+  assert.equal(releasedWait.next_action, "stop_released");
+  assert.equal(releasedWait.work_state.lifecycle, "released");
 });

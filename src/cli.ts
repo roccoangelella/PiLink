@@ -2,6 +2,83 @@
 
 let command = process.argv[2] ?? "start";
 
+if (command === "agents") {
+  const rest = process.argv.slice(3);
+  if (rest.some((argument) => argument === "--help" || argument === "-h") || (rest.length === 1 && rest[0] === "help")) {
+    const { printAgentsUsage } = await import("./terminal-launcher-agents.js");
+    printAgentsUsage();
+    process.exit(0);
+  }
+  const { resolveAgentsCliArgs } = await import("./terminal-launcher-agents.js");
+  try {
+    const resolved = resolveAgentsCliArgs(rest);
+    process.argv.splice(2, process.argv.length - 2, ...resolved.args);
+    command = process.argv[2];
+    process.env.PI_UNSAFE_FULL_ACCESS = "true";
+    process.env.PI_RUNTIME_MODE = "collaboration";
+    process.env.PI_WORK_DIR = process.env.PI_WORK_DIR || process.cwd();
+    if (!process.env.PILINK_CONFIG) {
+      const fs = await import("node:fs");
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+      const candidates = [
+        path.join(configHome, "pilink-agents", ".env"),
+        path.join(configHome, "pilink-multi-agent", ".env"),
+        path.join(configHome, "pilink-multi-agents", ".env"),
+        path.join(configHome, "pilink-2", ".env"),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          process.env.PILINK_CONFIG = candidate;
+          break;
+        }
+      }
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+if (command === "single-agents" || command === "single-agent") {
+  const rest = process.argv.slice(3);
+  if (rest.some((argument) => argument === "--help" || argument === "-h") || (rest.length === 1 && rest[0] === "help")) {
+    const { printSingleAgentsUsage } = await import("./terminal-launcher-single-agents.js");
+    printSingleAgentsUsage();
+    process.exit(0);
+  }
+  const { resolveSingleAgentsCliArgs } = await import("./terminal-launcher-single-agents.js");
+  try {
+    const resolved = resolveSingleAgentsCliArgs(rest);
+    process.argv.splice(2, process.argv.length - 2, ...resolved.args);
+    command = process.argv[2];
+    process.env.PI_UNSAFE_FULL_ACCESS = "true";
+    process.env.PI_RUNTIME_MODE = "single";
+    process.env.PI_WORK_DIR = process.env.PI_WORK_DIR || process.cwd();
+    if (!process.env.PILINK_CONFIG) {
+      const fs = await import("node:fs");
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+      const candidates = [
+        path.join(configHome, "pilink-single-agent", ".env"),
+        path.join(configHome, "pilink-single-agents", ".env"),
+        path.join(configHome, "pilink-3", ".env"),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          process.env.PILINK_CONFIG = candidate;
+          break;
+        }
+      }
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
 // Keep the CLI endpoint available through the ordinary start/serve
 // surface while retaining the more explicit `pilink gateway ...` commands.
 if (

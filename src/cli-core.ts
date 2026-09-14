@@ -23,6 +23,7 @@ import {
 import { DIRECT_HTTP_PORT, DIRECT_HTTPS_PORT, DirectNetworkError, discoverPublicIpv4, isPublicIpv4, openAutomaticPortMappings, type ManagedPortMappings } from "./network.js";
 import { assertRequiredNodeVersion } from "./runtime.js";
 import { runHostingCli } from "./hosting/cli.js";
+import { ensureCliLink } from "./ensure-cli-link.js";
 import { resolveCloudflaredRelease } from "./hosting/cloudflared-release.js";
 import { fixedDomainCloudflaredArgs, normalizeFixedDomainHostname, normalizeFixedDomainTunnelId, provisionFixedDomainTunnel, resolveFixedDomainTokenFile } from "./hosting/fixed-domain.js";
 import { runAgentAuthCli } from "./agents/auth-cli.js";
@@ -153,6 +154,8 @@ function printUsage(): void {
   console.error("  pilink start --mode single                Single agent: project-scoped MCP tools");
   console.error("  pilink start --mode collaboration         Agents chat: shared coordination and supervised agents");
   console.error("  pilink start --mode cli                   ChatGPT model gateway: local OpenAI-compatible provider");
+  console.error("  pilink agents                             Agents chat in full unsafe mode (shortcut for --mode collaboration --allow-unsafe-full-access)");
+  console.error("  pilink single-agents                      Single agent in full unsafe mode (shortcut for --mode single --allow-unsafe-full-access)");
   console.error("");
   console.error("Start only the configured local server (no managed public-hosting wizard):");
   console.error("  pilink serve --mode <single|collaboration|cli>");
@@ -461,6 +464,11 @@ function initialize(portOverride?: number): void {
   fs.chmodSync(configPath, 0o600);
   console.error(`Created private configuration: ${configPath}`);
   console.error("Use 'pilink start --allow-unsafe-full-access' only if you accept remote shell access to this machine.");
+  try {
+    ensureCliLink();
+  } catch {
+    // Non-fatal if command launcher link cannot be created during setup
+  }
 }
 
 async function reset(args: string[]): Promise<void> {
@@ -2079,12 +2087,14 @@ function startServer(unsafe: boolean, serverUrl?: string, edge?: ChildProcess): 
   };
 
   const server = spawn(process.execPath, [indexPath], {
+    cwd: config.workspace,
     env: {
       ...process.env,
       PILINK_CONFIG: configPath,
       HOST: "127.0.0.1",
       PI_DATA_DIR: config.dataDir,
       PI_COORDINATION_DATA_DIR: config.coordinationDataDir,
+      PI_WORK_DIR: config.workspace,
       ...(serverUrl ? { SERVER_URL: serverUrl } : {}),
       ...(unsafe ? {
         PI_UNSAFE_FULL_ACCESS: "true",

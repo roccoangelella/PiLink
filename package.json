@@ -4,7 +4,10 @@
   "description": "OAuth-protected MCP bridge with single-agent, public-chat orchestration, optional VS Code, and CLI model endpoint workflows",
   "main": "dist/index.js",
   "bin": {
-    "pilink": "dist/terminal-launcher.js"
+    "pilink": "dist/terminal-launcher.js",
+    "pilink-agents": "dist/terminal-launcher-agents.js",
+    "pilink-single-agents": "dist/terminal-launcher-single-agents.js",
+    "pilink-single-agent": "dist/terminal-launcher-single-agents.js"
   },
   "type": "module",
   "files": [
@@ -54,9 +57,12 @@
     }
   },
   "scripts": {
+    "setup": "npm run build",
     "build": "npm run build:core && node dist/ensure-cli-link.js",
     "build:core": "tsc",
     "cli": "node dist/terminal-launcher.js",
+    "cli:agents": "node dist/terminal-launcher-agents.js",
+    "cli:single-agents": "node dist/terminal-launcher-single-agents.js",
     "start": "node dist/index.js",
     "dev": "tsc --watch --preserveWatchOutput",
     "dev:server": "tsx watch src/index.ts",

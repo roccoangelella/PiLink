@@ -69,7 +69,7 @@ test("HTTP MCP wiring exposes verified roles, scope-pinned sessions, shared chat
   });
   assert.equal(legacyStream.status, 200);
   await waitFor(() => launchEvents.includes("mcp-connected\n"));
-  assert.equal(launchEvents, "mcp-connected\n");
+  assert.equal(launchEvents, "ready\nmcp-connected\n");
   legacyController.abort();
   await legacyStream.body?.cancel().catch(() => undefined);
 
@@ -79,7 +79,7 @@ test("HTTP MCP wiring exposes verified roles, scope-pinned sessions, shared chat
   const senderClient = new Client({ name: "http-sender", version: "1.0.0" });
   clients.push(senderClient);
   await senderClient.connect(senderTransport);
-  assert.equal(launchEvents, "mcp-connected\n");
+  assert.equal(launchEvents, "ready\nmcp-connected\n");
   const tools = (await senderClient.listTools()).tools;
   assert.ok(tools.some((tool) => tool.name === "collaboration_bootstrap"));
   const bootstrap = parseText(await senderClient.callTool({

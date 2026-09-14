@@ -12,13 +12,19 @@ import {
 } from "./configuration.js";
 import { DashboardProvider } from "./dashboard.js";
 import { effectiveProcessState } from "./dashboard-model.js";
+import { updateCollaborationDashboardState, type CollaborationDashboardState } from "./collaboration-model.js";
 import {
+  cancelAdminTask,
+  createAdminTask,
   createOwnerPairing,
   isLoopbackPortOccupied,
+  provideAdminTaskInput,
   readAdminStatus,
+  readAdminTaskBoard,
   readHealth,
   waitForHealth,
   waitForPublicHealth,
+  type CollaborationTaskPriority,
 } from "./health.js";
 import { normalizeHostingSelection, type HostingSelection } from "./hosting-model.js";
 import { resolveSidecarNodeRuntime, type SidecarNodeRuntime } from "./node-runtime.js";
@@ -51,6 +57,7 @@ class ExtensionController {
   private sidecarNodeCache?: { key: string; runtime: SidecarNodeRuntime };
   private selectedWorkspacePath?: string;
   private operationLabel = "";
+  private collaborationState?: CollaborationDashboardState;
   private disposing = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -152,7 +159,19 @@ class ExtensionController {
   }
 
   private async handleWebviewCommand(message: WebviewCommandMessage): Promise<void> {
-    const commandMap: Record<WebviewCommand, string> = {
+    if (message.command === "createTask") {
+      await this.runOperation("Creating collaboration task", () => this.createCollaborationTask());
+      return;
+    }
+    if (message.command === "provideTaskInput" && message.taskId && message.revision) {
+      await this.runOperation("Providing task input", () => this.provideCollaborationTaskInput(message.taskId!, message.revision!));
+      return;
+    }
+    if (message.command === "cancelTask" && message.taskId && message.revision) {
+      await this.runOperation("Cancelling collaboration task", () => this.cancelCollaborationTask(message.taskId!, message.revision!));
+      return;
+    }
+    const commandMap: Partial<Record<WebviewCommand, string>> = {
       refresh: "vspilink.refresh",
       manageTrust: "vspilink.manageTrust",
       chooseWorkspace: "vspilink.chooseWorkspace",
@@ -172,7 +191,9 @@ class ExtensionController {
       openDocs: "vspilink.openDocs",
       switchToSingle: "vspilink.switchToSingle",
     };
-    await vscode.commands.executeCommand(commandMap[message.command]);
+    const command = commandMap[message.command];
+    if (!command) throw new Error("Unsupported PiLink dashboard command.");
+    await vscode.commands.executeCommand(command);
   }
 
   private async dashboardState(): Promise<DashboardState> {
@@ -206,6 +227,14 @@ class ExtensionController {
     );
     const sidecarNode = this.sidecarNodeRuntime();
     const runtimeMode = runtimeModeFromConfig(snapshot.values.PI_RUNTIME_MODE) || DEFAULT_RUNTIME_MODE;
+    if (runtimeMode === "collaboration") {
+      const boardResult = snapshot.bootstrapSecret
+        ? await readAdminTaskBoard(snapshot.port, snapshot.bootstrapSecret)
+        : { online: false, board: null, error: "Private local administrator access is not configured" };
+      this.collaborationState = updateCollaborationDashboardState(this.collaborationState, boardResult);
+    } else {
+      this.collaborationState = undefined;
+    }
 
     return {
       configured: snapshot.configured,
@@ -226,10 +255,81 @@ class ExtensionController {
         connected: chatGptConnected,
         activeSessions: admin.activeSessions,
       },
+      ...(this.collaborationState ? { collaboration: this.collaborationState } : {}),
       version: String(this.context.extension.packageJSON.version || "2.2.0"),
       nodeVersion: sidecarNode.version || "not detected",
       ...(!sidecarNode.ok && !admin.online ? { error: sidecarNode.error } : {}),
     };
+  }
+
+  private async createCollaborationTask(): Promise<void> {
+    const snapshot = this.requireCollaborationAdminSnapshot();
+    const title = await vscode.window.showInputBox({
+      title: "Create collaboration task",
+      prompt: "Short task title",
+      ignoreFocusOut: true,
+      validateInput: (value) => value.trim().length > 0 && Buffer.byteLength(value.trim(), "utf8") <= 256
+        ? undefined
+        : "Enter a title up to 256 bytes.",
+    });
+    if (!title) return;
+    const details = await vscode.window.showInputBox({
+      title: "Create collaboration task",
+      prompt: "Optional acceptance criteria or scope",
+      ignoreFocusOut: true,
+    });
+    const selected = await vscode.window.showQuickPick<CollaborationTaskPriority>(["P0", "P1", "P2", "P3"], {
+      title: "Task priority",
+      placeHolder: "P2",
+      ignoreFocusOut: true,
+    });
+    if (!selected) return;
+    await createAdminTask(snapshot.port, snapshot.bootstrapSecret, {
+      title: title.trim(),
+      ...(details?.trim() ? { details: details.trim() } : {}),
+      priority: selected,
+    });
+  }
+
+  private async provideCollaborationTaskInput(taskId: string, revision: number): Promise<void> {
+    const snapshot = this.requireCollaborationAdminSnapshot();
+    const statusMessage = await vscode.window.showInputBox({
+      title: "Provide task input",
+      prompt: `Input for ${taskId}`,
+      ignoreFocusOut: true,
+      validateInput: (value) => value.trim().length > 0 ? undefined : "Input cannot be empty.",
+    });
+    if (!statusMessage) return;
+    await provideAdminTaskInput(snapshot.port, snapshot.bootstrapSecret, {
+      taskId,
+      expectedRevision: revision,
+      statusMessage: statusMessage.trim(),
+    });
+  }
+
+  private async cancelCollaborationTask(taskId: string, revision: number): Promise<void> {
+    const snapshot = this.requireCollaborationAdminSnapshot();
+    const approval = await vscode.window.showWarningMessage(
+      `Cancel collaboration task ${taskId}?`,
+      { modal: true, detail: "Cancellation is allowed only when the local VS Code operator is the task creator." },
+      "Cancel task",
+    );
+    if (approval !== "Cancel task") return;
+    await cancelAdminTask(snapshot.port, snapshot.bootstrapSecret, {
+      taskId,
+      expectedRevision: revision,
+      statusMessage: "Cancelled by the local VS Code operator",
+    });
+  }
+
+  private requireCollaborationAdminSnapshot(): ConfigSnapshot & { bootstrapSecret: string } {
+    this.requireTrustedWorkspace();
+    const snapshot = this.snapshot();
+    if (runtimeModeFromConfig(snapshot.values.PI_RUNTIME_MODE) !== "collaboration") {
+      throw new Error("The collaboration task board is available only in collaboration mode.");
+    }
+    if (!snapshot.bootstrapSecret) throw new Error("Private local administrator access is not configured.");
+    return snapshot as ConfigSnapshot & { bootstrapSecret: string };
   }
 
   private publicUrl(snapshot: ConfigSnapshot): string {

@@ -58,6 +58,8 @@ export interface AgentWorkListOptions {
 export interface AgentWorkOutcomeInput {
   collaborationSessionId: string;
   changed: boolean;
+  /** Whether this snapshot leaves the worker with actionable task work. Defaults to changed for compatibility. */
+  active?: boolean;
   chatCursor: number;
   taskBoardToken: string;
 }
@@ -218,6 +220,8 @@ export class AgentWorkLoopStore {
   public async recordOutcome(input: AgentWorkOutcomeInput): Promise<AgentWorkState> {
     const collaborationSessionId = validateSessionId(input.collaborationSessionId, "collaborationSessionId");
     if (typeof input.changed !== "boolean") throw new Error("changed must be a boolean");
+    if (input.active !== undefined && typeof input.active !== "boolean") throw new Error("active must be a boolean");
+    const active = input.active ?? input.changed;
     const chatCursor = validateCursor(input.chatCursor);
     const taskBoardToken = validateTaskBoardToken(input.taskBoardToken);
 
@@ -227,7 +231,7 @@ export class AgentWorkLoopStore {
       if (participant.lifecycle === "released") return copyState(participant);
       const updated: AgentWorkState = {
         ...participant,
-        lifecycle: input.changed ? "working" : "waiting_for_task",
+        lifecycle: active ? "working" : "waiting_for_task",
         consecutiveTimeouts: input.changed ? 0 : Math.min(20, participant.consecutiveTimeouts + 1),
         lastChatCursor: chatCursor,
         taskBoardToken,

@@ -161,6 +161,85 @@ button:focus-visible, summary:focus-visible { outline: 1px solid var(--vscode-fo
 .notice__title { display: block; margin-bottom: 2px; }
 
 .section-card { padding: 13px; display: grid; gap: 10px; }
+
+.board-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; align-items: center; }
+.board-health {
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+.board-health--stale { border-color: var(--vscode-editorWarning-foreground, var(--vscode-panel-border)); }
+.board-health--error { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); }
+
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(230px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 1px 8px;
+  scroll-snap-type: x proximity;
+}
+.kanban:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.kanban-column {
+  min-width: 0;
+  min-height: 130px;
+  padding: 9px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 8px;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  scroll-snap-align: start;
+}
+.kanban-column__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+.kanban-column__title { margin: 0; font-size: 12px; font-weight: 650; }
+.kanban-column__body { display: grid; gap: 7px; }
+.kanban-empty { margin: 8px 2px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+
+.task-card {
+  overflow: hidden;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 7px;
+  background: var(--vscode-editor-background);
+}
+.task-card--selected { border-color: var(--vscode-focusBorder, var(--vscode-panel-border)); }
+.task-card__summary {
+  width: 100%;
+  padding: 9px;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+.task-card__summary:hover { background: var(--vscode-list-hoverBackground); }
+.task-card__summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
+.task-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.task-card__title { min-width: 0; font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
+.task-card__compact { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--vscode-descriptionForeground); font-size: 10px; }
+.task-card__details { padding: 0 9px 9px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.task-card__description { margin: 9px 0; color: var(--vscode-descriptionForeground); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-detail-grid { margin: 0 0 9px; display: grid; }
+.task-detail-grid__row { display: grid; grid-template-columns: minmax(70px, .7fr) minmax(0, 1.5fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.task-detail-grid__row:first-child { border-top: 0; }
+.task-detail-grid__label { color: var(--vscode-descriptionForeground); font-size: 10px; }
+.task-detail-grid__value { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+
+.participant-roster {
+  display: grid;
+  gap: 7px;
+  padding-top: 9px;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+.participant-roster__header, .participant-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.participant-roster__title { margin: 0; font-size: 12px; font-weight: 650; }
+.participant-roster__hint, .participant-row__meta { color: var(--vscode-descriptionForeground); font-size: 10px; }
+.participant-list { display: grid; }
+.participant-row { min-width: 0; padding: 6px 0; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.participant-row:first-child { border-top: 0; }
+.participant-row__identity { min-width: 0; display: grid; gap: 2px; }
+.participant-row__identity strong, .participant-row__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .activity-list { display: grid; }
 .activity-row {
   min-width: 0;

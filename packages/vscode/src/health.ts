@@ -29,6 +29,69 @@ export interface AdminToolActivity {
   outcome: "success" | "error";
 }
 
+export type CollaborationTaskStatus = "open" | "working" | "input_required" | "completed" | "failed" | "cancelled";
+export type CollaborationTaskPriority = "P0" | "P1" | "P2" | "P3";
+
+export interface CollaborationTaskDependency {
+  taskId: string;
+  condition: "completed" | "terminal";
+}
+
+export interface CollaborationTaskView {
+  taskId: string;
+  title: string;
+  details?: string;
+  status: CollaborationTaskStatus;
+  statusMessage?: string;
+  artifact?: string;
+  priority: CollaborationTaskPriority;
+  dependencies: CollaborationTaskDependency[];
+  eligibleRoleIds: string[];
+  requiredCapabilities: string[];
+  risk: "low" | "medium" | "high";
+  notBefore?: string;
+  createdBy: string;
+  createdBySessionId?: string;
+  owner?: string;
+  ownerSessionId?: string;
+  ownerRoleId?: string;
+  ownerRoleLabel?: string;
+  leaseExpiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  actions: {
+    provideInput: boolean;
+    cancel: boolean;
+    release: boolean;
+  };
+}
+
+export interface CollaborationParticipantView {
+  collaborationSessionId: string;
+  agentName: string;
+  canonicalRoleId: string;
+  occupancyLabel: string;
+  lifecycle: "working" | "waiting_for_task" | "offline" | "released";
+  updatedAt: string;
+  revision: number;
+}
+
+export interface CollaborationBoardView {
+  status: "ready" | "degraded";
+  projectKey?: string;
+  tasks: CollaborationTaskView[];
+  participants: CollaborationParticipantView[];
+  timestamp: string;
+  error?: string;
+}
+
+export interface CollaborationBoardResult {
+  online: boolean;
+  board: CollaborationBoardView | null;
+  error?: string;
+}
+
 const HEALTH_AUTH_SCHEME = "pilink-health-hmac-v1";
 const HEALTH_PROOF_DOMAIN = "pilink-health-v1\0";
 const MAX_HEALTH_RESPONSE_BYTES = 256 * 1024;
@@ -229,6 +292,92 @@ export async function createOwnerPairing(
   };
 }
 
+export async function readAdminTaskBoard(
+  port: number,
+  bootstrapSecret: string,
+  timeoutMs = 2_000,
+): Promise<CollaborationBoardResult> {
+  try {
+    await requireLocalPiLinkIdentity(port, bootstrapSecret, timeoutMs);
+    const payload = await loopbackJson(
+      port,
+      "/admin/collaboration/board?task_limit=200",
+      "GET",
+      bootstrapSecret,
+      timeoutMs,
+    );
+    const board = parseCollaborationBoard(payload);
+    return { online: true, board, ...(board.error ? { error: board.error } : {}) };
+  } catch (error) {
+    return {
+      online: false,
+      board: null,
+      error: error instanceof Error ? error.message : "Collaboration task board is unavailable",
+    };
+  }
+}
+
+export async function createAdminTask(
+  port: number,
+  bootstrapSecret: string,
+  input: { title: string; details?: string; priority: CollaborationTaskPriority },
+  timeoutMs = 2_000,
+): Promise<CollaborationTaskView> {
+  await requireLocalPiLinkIdentity(port, bootstrapSecret, timeoutMs);
+  const payload = await loopbackJson(
+    port,
+    "/admin/collaboration/tasks",
+    "POST",
+    bootstrapSecret,
+    timeoutMs,
+    {
+      title: input.title,
+      ...(input.details ? { details: input.details } : {}),
+      priority: input.priority,
+    },
+  );
+  return parseCollaborationTask(record(payload.task));
+}
+
+export async function provideAdminTaskInput(
+  port: number,
+  bootstrapSecret: string,
+  input: { taskId: string; expectedRevision: number; statusMessage: string },
+  timeoutMs = 2_000,
+): Promise<CollaborationTaskView> {
+  await requireLocalPiLinkIdentity(port, bootstrapSecret, timeoutMs);
+  const payload = await loopbackJson(
+    port,
+    `/admin/collaboration/tasks/${encodeURIComponent(input.taskId)}/input`,
+    "POST",
+    bootstrapSecret,
+    timeoutMs,
+    { expected_revision: input.expectedRevision, status_message: input.statusMessage },
+  );
+  return parseCollaborationTask(record(payload.task));
+}
+
+export async function cancelAdminTask(
+  port: number,
+  bootstrapSecret: string,
+  input: { taskId: string; expectedRevision: number; statusMessage?: string },
+  timeoutMs = 2_000,
+): Promise<CollaborationTaskView> {
+  await requireLocalPiLinkIdentity(port, bootstrapSecret, timeoutMs);
+  const payload = await loopbackJson(
+    port,
+    `/admin/collaboration/tasks/${encodeURIComponent(input.taskId)}/cancel`,
+    "POST",
+    bootstrapSecret,
+    timeoutMs,
+    {
+      expected_revision: input.expectedRevision,
+      ...(input.statusMessage ? { status_message: input.statusMessage } : {}),
+    },
+  );
+  return parseCollaborationTask(record(payload.task));
+}
+
 /**
  * Return only the small activity projection used by the launcher. The server
  * endpoint also contains collaboration data in collaboration mode, but the VS
@@ -273,8 +422,10 @@ async function loopbackJson(
   method: "GET" | "POST",
   bootstrapSecret: string,
   timeoutMs: number,
+  body?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    const encodedBody = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf8");
     const request = http.request({
       host: "127.0.0.1",
       port,
@@ -283,6 +434,10 @@ async function loopbackJson(
       headers: {
         authorization: `Bearer ${bootstrapSecret}`,
         accept: "application/json",
+        ...(encodedBody ? {
+          "content-type": "application/json",
+          "content-length": String(encodedBody.length),
+        } : {}),
       },
       timeout: timeoutMs,
     }, (response) => {
@@ -309,8 +464,144 @@ async function loopbackJson(
     });
     request.once("timeout", () => request.destroy(new Error("Administrative endpoint timeout")));
     request.once("error", reject);
-    request.end();
+    request.end(encodedBody);
   });
+}
+
+function parseCollaborationBoard(value: Record<string, unknown>): CollaborationBoardView {
+  const status = value.status === "ready" ? "ready" : "degraded";
+  const projectKey = typeof value.project_key === "string" && /^[a-f0-9]{64}$/u.test(value.project_key)
+    ? value.project_key
+    : undefined;
+  const timestamp = isoDate(value.timestamp) || new Date().toISOString();
+  const tasks = Array.isArray(value.tasks)
+    ? value.tasks.slice(0, 200).flatMap((candidate) => {
+        try {
+          return [parseCollaborationTask(record(candidate))];
+        } catch {
+          return [];
+        }
+      })
+    : [];
+  const participants = Array.isArray(value.participants)
+    ? value.participants.slice(0, 100).flatMap((candidate) => {
+        const participant = record(candidate);
+        const collaborationSessionId = safeIdentifier(participant.collaboration_session_id, "");
+        const agentName = safeDisplayText(participant.agent_name, 100);
+        const canonicalRoleId = safeIdentifier(participant.canonical_role_id, "");
+        const occupancyLabel = safeIdentifier(participant.occupancy_label, "");
+        const lifecycle = participant.lifecycle;
+        const updatedAt = isoDate(participant.updated_at);
+        const revision = integerValue(participant.revision);
+        if (!collaborationSessionId || !agentName || !canonicalRoleId || !occupancyLabel ||
+            !["working", "waiting_for_task", "offline", "released"].includes(String(lifecycle)) ||
+            !updatedAt || revision === undefined || revision < 1) return [];
+        return [{
+          collaborationSessionId,
+          agentName,
+          canonicalRoleId,
+          occupancyLabel,
+          lifecycle: lifecycle as CollaborationParticipantView["lifecycle"],
+          updatedAt,
+          revision,
+        }];
+      })
+    : [];
+  const error = status === "degraded" ? safeDisplayText(value.reason ?? value.error, 240) || "Collaboration data is degraded" : undefined;
+  return {
+    status,
+    ...(projectKey ? { projectKey } : {}),
+    tasks,
+    participants,
+    timestamp,
+    ...(error ? { error } : {}),
+  };
+}
+
+function parseCollaborationTask(value: Record<string, unknown>): CollaborationTaskView {
+  const taskId = safeIdentifier(value.task_id, "");
+  const title = safeDisplayText(value.title, 256);
+  const status = value.status;
+  const priority = value.priority;
+  const risk = value.risk;
+  const createdBy = safeDisplayText(value.created_by, 100);
+  const createdAt = isoDate(value.created_at);
+  const updatedAt = isoDate(value.updated_at);
+  const revision = integerValue(value.revision);
+  if (!taskId || !title || !["open", "working", "input_required", "completed", "failed", "cancelled"].includes(String(status)) ||
+      !["P0", "P1", "P2", "P3"].includes(String(priority)) ||
+      !["low", "medium", "high"].includes(String(risk)) || !createdBy || !createdAt || !updatedAt || revision === undefined || revision < 1) {
+    throw new Error("Invalid collaboration task response");
+  }
+  const dependencies = Array.isArray(value.dependencies)
+    ? value.dependencies.slice(0, 50).flatMap((candidate) => {
+        const dependency = record(candidate);
+        const dependencyTaskId = safeIdentifier(dependency.task_id, "");
+        const condition = dependency.condition;
+        return dependencyTaskId && (condition === "completed" || condition === "terminal")
+          ? [{ taskId: dependencyTaskId, condition }]
+          : [];
+      })
+    : [];
+  const actions = record(value.actions);
+  return {
+    taskId,
+    title,
+    ...(safeDisplayText(value.details, 8 * 1024) ? { details: safeDisplayText(value.details, 8 * 1024) } : {}),
+    status: status as CollaborationTaskStatus,
+    ...(safeDisplayText(value.status_message, 8 * 1024) ? { statusMessage: safeDisplayText(value.status_message, 8 * 1024) } : {}),
+    ...(safeDisplayText(value.artifact, 16 * 1024) ? { artifact: safeDisplayText(value.artifact, 16 * 1024) } : {}),
+    priority: priority as CollaborationTaskPriority,
+    dependencies,
+    eligibleRoleIds: parseIdentifierList(value.eligible_role_ids, 20),
+    requiredCapabilities: parseIdentifierList(value.required_capabilities, 20),
+    risk: risk as CollaborationTaskView["risk"],
+    ...(isoDate(value.not_before) ? { notBefore: isoDate(value.not_before) } : {}),
+    createdBy,
+    ...(safeIdentifier(value.created_by_session_id, "") ? { createdBySessionId: safeIdentifier(value.created_by_session_id, "") } : {}),
+    ...(safeDisplayText(value.owner, 100) ? { owner: safeDisplayText(value.owner, 100) } : {}),
+    ...(safeIdentifier(value.owner_session_id, "") ? { ownerSessionId: safeIdentifier(value.owner_session_id, "") } : {}),
+    ...(safeIdentifier(value.owner_role_id, "") ? { ownerRoleId: safeIdentifier(value.owner_role_id, "") } : {}),
+    ...(safeIdentifier(value.owner_role_label, "") ? { ownerRoleLabel: safeIdentifier(value.owner_role_label, "") } : {}),
+    ...(isoDate(value.lease_expires_at) ? { leaseExpiresAt: isoDate(value.lease_expires_at) } : {}),
+    createdAt,
+    updatedAt,
+    revision,
+    actions: {
+      provideInput: actions.provide_input === true,
+      cancel: actions.cancel === true,
+      release: actions.release === true,
+    },
+  };
+}
+
+function parseIdentifierList(value: unknown, maximum: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, maximum).flatMap((candidate) => {
+    const selected = safeIdentifier(candidate, "");
+    return selected ? [selected] : [];
+  });
+}
+
+function safeDisplayText(value: unknown, maximumBytes: number): string {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return "";
+  const normalized = String(value)
+    .normalize("NFKC")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/gu, " ")
+    .trim();
+  if (!normalized) return "";
+  let end = normalized.length;
+  while (end > 0 && Buffer.byteLength(normalized.slice(0, end), "utf8") > maximumBytes) end -= 1;
+  return normalized.slice(0, end).trim();
+}
+
+function isoDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
+}
+
+function integerValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function parseToolActivity(value: unknown): AdminToolActivity[] {

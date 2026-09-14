@@ -142,7 +142,7 @@ Full access is intentionally unsafe and is not part of the VS Code workflow.
 From the CLI it must be enabled explicitly:
 
 ```bash
-pilink start --allow-unsafe-full-access
+pilink start --allow-unsafe-full-access  # or pilink-agents / pilink-single-agent
 ```
 
 Prefer assigning it to one reviewed OAuth client rather than every client:

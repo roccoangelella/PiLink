@@ -4,10 +4,14 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import {
+  cancelAdminTask,
+  createAdminTask,
   createOwnerPairing,
   isLoopbackPortOccupied,
+  provideAdminTaskInput,
   readAdminActivity,
   readAdminStatus,
+  readAdminTaskBoard,
   readAuthenticatedHealth,
   readHealth,
   waitForHealth,
@@ -206,6 +210,104 @@ test("readAdminActivity discards collaboration content and returns only bounded 
     durationMs: 42,
     outcome: "success",
   }]);
+});
+
+test("task board client parses bounded coordination metadata and sends authenticated mutations", async (t) => {
+  const bootstrapSecret = "k".repeat(32);
+  const observed: Array<{ method?: string; path: string; body: unknown; authorization?: string }> = [];
+  let port = 0;
+  const taskPayload = (status = "open") => ({
+    task_id: "task-123",
+    title: "Build board",
+    details: "Acceptance criteria",
+    status,
+    status_message: status === "input_required" ? "Need a decision" : undefined,
+    artifact: status === "completed" ? "commit abc123" : undefined,
+    priority: "P0",
+    dependencies: [{ task_id: "task-dep", condition: "completed" }],
+    eligible_role_ids: ["implementer"],
+    required_capabilities: ["workspace-read"],
+    risk: "high",
+    created_by: "VS Code operator",
+    owner: "Dev 2",
+    owner_session_id: "cs_abcdefghijklmnopqrstuvwx",
+    owner_role_id: "implementer",
+    owner_role_label: "dev2",
+    lease_expires_at: "2026-09-10T12:30:00.000Z",
+    created_at: "2026-09-10T12:00:00.000Z",
+    updated_at: "2026-09-10T12:01:00.000Z",
+    revision: 2,
+    actions: { provide_input: status === "input_required", cancel: true, release: false },
+    bootstrap_secret: "must-not-cross",
+  });
+
+  port = await startHttpServer(t, (request, response) => {
+    const url = new URL(request.url || "/", `http://127.0.0.1:${port}`);
+    response.setHeader("content-type", "application/json");
+    if (url.pathname === "/health") {
+      response.end(JSON.stringify(authenticatedHealth(bootstrapSecret, port, request.url)));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      observed.push({
+        method: request.method,
+        path: url.pathname,
+        body: rawBody ? JSON.parse(rawBody) : undefined,
+        authorization: request.headers.authorization,
+      });
+      if (request.method === "GET" && url.pathname === "/admin/collaboration/board") {
+        response.end(JSON.stringify({
+          status: "ready",
+          project_key: "a".repeat(64),
+          tasks: [taskPayload()],
+          participants: [{
+            collaboration_session_id: "cs_abcdefghijklmnopqrstuvwx",
+            agent_name: "Dev 2",
+            canonical_role_id: "implementer",
+            occupancy_label: "dev2",
+            lifecycle: "working",
+            updated_at: "2026-09-10T12:01:00.000Z",
+            revision: 3,
+            task_board_token: "must-not-cross",
+          }],
+          timestamp: "2026-09-10T12:01:00.000Z",
+        }));
+        return;
+      }
+      if (url.pathname.endsWith("/input")) {
+        response.end(JSON.stringify({ task: taskPayload("input_required") }));
+        return;
+      }
+      if (url.pathname.endsWith("/cancel")) {
+        response.end(JSON.stringify({ task: taskPayload("cancelled") }));
+        return;
+      }
+      response.statusCode = 201;
+      response.end(JSON.stringify({ task: taskPayload() }));
+    });
+  });
+
+  const board = await readAdminTaskBoard(port, bootstrapSecret);
+  assert.equal(board.online, true);
+  assert.equal(board.board?.status, "ready");
+  assert.equal(board.board?.tasks[0].priority, "P0");
+  assert.equal(board.board?.tasks[0].ownerRoleLabel, "dev2");
+  assert.deepEqual(board.board?.tasks[0].dependencies, [{ taskId: "task-dep", condition: "completed" }]);
+  assert.equal(JSON.stringify(board.board).includes("must-not-cross"), false);
+
+  await createAdminTask(port, bootstrapSecret, { title: "New task", details: "Do it", priority: "P1" });
+  await provideAdminTaskInput(port, bootstrapSecret, { taskId: "task-123", expectedRevision: 2, statusMessage: "Proceed" });
+  await cancelAdminTask(port, bootstrapSecret, { taskId: "task-123", expectedRevision: 2, statusMessage: "Cancelled" });
+
+  assert.deepEqual(observed.map(({ method, path, body, authorization }) => ({ method, path, body, authorization })), [
+    { method: "GET", path: "/admin/collaboration/board", body: undefined, authorization: `Bearer ${bootstrapSecret}` },
+    { method: "POST", path: "/admin/collaboration/tasks", body: { title: "New task", details: "Do it", priority: "P1" }, authorization: `Bearer ${bootstrapSecret}` },
+    { method: "POST", path: "/admin/collaboration/tasks/task-123/input", body: { expected_revision: 2, status_message: "Proceed" }, authorization: `Bearer ${bootstrapSecret}` },
+    { method: "POST", path: "/admin/collaboration/tasks/task-123/cancel", body: { expected_revision: 2, status_message: "Cancelled" }, authorization: `Bearer ${bootstrapSecret}` },
+  ]);
 });
 
 test("loopback port probe distinguishes an occupied PiLink port from a released port", async () => {

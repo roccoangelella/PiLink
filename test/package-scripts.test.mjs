@@ -14,5 +14,10 @@ test("development scripts separate compilation from raw server startup", () => {
 
 test("source and installed CLIs enter through the terminal launcher", () => {
   assert.equal(packageJson.scripts.cli, "node dist/terminal-launcher.js");
+  assert.equal(packageJson.scripts["cli:agents"], "node dist/terminal-launcher-agents.js");
+  assert.equal(packageJson.scripts["cli:single-agents"], "node dist/terminal-launcher-single-agents.js");
   assert.equal(packageJson.bin.pilink, "dist/terminal-launcher.js");
+  assert.equal(packageJson.bin["pilink-agents"], "dist/terminal-launcher-agents.js");
+  assert.equal(packageJson.bin["pilink-single-agents"], "dist/terminal-launcher-single-agents.js");
+  assert.equal(packageJson.bin["pilink-single-agent"], "dist/terminal-launcher-single-agents.js");
 });

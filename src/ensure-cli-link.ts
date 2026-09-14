@@ -10,10 +10,14 @@ export interface CliLinkResult {
   status: CliLinkStatus;
   linkPath?: string;
   reason?: string;
+  agentsResult?: CliLinkResult;
+  singleAgentsResult?: CliLinkResult;
 }
 
 export interface CliLinkOptions {
   cliTarget?: string;
+  agentsCliTarget?: string;
+  singleAgentsCliTarget?: string;
   homeDirectory?: string;
   pathValue?: string;
   nodeExecutable?: string;
@@ -57,10 +61,45 @@ export function ensureCliLink(options: CliLinkOptions = {}): CliLinkResult {
     return { status: "skipped", reason: "no-safe-path-directory" };
   }
 
-  if (platform === "win32") {
-    return ensureWindowsShim(binDirectory, cliTarget, nodeExecutable, info, warn);
+  const primaryResult = platform === "win32"
+    ? ensureWindowsShim(binDirectory, cliTarget, nodeExecutable, "pilink", info, warn)
+    : ensurePosixLauncher(binDirectory, cliTarget, "pilink", info, warn);
+
+  const defaultAgentsTarget = path.join(repositoryRoot, "dist", "terminal-launcher-agents.js");
+  const agentsCliTarget = options.agentsCliTarget
+    ? path.resolve(options.agentsCliTarget)
+    : !options.cliTarget && fs.existsSync(defaultAgentsTarget)
+      ? defaultAgentsTarget
+      : undefined;
+
+  if (agentsCliTarget && fs.existsSync(agentsCliTarget)) {
+    const agentsResult = platform === "win32"
+      ? ensureWindowsShim(binDirectory, agentsCliTarget, nodeExecutable, "pilink-agents", info, warn)
+      : ensurePosixLauncher(binDirectory, agentsCliTarget, "pilink-agents", info, warn);
+    primaryResult.agentsResult = agentsResult;
   }
-  return ensurePosixLauncher(binDirectory, cliTarget, info, warn);
+
+  const defaultSingleAgentsTarget = path.join(repositoryRoot, "dist", "terminal-launcher-single-agents.js");
+  const singleAgentsCliTarget = options.singleAgentsCliTarget
+    ? path.resolve(options.singleAgentsCliTarget)
+    : !options.cliTarget && fs.existsSync(defaultSingleAgentsTarget)
+      ? defaultSingleAgentsTarget
+      : undefined;
+
+  if (singleAgentsCliTarget && fs.existsSync(singleAgentsCliTarget)) {
+    const singleAgentsResult = platform === "win32"
+      ? ensureWindowsShim(binDirectory, singleAgentsCliTarget, nodeExecutable, "pilink-single-agents", info, warn)
+      : ensurePosixLauncher(binDirectory, singleAgentsCliTarget, "pilink-single-agents", info, warn);
+    primaryResult.singleAgentsResult = singleAgentsResult;
+
+    if (platform === "win32") {
+      ensureWindowsShim(binDirectory, singleAgentsCliTarget, nodeExecutable, "pilink-single-agent", info, warn);
+    } else {
+      ensurePosixLauncher(binDirectory, singleAgentsCliTarget, "pilink-single-agent", info, warn);
+    }
+  }
+
+  return primaryResult;
 }
 
 export function selectCliBinDirectory(options: {
@@ -113,11 +152,12 @@ export function selectCliBinDirectory(options: {
 function ensurePosixLauncher(
   binDirectory: string,
   cliTarget: string,
+  commandName = "pilink",
   info: (message: string) => void,
   warn: (message: string) => void,
 ): CliLinkResult {
   fs.chmodSync(cliTarget, 0o755);
-  const launcherPath = path.join(binDirectory, "pilink");
+  const launcherPath = path.join(binDirectory, commandName);
   const launcher = createPosixLauncher(cliTarget);
 
   if (fs.existsSync(launcherPath) || isDanglingSymlink(launcherPath)) {
@@ -133,7 +173,7 @@ function ensurePosixLauncher(
       return { status: "linked", linkPath: launcherPath };
     }
 
-    if (isMigratablePiLinkSymlink(launcherPath, cliTarget)) {
+    if (commandName === "pilink" && isMigratablePiLinkSymlink(launcherPath, cliTarget)) {
       fs.unlinkSync(launcherPath);
       writePosixLauncher(launcherPath, launcher);
       info(`[PiLink] CLI launcher repaired: ${launcherPath}`);
@@ -145,7 +185,7 @@ function ensurePosixLauncher(
   }
 
   writePosixLauncher(launcherPath, launcher);
-  info(`[PiLink] CLI available as \`pilink\` via ${launcherPath}`);
+  info(`[PiLink] CLI available as \`${commandName}\` via ${launcherPath}`);
   return { status: "linked", linkPath: launcherPath };
 }
 
@@ -197,10 +237,11 @@ function ensureWindowsShim(
   binDirectory: string,
   cliTarget: string,
   nodeExecutable: string,
+  commandName = "pilink",
   info: (message: string) => void,
   warn: (message: string) => void,
 ): CliLinkResult {
-  const linkPath = path.join(binDirectory, "pilink.cmd");
+  const linkPath = path.join(binDirectory, `${commandName}.cmd`);
   const marker = WINDOWS_LAUNCHER_MARKER;
   const shim = `${marker}\r\n@echo off\r\n"${escapeCmdLiteral(nodeExecutable)}" "${escapeCmdLiteral(cliTarget)}" %*\r\n`;
   if (fs.existsSync(linkPath)) {
@@ -215,7 +256,7 @@ function ensureWindowsShim(
     }
   }
   fs.writeFileSync(linkPath, shim, { mode: 0o700 });
-  info(`[PiLink] CLI available as \`pilink\` via ${linkPath}`);
+  info(`[PiLink] CLI available as \`${commandName}\` via ${linkPath}`);
   return { status: "linked", linkPath };
 }
 

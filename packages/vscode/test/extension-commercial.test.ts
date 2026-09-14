@@ -154,8 +154,12 @@ test("the extension refuses to manage processes it did not start", () => {
   assert.match(switchMode, /process\.env\.PI_RUNTIME_MODE/);
 });
 
-test("launcher state excludes collaboration and activity payloads", () => {
+test("dashboard scopes durable collaboration state to collaboration mode and excludes chat/activity payloads", () => {
   const state = methodSource("dashboardState");
-  assert.doesNotMatch(state, /readAdminCollaboration|collaboration|activity/);
-  assert.doesNotMatch(source, /readAdminCollaboration|agent_chat_|agent_task_/);
+  assert.match(state, /if \(runtimeMode === "collaboration"\)/);
+  assert.match(state, /readAdminTaskBoard/);
+  assert.match(state, /updateCollaborationDashboardState/);
+  assert.match(state, /collaboration: this\.collaborationState/);
+  assert.doesNotMatch(state, /readAdminActivity|readAdminCollaboration|tool_activity|chat\.messages/);
+  assert.doesNotMatch(source, /agent_chat_/);
 });

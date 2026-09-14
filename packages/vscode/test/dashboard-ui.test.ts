@@ -34,8 +34,11 @@ test("first run recommends stable hosting and fixes the safety policy", () => {
   assert.doesNotMatch(primary, /accessMode|Start with Full access|startUnsafe/);
 });
 
-test("the webview sends only the focused command protocol", () => {
-  assert.match(script, /vscode\.postMessage\(\{ type: "command", command: command \}\)/);
+test("the webview sends only the focused command protocol with bounded task identity when needed", () => {
+  assert.match(script, /const message = \{ type: "command", command: command \}/);
+  assert.match(script, /message\.taskId = taskId/);
+  assert.match(script, /message\.revision = revision/);
+  assert.match(script, /vscode\.postMessage\(message\)/);
   assert.doesNotMatch(script, /type: "wizard"|postWizard|wizardButton|configureAndStart/);
 });
 
@@ -45,7 +48,17 @@ test("state-changing operations become an explicit single busy state", () => {
   assert.match(primary, /if \(currentState\.operation\)/);
   assert.match(primary, /PiLink disables other state-changing actions/);
   assert.match(functionSource("commandButton"), /if \(currentState\.operation\) button\.disabled = true/);
+  assert.match(functionSource("taskCommandButton"), /collaboration\.status !== "ready"/);
   assert.match(script, /currentState\.operation\) return/);
+});
+
+ test("dashboard renders loading, empty, stale, and error states explicitly", () => {
+  assert.match(functionSource("renderLoading"), /Checking PiLink/);
+  assert.match(functionSource("renderKanbanColumn"), /No tasks/);
+  const board = functionSource("renderCollaborationBoard");
+  assert.match(board, /Showing the last good task snapshot/);
+  assert.match(board, /Task board data is unavailable/);
+  assert.match(board, /role", board\.status === "error" \? "alert" : "status"/);
 });
 
 test("normal lifecycle has one dominant action per bridge state", () => {
@@ -74,13 +87,27 @@ test("Full access is detected but never offered as a graphical launch", () => {
   assert.match(functionSource("renderFullAccessNotice"), /not part of the normal VS Code workflow/);
 });
 
-test("collaboration is migration state, not a promoted workflow", () => {
+test("collaboration mode exposes the authoritative durable Kanban without changing single-agent setup", () => {
   assert.doesNotMatch(script, /Enable collaboration/);
   const notice = functionSource("renderCollaborationNotice");
-  assert.match(notice, /Advanced collaboration configuration detected/);
+  assert.match(notice, /Collaboration mode is active/);
+  assert.match(notice, /Task ownership and scheduling decisions remain server-authoritative/);
   assert.match(notice, /Switch to single-agent/);
-  assert.match(notice, /switchToSingle/);
-  assert.match(notice, /!isExternalRuntime\(\)/);
+  const board = functionSource("renderCollaborationBoard");
+  assert.match(board, /MULTI-AGENT CONTROL ROOM/);
+  assert.match(board, /Open \/ Ready/);
+  assert.match(board, /Working/);
+  assert.match(board, /Needs input \/ Blocked/);
+  assert.match(board, /Done \/ Failed/);
+  assert.match(board, /authoritative durable collaboration tasks/);
+  assert.match(board, /Local supervised-agent operations are a separate runtime surface/);
+  assert.match(board, /Worker release is a separate manager-authorized lifecycle action/);
+  const roster = functionSource("renderParticipantRoster");
+  assert.match(roster, /Waiting for task/);
+  assert.match(roster, /Working/);
+  assert.match(roster, /Released/);
+  assert.match(roster, /Offline/);
+  assert.match(roster, /collaborationSessionId/);
 });
 
 test("process ownership is visible and external services are never given stop/restart controls", () => {
@@ -122,16 +149,32 @@ test("status separates server, endpoint and ChatGPT readiness", () => {
   assert.match(chatgpt, /activeSessions/);
 });
 
-test("the launcher intentionally has no activity feed or collaboration console", () => {
+test("collaboration UI shows task metadata without ingesting chat transcripts or tool audit content", () => {
   assert.doesNotMatch(script, /normalizeActivity|renderActivity|Recent MCP activity|Metadata only/);
-  assert.doesNotMatch(script, /collaboration\.activity|agent_chat_|agent_task_/);
+  assert.doesNotMatch(script, /collaboration\.activity|agent_chat_/);
+  const task = functionSource("renderTaskCard");
+  assert.match(task, /Task ID/);
+  assert.match(task, /Owner/);
+  assert.match(task, /Session/);
+  assert.match(task, /Role/);
+  assert.match(task, /Priority \/ risk/);
+  assert.match(task, /Dependencies/);
+  assert.match(task, /Lease/);
+  assert.match(task, /Updated/);
+  assert.match(task, /Artifact/);
+  assert.match(task, /Provide input/);
+  assert.match(task, /Cancel task/);
 });
 
-test("polling preserves the only disclosure state", () => {
+test("polling preserves disclosure state, selected task, focus, and Kanban scroll", () => {
   assert.match(script, /if \(signature === lastSignature\) return/);
   assert.match(script, /vscode\.getState/);
   assert.match(script, /vscode\.setState\(uiState\)/);
   assert.match(script, /advancedOpen/);
+  assert.match(script, /selectedTaskId/);
+  assert.match(script, /boardScrollLeft/);
+  assert.match(script, /focusedTaskId/);
+  assert.match(script, /preventScroll: true/);
 });
 
 test("webview content is built with textContent rather than HTML interpolation", () => {
@@ -156,6 +199,9 @@ test("the layout uses VS Code tokens and stays usable in a narrow sidebar", () =
   assert.match(styles, /--vscode-button-background/);
   assert.match(styles, /--vscode-focusBorder/);
   assert.match(styles, /detail-grid/);
+  assert.match(styles, /\.kanban/);
+  assert.match(styles, /overflow-x: auto/);
+  assert.match(styles, /task-card__summary:focus-visible/);
   assert.match(styles, /@media \(max-width: 420px\)/);
   assert.match(styles, /grid-template-columns: 1fr/);
   assert.doesNotMatch(styles, /font-family:\s*(?:Arial|Helvetica|Roboto)/i);

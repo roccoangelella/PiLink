@@ -248,7 +248,7 @@ export class PinnedTerminalStatus {
   }
 }
 
-function runTerminalLauncher(): void {
+export function runTerminalLauncher(explicitArgv?: readonly string[]): void {
   const nodeExecutable = resolveNodeExecutable();
   if (!nodeExecutable) {
     console.error(`PiLink requires Node.js ${REQUIRED_NODE_VERSION} exactly; current runtime is ${process.version}.`);
@@ -257,7 +257,7 @@ function runTerminalLauncher(): void {
     return;
   }
 
-  const argv = process.argv.slice(2);
+  const argv = explicitArgv ? [...explicitArgv] : process.argv.slice(2);
   const compact = shouldUseCompactTerminalOutput(argv);
   const childEnv = compact ? terminalProxyEnvironment() : process.env;
   if (compact) childEnv[STATUS_FD_ENV] = "3";

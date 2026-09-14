@@ -30,12 +30,12 @@ import { AGENT_PERMISSIONS, AGENT_STATUSES, type AgentPermission, type AgentSnap
 import { asyncRoute, safeHttpErrorHandler } from "./http.js";
 import { AgentChatBroker, AgentChatStore } from "./chat.js";
 import { ToolAuditLog } from "./audit.js";
-import { AgentTaskStore } from "./tasks.js";
+import { AgentTaskStore, type AgentTask } from "./tasks.js";
 import { CollaborationSessionStore } from "./collaboration-sessions.js";
 import { CollaborationBootstrap } from "./collaboration-bootstrap.js";
 import { CollaborationContextRegistry } from "./collaboration-context-registry.js";
 import { AgentMemoryStore } from "./memory.js";
-import { AgentWorkLoopStore } from "./work-loop.js";
+import { AgentWorkLoopStore, type AgentWorkState } from "./work-loop.js";
 import { ExecutionJobStore } from "./execution-jobs.js";
 
 assertRequiredNodeVersion();
@@ -292,21 +292,12 @@ app.get("/admin/status", requireLocalAdmin, (_req, res) => {
   });
 });
 
-// Read-only projection of the durable collaboration state introduced by the
-// upstream feature/agent-public-chat branch.  The Textual client reads the
-// same AgentChatStore and AgentTaskStore files directly; the VS Code
-// extension uses this loopback-only endpoint so private paths and the
-// bootstrap credential never cross into its untrusted webview.
+// Authenticated loopback projection used by local operator UIs.  It exposes
+// durable coordination state but never filesystem locations, credentials, or
+// transport bindings.  Mutations below continue to go through AgentTaskStore
+// so creator/owner revision checks remain authoritative.
 app.get("/admin/collaboration", requireLocalAdmin, asyncRoute(async (req, res) => {
-  if (config.runtimeMode === "single") {
-    res.status(409).json({
-      status: "disabled",
-      error: "collaboration_disabled",
-      reason: "runtime_mode_single",
-      timestamp: new Date().toISOString(),
-    });
-    return;
-  }
+  if (!requireCollaborationMode(res)) return;
   const chatLimit = boundedAdminInteger(req.query.chat_limit, 20, 1, 20);
   const taskLimit = boundedAdminInteger(req.query.task_limit, 100, 1, 200);
   if (chatLimit === undefined || taskLimit === undefined) {
@@ -390,6 +381,108 @@ app.get("/admin/collaboration", requireLocalAdmin, asyncRoute(async (req, res) =
       timestamp: new Date().toISOString(),
     };
     res.json(degraded);
+  }
+}));
+
+app.get("/admin/collaboration/board", requireLocalAdmin, asyncRoute(async (req, res) => {
+  if (!requireCollaborationMode(res)) return;
+  const taskLimit = boundedAdminInteger(req.query.task_limit, 200, 1, 200);
+  if (taskLimit === undefined) {
+    res.status(400).json({ error: "invalid_request" });
+    return;
+  }
+  try {
+    const taskStore = getAgentTaskStore();
+    const [tasks, participants] = await Promise.all([
+      taskStore.list({ limit: taskLimit }),
+      getAgentWorkLoopStore().list({ limit: 100 }),
+    ]);
+    const participantBySession = new Map(participants.map((participant) => [
+      participant.collaborationSessionId,
+      participant,
+    ]));
+    res.json({
+      status: "ready",
+      project_key: taskStore.projectKey,
+      tasks: tasks.map((task) => publicAdminCollaborationTask(task, participantBySession)),
+      participants: participants.map(publicAdminWorkParticipant),
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    res.json({
+      status: "degraded",
+      error: "collaboration_unavailable",
+      reason: "private_store_unavailable",
+      project_key: null,
+      tasks: [],
+      participants: [],
+      timestamp: new Date().toISOString(),
+    });
+  }
+}));
+
+app.post("/admin/collaboration/tasks", requireLocalAdmin, asyncRoute(async (req, res) => {
+  if (!requireCollaborationMode(res)) return;
+  const input = parseAdminTaskCreateRequest(req.body);
+  if (!input) {
+    res.status(400).json({ error: "invalid_task_create_request" });
+    return;
+  }
+  try {
+    const task = await getAgentTaskStore().create({
+      agentId: LOCAL_ADMIN_AGENT_CONTROLLER_ID,
+      agentName: "VS Code operator",
+      title: input.title,
+      details: input.details,
+      scheduling: { priority: input.priority },
+    });
+    res.status(201).json({ task: publicAdminCollaborationTask(task, new Map()) });
+  } catch {
+    res.status(409).json({ error: "task_create_rejected" });
+  }
+}));
+
+app.post("/admin/collaboration/tasks/:taskId/input", requireLocalAdmin, asyncRoute(async (req, res) => {
+  if (!requireCollaborationMode(res)) return;
+  const taskId = singleAdminParam(req.params.taskId);
+  const input = parseAdminTaskMutationRequest(req.body, true);
+  if (!taskId || !input?.statusMessage) {
+    res.status(400).json({ error: "invalid_task_input_request" });
+    return;
+  }
+  try {
+    const task = await getAgentTaskStore().provideInput({
+      agentId: LOCAL_ADMIN_AGENT_CONTROLLER_ID,
+      agentName: "VS Code operator",
+      taskId,
+      expectedRevision: input.expectedRevision,
+      statusMessage: input.statusMessage,
+    });
+    res.json({ task: publicAdminCollaborationTask(task, new Map()) });
+  } catch {
+    res.status(409).json({ error: "task_input_rejected" });
+  }
+}));
+
+app.post("/admin/collaboration/tasks/:taskId/cancel", requireLocalAdmin, asyncRoute(async (req, res) => {
+  if (!requireCollaborationMode(res)) return;
+  const taskId = singleAdminParam(req.params.taskId);
+  const input = parseAdminTaskMutationRequest(req.body, false);
+  if (!taskId || !input) {
+    res.status(400).json({ error: "invalid_task_cancel_request" });
+    return;
+  }
+  try {
+    const task = await getAgentTaskStore().cancel({
+      agentId: LOCAL_ADMIN_AGENT_CONTROLLER_ID,
+      agentName: "VS Code operator",
+      taskId,
+      expectedRevision: input.expectedRevision,
+      statusMessage: input.statusMessage,
+    });
+    res.json({ task: publicAdminCollaborationTask(task, new Map()) });
+  } catch {
+    res.status(409).json({ error: "task_cancel_rejected" });
   }
 }));
 
@@ -986,6 +1079,17 @@ interface AdminAgentCancelInput {
   reason?: string;
 }
 
+interface AdminTaskCreateInput {
+  title: string;
+  details?: string;
+  priority: "P0" | "P1" | "P2" | "P3";
+}
+
+interface AdminTaskMutationInput {
+  expectedRevision: number;
+  statusMessage?: string;
+}
+
 const DEFAULT_SINGLE_AGENT_PERMISSIONS: readonly AgentPermission[] = Object.freeze([
   "workspace:read",
   "network:outbound",
@@ -998,7 +1102,113 @@ const DEFAULT_COLLABORATION_AGENT_PERMISSIONS: readonly AgentPermission[] = Obje
 ]);
 const AGENT_PERMISSION_SET = new Set<string>(AGENT_PERMISSIONS);
 const ADMIN_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u;
+const ADMIN_TASK_PRIORITIES = new Set(["P0", "P1", "P2", "P3"] as const);
 const UNSAFE_ADMIN_TEXT = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
+
+function requireCollaborationMode(res: express.Response): boolean {
+  if (config.runtimeMode === "collaboration") return true;
+  res.status(409).json({
+    status: "disabled",
+    error: "collaboration_disabled",
+    reason: "runtime_mode_single",
+    timestamp: new Date().toISOString(),
+  });
+  return false;
+}
+
+function publicAdminWorkParticipant(participant: AgentWorkState) {
+  return {
+    collaboration_session_id: participant.collaborationSessionId,
+    agent_name: participant.agentName,
+    canonical_role_id: participant.canonicalRoleId,
+    occupancy_label: participant.occupancyLabel,
+    lifecycle: participant.lifecycle,
+    updated_at: participant.updatedAt,
+    revision: participant.revision,
+  };
+}
+
+function publicAdminCollaborationTask(
+  task: AgentTask,
+  participantBySession: ReadonlyMap<string, AgentWorkState>,
+) {
+  const ownerParticipant = task.ownerCollaborationSessionId
+    ? participantBySession.get(task.ownerCollaborationSessionId)
+    : undefined;
+  const locallyCreated = task.createdByAgentId === LOCAL_ADMIN_AGENT_CONTROLLER_ID && task.createdByScope === "actor";
+  const terminal = task.status === "completed" || task.status === "failed" || task.status === "cancelled";
+  const details = adminProjectionText(task.details, 2_048);
+  const statusMessage = adminProjectionText(task.statusMessage, 1_024);
+  const artifact = adminProjectionText(task.artifact, 1_024);
+  return {
+    task_id: task.taskId,
+    title: task.title,
+    ...(details ? { details } : {}),
+    status: task.status,
+    ...(statusMessage ? { status_message: statusMessage } : {}),
+    ...(artifact ? { artifact } : {}),
+    priority: task.scheduling.priority,
+    dependencies: task.scheduling.dependencies.map((dependency) => ({
+      task_id: dependency.taskId,
+      condition: dependency.condition,
+    })),
+    eligible_role_ids: [...task.scheduling.eligibleRoleIds],
+    required_capabilities: [...task.scheduling.requiredCapabilities],
+    risk: task.scheduling.risk,
+    ...(task.scheduling.notBefore ? { not_before: task.scheduling.notBefore } : {}),
+    created_by: task.createdByAgentName,
+    ...(task.createdByCollaborationSessionId ? { created_by_session_id: task.createdByCollaborationSessionId } : {}),
+    ...(task.ownerAgentName ? { owner: task.ownerAgentName } : {}),
+    ...(task.ownerCollaborationSessionId ? { owner_session_id: task.ownerCollaborationSessionId } : {}),
+    ...(ownerParticipant ? {
+      owner_role_id: ownerParticipant.canonicalRoleId,
+      owner_role_label: ownerParticipant.occupancyLabel,
+    } : {}),
+    ...(task.leaseExpiresAt ? { lease_expires_at: task.leaseExpiresAt } : {}),
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
+    revision: task.revision,
+    actions: {
+      provide_input: locallyCreated && task.status === "input_required",
+      cancel: locallyCreated && !terminal,
+      release: false,
+    },
+  };
+}
+
+function adminProjectionText(value: string | undefined, maximumBytes: number): string | undefined {
+  if (!value) return undefined;
+  if (Buffer.byteLength(value, "utf8") <= maximumBytes) return value;
+  let end = value.length;
+  while (end > 0 && Buffer.byteLength(`${value.slice(0, end)}…`, "utf8") > maximumBytes) end -= 1;
+  return `${value.slice(0, end)}…`;
+}
+
+function parseAdminTaskCreateRequest(value: unknown): AdminTaskCreateInput | undefined {
+  if (!isRecord(value) || hasUnexpectedKeys(value, ["title", "details", "priority"])) return undefined;
+  const title = optionalAdminSingleLine(value.title, 256);
+  const details = optionalAdminText(value.details, 8 * 1024);
+  const priority = value.priority === undefined ? "P2" : value.priority;
+  if (!title || details === null || typeof priority !== "string" || !ADMIN_TASK_PRIORITIES.has(priority as any)) {
+    return undefined;
+  }
+  return {
+    title,
+    ...(details ? { details } : {}),
+    priority: priority as AdminTaskCreateInput["priority"],
+  };
+}
+
+function parseAdminTaskMutationRequest(value: unknown, requireMessage: boolean): AdminTaskMutationInput | undefined {
+  if (!isRecord(value) || hasUnexpectedKeys(value, ["expected_revision", "status_message"])) return undefined;
+  if (typeof value.expected_revision !== "number" || !Number.isSafeInteger(value.expected_revision) || value.expected_revision < 1) return undefined;
+  const statusMessage = optionalAdminText(value.status_message, 8 * 1024);
+  if (statusMessage === null || (requireMessage && !statusMessage)) return undefined;
+  return {
+    expectedRevision: Number(value.expected_revision),
+    ...(statusMessage ? { statusMessage } : {}),
+  };
+}
 
 function parseAdminSpawnRequest(value: unknown): AdminAgentSpawnInput | undefined {
   if (!isRecord(value) || hasUnexpectedKeys(value, ["role", "initial_message", "cwd", "permissions", "task_id", "label"])) {

@@ -46,6 +46,10 @@ PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; 
 - [VS Code extension](VSCODE_EXTENSION.md)
 - [Getting started (CLI operations)](operations/getting-started.md)
 - [Runtime mode selection](operations/mode-selection.md)
+- [ChatGPT LLM Gateway implementation](operations/gateway-implementation.md)
+- [ChatGPT LLM Gateway UX review](operations/gateway-ux-review.md)
+- [UX next iteration implementation](operations/ux-next-iteration-implementation.md)
+- [UX next iteration proposal](operations/ux-next-iteration-proposal.md)
 - [Release operations](operations/releasing.md)
 
 Current code, tests, and explicit local policy take precedence over prose. A

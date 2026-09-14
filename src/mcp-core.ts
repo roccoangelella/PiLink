@@ -415,6 +415,68 @@ export function createMcpServer(
     occupancyLabel: context.roleAssignment.occupancyLabel,
   });
 
+  const schedulingContextFor = (context: Readonly<ConnectionCollaborationContext>): VerifiedSchedulingContext => {
+    if (!taskStore) throw new Error("Agent task store is unavailable");
+    return {
+      agentId: context.agentId,
+      agentName: context.agentName,
+      collaborationSessionId: context.collaborationSessionId,
+      projectId: taskStore.projectKey,
+      roleIds: [context.roleAssignment.canonicalRoleId],
+      capabilities: schedulingCapabilities(policy, scopes),
+      workspaceIds: [taskStore.projectKey],
+      credentialBinding: collaborationBootstrap?.sharedLogicalSession === true
+        ? "server_session"
+        : "transport",
+    };
+  };
+
+  const taskOwnedByContext = (task: AgentTask, context: Readonly<ConnectionCollaborationContext>): boolean =>
+    task.ownerAgentId === context.agentId &&
+    (task.ownerScope === "actor" || task.ownerCollaborationSessionId === context.collaborationSessionId);
+
+  const seekNextReadyTask = async (): Promise<{
+    workState: AgentWorkState;
+    nextAction: "continue_task" | "repeat_wait" | "stop_released";
+    activeTask?: AgentTask;
+  }> => {
+    if (!taskStore || !workLoopStore) throw new Error("Agent work-seeking stores are unavailable");
+    const context = await verifyCollaborationContext();
+    let workState = await workLoopStore.register(workParticipantInput(context));
+    if (workState.lifecycle === "released") {
+      return { workState, nextAction: "stop_released" };
+    }
+
+    const activeTasks = await taskStore.list({ statuses: ["working", "input_required"], limit: 200 });
+    const ownedWorking = activeTasks.find((task) => task.status === "working" && taskOwnedByContext(task, context));
+    if (ownedWorking) {
+      workState = await workLoopStore.markWorking(context.collaborationSessionId);
+      return { workState, nextAction: "continue_task", activeTask: ownedWorking };
+    }
+    const ownedBlocked = activeTasks.find((task) => task.status === "input_required" && taskOwnedByContext(task, context));
+    if (ownedBlocked) {
+      workState = await workLoopStore.markWaiting(context.collaborationSessionId);
+      return { workState, nextAction: "repeat_wait", activeTask: ownedBlocked };
+    }
+
+    workState = await workLoopStore.markWorking(context.collaborationSessionId);
+    if (workState.lifecycle === "released") {
+      return { workState, nextAction: "stop_released" };
+    }
+    const selected = await taskStore.claimNext({
+      agentId: context.agentId,
+      agentName: context.agentName,
+      collaborationSessionId: context.collaborationSessionId,
+      schedulingContext: schedulingContextFor(context),
+    });
+    if (selected.task && selected.decision.outcome === "selected") {
+      workState = await workLoopStore.markWorking(context.collaborationSessionId);
+      return { workState, nextAction: "continue_task", activeTask: selected.task };
+    }
+    workState = await workLoopStore.markWaiting(context.collaborationSessionId);
+    return { workState, nextAction: "repeat_wait" };
+  };
+
   releasedWorkStateGate = async (tool: string): Promise<string | undefined> => {
     if (!workLoopStore || tool === "collaboration_bootstrap" || tool === "get_system_prompt" || tool === "agent_work_wait") {
       return undefined;
@@ -1060,6 +1122,10 @@ export function createMcpServer(
       updated_at: z.string(),
       revision: z.number().int().positive(),
     }).strict();
+    const taskTerminalSchema = taskSchema.extend({
+      next_action: z.enum(["continue_task", "repeat_wait", "stop_released"]).optional(),
+      active_task_id: z.string().optional(),
+    });
     const taskListSchema = z.object({ tasks: z.array(taskSchema) }).strict();
     server.registerTool("agent_chat_post", {
       title: "Post Agent Coordination",
@@ -1134,19 +1200,7 @@ export function createMcpServer(
       };
       const taskSchedulingContext = async (): Promise<VerifiedSchedulingContext | undefined> => {
         if (collaborationConnectionState !== "bootstrapped") return undefined;
-        const context = await verifyCollaborationContext();
-        return {
-          agentId: context.agentId,
-          agentName: context.agentName,
-          collaborationSessionId: context.collaborationSessionId,
-          projectId: taskStore.projectKey,
-          roleIds: [context.roleAssignment.canonicalRoleId],
-          capabilities: schedulingCapabilities(policy, scopes),
-          workspaceIds: [taskStore.projectKey],
-          credentialBinding: collaborationBootstrap?.sharedLogicalSession === true
-            ? "server_session"
-            : "transport",
-        };
+        return schedulingContextFor(await verifyCollaborationContext());
       };
       const taskResult = (task: AgentTask) => {
         const mapped = toAgentTask(task);
@@ -1225,6 +1279,11 @@ export function createMcpServer(
         if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_claim'");
         try {
           const identityInput = await taskIdentityInput();
+          const schedulingContext = await taskSchedulingContext();
+          const candidate = await taskStore.get(args.task_id);
+          if (!schedulingContext && !candidate.scheduling.legacyDefaultsApplied) {
+            return toolError("Scheduled collaboration task claims require a verified collaboration session; bootstrap on a continuity-preserving transport before claiming this task");
+          }
           if (workLoopStore && identityInput.collaborationSessionId) {
             const workState = await workLoopStore.markWorking(identityInput.collaborationSessionId);
             if (workState.lifecycle === "released") {
@@ -1236,7 +1295,7 @@ export function createMcpServer(
             taskId: args.task_id,
             expectedRevision: args.expected_revision,
             leaseSeconds: args.lease_seconds,
-            schedulingContext: await taskSchedulingContext(),
+            schedulingContext,
           }));
         } catch (error) {
           return taskFailure(error, "Agent task claim failed");
@@ -1378,7 +1437,7 @@ export function createMcpServer(
 
       server.registerTool("agent_task_finish", {
         title: "Finish or Cancel Task",
-        description: "Mark an owned task completed or failed, or cancel a non-terminal task as its creator or owner. Completed and failed tasks may include a concise artifact such as a commit hash or report path. Pass the latest revision returned by agent_task_read.",
+        description: "Mark an owned task completed or failed, or cancel a non-terminal task as its creator or owner. After a verified owner terminates its own task, the server immediately runs authoritative next-task scheduling and may claim the next compatible ready task for that same collaboration session; reread durable task state before another claim. Completed and failed tasks may include a concise artifact such as a commit hash or report path. Pass the latest revision returned by agent_task_read.",
         inputSchema: z.object({
           task_id: z.string().min(1).max(256).describe("Task to transition to a terminal state."),
           expected_revision: z.number().int().positive().describe("Latest task revision returned by agent_task_read; stale values are rejected."),
@@ -1386,7 +1445,7 @@ export function createMcpServer(
           status_message: z.string().min(1).max(8192).optional().describe("Concise completion, failure, or cancellation explanation."),
           artifact: z.string().min(1).max(16384).optional().describe("Commit hash, file path, report summary, or other result reference; invalid for cancelled tasks."),
         }).strict(),
-        outputSchema: taskSchema,
+        outputSchema: taskTerminalSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       }, (args, extra) => auditCall("agent_task_finish", extra, async () => {
         if (!canChatWrite(scopes)) return toolError("Token scope does not permit 'agent_task_finish'");
@@ -1394,6 +1453,11 @@ export function createMcpServer(
           return toolError("artifact cannot be supplied when outcome is cancelled");
         }
         try {
+          const context = collaborationConnectionState === "bootstrapped"
+            ? await verifyCollaborationContext()
+            : undefined;
+          const existingTask = await taskStore.get(args.task_id);
+          const callerOwnedTask = context ? taskOwnedByContext(existingTask, context) : false;
           const base = {
             ...(await taskIdentityInput()),
             taskId: args.task_id,
@@ -1405,7 +1469,37 @@ export function createMcpServer(
             : args.outcome === "failed"
               ? await taskStore.fail({ ...base, artifact: args.artifact })
               : await taskStore.cancel(base);
-          return taskResult(task);
+          let continuation: {
+            nextAction: "continue_task" | "repeat_wait" | "stop_released";
+            activeTaskId?: string;
+          } | undefined;
+          if (callerOwnedTask && context && workLoopStore) {
+            try {
+              const seeking = await seekNextReadyTask();
+              continuation = {
+                nextAction: seeking.nextAction,
+                activeTaskId: seeking.nextAction === "continue_task" ? seeking.activeTask?.taskId : undefined,
+              };
+            } catch {
+              // The terminal transition is already durable. Preserve that result
+              // and leave the worker in the active waiting lifecycle so a later
+              // work_wait can safely re-run authoritative scheduling.
+              await workLoopStore.markWaiting(context.collaborationSessionId).catch(() => undefined);
+              continuation = { nextAction: "repeat_wait" };
+            }
+          }
+          const mapped = toAgentTask(task);
+          const result = continuation
+            ? {
+                ...mapped,
+                next_action: continuation.nextAction,
+                ...(continuation.activeTaskId ? { active_task_id: continuation.activeTaskId } : {}),
+              }
+            : mapped;
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
         } catch (error) {
           return taskFailure(error, "Agent task terminal update failed");
         }
@@ -1431,6 +1525,8 @@ export function createMcpServer(
       }).strict();
       const workWaitSchema = z.object({
         outcome: z.enum(["snapshot", "changed", "timeout", "released"]),
+        next_action: z.enum(["continue_task", "claim_next", "repeat_wait", "stop_released"]),
+        active_task_id: z.string().optional(),
         waited_seconds: z.number().nonnegative(),
         work_state: workStateSchema,
         chat: chatSnapshotSchema,
@@ -1440,7 +1536,7 @@ export function createMcpServer(
 
       server.registerTool("agent_work_wait", {
         title: "Wait for Durable Work",
-        description: "Enter the durable WAITING_FOR_TASK lifecycle without ending the collaboration turn. The server performs a bounded long poll with persisted exponential backoff and jitter, then returns authoritative chat/task state. Pass both opaque cursors from the previous response; repeat after a timeout until work changes or a manager release is returned.",
+        description: "Enter or continue the durable work-seeking lifecycle. The server preserves owned work and performs a bounded long poll with persisted exponential backoff and jitter. Follow next_action exactly: continue_task means continue the active task, claim_next means call agent_task_claim_next, repeat_wait means call this tool again with the returned cursors, and stop_released is the only normal stop. A chat message or timeout never authorizes release.",
         inputSchema: z.object({
           after_chat_cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe("Previous chat next_cursor. Omit together with task_board_token for an immediate initial snapshot."),
           task_board_token: z.string().optional().describe("Opaque task-board token returned by the previous agent_work_wait call. Never construct or modify it."),
@@ -1458,24 +1554,49 @@ export function createMcpServer(
           let workState = await workLoopStore.register(workParticipantInput(context));
           if (workState.lifecycle === "released") {
             const snapshot = await readAgentWorkSnapshot(broker, taskStore, args.after_chat_cursor);
-            return workWaitResult("released", 0, workState, snapshot);
+            return workWaitResult("released", "stop_released", 0, workState, snapshot);
           }
+
+          const nextActionForSnapshot = (snapshot: AgentWorkSnapshot): {
+            nextAction: "continue_task" | "claim_next" | "repeat_wait";
+            activeTaskId?: string;
+          } => {
+            const ownedWorking = snapshot.tasks.find(
+              (task) => task.status === "working" && taskOwnedByContext(task, context),
+            );
+            if (ownedWorking) return { nextAction: "continue_task", activeTaskId: ownedWorking.taskId };
+            const ownedBlocked = snapshot.tasks.some(
+              (task) => task.status === "input_required" && taskOwnedByContext(task, context),
+            );
+            if (ownedBlocked) return { nextAction: "repeat_wait" };
+            if (snapshot.tasks.some((task) => task.status === "open")) return { nextAction: "claim_next" };
+            return { nextAction: "repeat_wait" };
+          };
 
           const initial = await readAgentWorkSnapshot(broker, taskStore, args.after_chat_cursor);
           const initialRequest = args.after_chat_cursor === undefined || args.task_board_token === undefined;
           if (initialRequest || agentWorkSnapshotChanged(initial, args.after_chat_cursor!, args.task_board_token!)) {
+            const action = nextActionForSnapshot(initial);
             workState = await workLoopStore.recordOutcome({
               collaborationSessionId: context.collaborationSessionId,
               changed: true,
+              active: action.nextAction === "continue_task",
               chatCursor: initial.chat.nextCursor,
               taskBoardToken: initial.taskBoardToken,
             });
-            return workWaitResult(initialRequest ? "snapshot" : "changed", 0, workState, initial);
+            return workWaitResult(
+              initialRequest ? "snapshot" : "changed",
+              action.nextAction,
+              0,
+              workState,
+              initial,
+              action.activeTaskId,
+            );
           }
 
           workState = await workLoopStore.markWaiting(context.collaborationSessionId);
           if (workState.lifecycle === "released") {
-            return workWaitResult("released", 0, workState, initial);
+            return workWaitResult("released", "stop_released", 0, workState, initial);
           }
           const waitSeconds = computeAgentWaitSeconds(
             workState.consecutiveTimeouts,
@@ -1492,19 +1613,26 @@ export function createMcpServer(
             signal: extra.signal,
           });
           if (waited.releasedState) {
-            return workWaitResult("released", waited.waitedSeconds, waited.releasedState, waited.snapshot);
+            return workWaitResult("released", "stop_released", waited.waitedSeconds, waited.releasedState, waited.snapshot);
           }
+
+          const action = waited.changed
+            ? nextActionForSnapshot(waited.snapshot)
+            : { nextAction: "repeat_wait" as const };
           workState = await workLoopStore.recordOutcome({
             collaborationSessionId: context.collaborationSessionId,
             changed: waited.changed,
+            active: waited.changed && action.nextAction === "continue_task",
             chatCursor: waited.snapshot.chat.nextCursor,
             taskBoardToken: waited.snapshot.taskBoardToken,
           });
           return workWaitResult(
             waited.changed ? "changed" : "timeout",
+            action.nextAction,
             waited.waitedSeconds,
             workState,
             waited.snapshot,
+            action.activeTaskId,
           );
         } catch (error) {
           return toolError(error instanceof Error ? error.message : "Agent work wait failed");
@@ -1888,12 +2016,16 @@ async function waitForAgentWorkChange(input: {
 
 function workWaitResult(
   outcome: "snapshot" | "changed" | "timeout" | "released",
+  nextAction: "continue_task" | "claim_next" | "repeat_wait" | "stop_released",
   waitedSeconds: number,
   workState: AgentWorkState,
   snapshot: AgentWorkSnapshot,
+  activeTaskId?: string,
 ) {
   const result = {
     outcome,
+    next_action: nextAction,
+    ...(activeTaskId ? { active_task_id: activeTaskId } : {}),
     waited_seconds: waitedSeconds,
     work_state: toAgentWorkState(workState),
     chat: toChatSnapshot(snapshot.chat),
