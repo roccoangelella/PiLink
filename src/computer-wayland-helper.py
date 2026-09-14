@@ -106,45 +106,6 @@ def png_size(data):
     return width, height
 
 
-def _restore_token_path():
-    runtime_dir = GLib.get_user_runtime_dir()
-    if runtime_dir and os.path.isdir(runtime_dir):
-        return os.path.join(runtime_dir, "pilink_wayland_restore_token")
-    return None
-
-
-def _load_restore_token():
-    path = _restore_token_path()
-    if path and os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                token = f.read().strip()
-                if token:
-                    return token
-        except Exception:
-            pass
-    return None
-
-
-def _save_restore_token(token):
-    path = _restore_token_path()
-    if path and token:
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(token.strip())
-        except Exception:
-            pass
-
-
-def _clear_restore_token():
-    path = _restore_token_path()
-    if path and os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-
 class WaylandPortalSession:
     def __init__(self):
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -161,7 +122,6 @@ class WaylandPortalSession:
         self.pipeline = None
         self.appsink = None
         self.use_raw_fallback = False
-        self.restore_token = _load_restore_token()
         self.frame_width = None
         self.frame_height = None
 
@@ -169,23 +129,6 @@ class WaylandPortalSession:
         if self.pipeline is not None:
             return
 
-        try:
-            self._init_session()
-        except Exception:
-            if self.restore_token:
-                self.restore_token = None
-                _clear_restore_token()
-                if self.session_handle:
-                    try:
-                        self._call(SESSION, "Close", "()", (), object_path=self.session_handle)
-                    except Exception:
-                        pass
-                    self.session_handle = None
-                self._init_session()
-            else:
-                raise
-
-    def _init_session(self):
         created = self._request(
             REMOTE,
             "CreateSession",
@@ -197,18 +140,11 @@ class WaylandPortalSession:
             raise PortalError("RemoteDesktop portal returned an invalid session handle")
         self.session_handle = session_handle
 
-        devices_options = {
-            "types": GLib.Variant("u", 3),
-            "persist_mode": GLib.Variant("u", 2),
-        }
-        if self.restore_token:
-            devices_options["restore_token"] = GLib.Variant("s", self.restore_token)
-
         self._request(
             REMOTE,
             "SelectDevices",
             "(oa{sv})",
-            (self.session_handle, devices_options),
+            (self.session_handle, {"types": GLib.Variant("u", 3)}),
         )
 
         cursor_mode = 1
@@ -219,22 +155,17 @@ class WaylandPortalSession:
         except Exception:
             pass
 
-        sources_options = {
-            "types": GLib.Variant("u", 1),
-            "multiple": GLib.Variant("b", False),
-            "cursor_mode": GLib.Variant("u", cursor_mode),
-            "persist_mode": GLib.Variant("u", 2),
-        }
-        if self.restore_token:
-            sources_options["restore_token"] = GLib.Variant("s", self.restore_token)
-
         self._request(
             SCREENCAST,
             "SelectSources",
             "(oa{sv})",
             (
                 self.session_handle,
-                sources_options,
+                {
+                    "types": GLib.Variant("u", 1),
+                    "multiple": GLib.Variant("b", False),
+                    "cursor_mode": GLib.Variant("u", cursor_mode),
+                },
             ),
         )
 
@@ -244,10 +175,6 @@ class WaylandPortalSession:
             "(osa{sv})",
             (self.session_handle, "", {}),
         )
-        new_token = started.get("restore_token")
-        if new_token and isinstance(new_token, str):
-            self.restore_token = new_token
-            _save_restore_token(new_token)
 
         self.devices = int(started.get("devices", 0))
         if (self.devices & 3) != 3:
