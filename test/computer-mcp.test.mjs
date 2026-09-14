@@ -85,7 +85,8 @@ test("computer_action executes one action and returns a post-action screenshot",
 
 test("Computer Use tools are absent when the per-client policy is disabled", async (t) => {
   const { client } = await connectedServer(t, { computerControl: false });
-  assert.deepEqual((await client.listTools()).tools, []);
+  const result = await client.listTools().catch((error) => (error?.code === -32601 ? { tools: [] } : Promise.reject(error)));
+  assert.deepEqual(result.tools, []);
 });
 
 test("read-only OAuth scope cannot inject desktop input", async (t) => {

@@ -100,9 +100,17 @@ typically:
 
 ```bash
 sudo apt install python3-gi gir1.2-gstreamer-1.0 \
-  gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-pipewire gstreamer1.0-plugins-base \
   xdg-desktop-portal
 ```
+
+On Arch Linux / EndeavourOS:
+
+```bash
+sudo pacman -S python-gobject gstreamer gst-plugins-base gst-plugin-pipewire xdg-desktop-portal
+```
+
+PiLink automatically uses GStreamer `pngenc` when available, or encodes the raw PipeWire frame to PNG directly in memory using standard Python libraries if `pngenc` is absent, so `gst-plugins-good` is not strictly required.
 
 The desktop-specific portal backend must also be installed and running (for
 example the GNOME or KDE portal supplied by the desktop environment). PiLink

@@ -35,11 +35,36 @@ export function isWaylandSession(env: NodeJS.ProcessEnv = process.env): boolean 
   return sessionType === "wayland" || Boolean(env.WAYLAND_DISPLAY?.trim() && sessionType !== "x11");
 }
 
+let sharedWaylandBackend: LinuxWaylandPortalComputerBackend | undefined;
+
+export function getSharedWaylandPortalBackend(
+  env: NodeJS.ProcessEnv = process.env,
+): LinuxWaylandPortalComputerBackend {
+  if (!sharedWaylandBackend) {
+    sharedWaylandBackend = new LinuxWaylandPortalComputerBackend(env);
+  }
+  return sharedWaylandBackend;
+}
+
+export function resetSharedWaylandPortalBackend(): void {
+  if (sharedWaylandBackend) {
+    sharedWaylandBackend.stopHelper();
+    sharedWaylandBackend = undefined;
+  }
+}
+
+process.once("exit", () => {
+  resetSharedWaylandPortalBackend();
+});
+
 export function createPiLinkComputerBackend(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): ComputerBackend {
   if (platform === "linux" && isWaylandSession(env)) {
+    if (env === process.env) {
+      return getSharedWaylandPortalBackend(env);
+    }
     return new LinuxWaylandPortalComputerBackend(env);
   }
   return createSystemComputerBackend(env, platform);
@@ -210,7 +235,7 @@ class LinuxWaylandPortalComputerBackend implements ComputerBackend {
     this.child = undefined;
   }
 
-  private stopHelper(): void {
+  public stopHelper(): void {
     const child = this.child;
     this.child = undefined;
     if (child && child.exitCode === null && !child.killed) child.kill("SIGTERM");

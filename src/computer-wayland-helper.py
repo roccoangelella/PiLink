@@ -2,8 +2,10 @@
 import base64
 import json
 import os
+import struct
 import sys
 import time
+import zlib
 
 try:
     import gi
@@ -79,6 +81,21 @@ def safe_error(exc):
     return text[:1000] or "Wayland portal operation failed"
 
 
+def raw_rgba_to_png(width, height, rgba_data):
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    raw_bytes = bytearray()
+    row_bytes = width * 4
+    for y in range(height):
+        raw_bytes.append(0)
+        raw_bytes.extend(rgba_data[y * row_bytes : (y + 1) * row_bytes])
+
+    compressed = zlib.compress(bytes(raw_bytes), level=1)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", compressed) + chunk(b"IEND", b"")
+
+
 def png_size(data):
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
         raise PortalError("GStreamer did not produce a valid PNG frame")
@@ -87,6 +104,45 @@ def png_size(data):
     if width <= 0 or height <= 0 or width > 32768 or height > 32768:
         raise PortalError("GStreamer returned an invalid frame size")
     return width, height
+
+
+def _restore_token_path():
+    runtime_dir = GLib.get_user_runtime_dir()
+    if runtime_dir and os.path.isdir(runtime_dir):
+        return os.path.join(runtime_dir, "pilink_wayland_restore_token")
+    return None
+
+
+def _load_restore_token():
+    path = _restore_token_path()
+    if path and os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                token = f.read().strip()
+                if token:
+                    return token
+        except Exception:
+            pass
+    return None
+
+
+def _save_restore_token(token):
+    path = _restore_token_path()
+    if path and token:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(token.strip())
+        except Exception:
+            pass
+
+
+def _clear_restore_token():
+    path = _restore_token_path()
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
 
 
 class WaylandPortalSession:
@@ -104,6 +160,8 @@ class WaylandPortalSession:
         self.pipewire_fd = None
         self.pipeline = None
         self.appsink = None
+        self.use_raw_fallback = False
+        self.restore_token = _load_restore_token()
         self.frame_width = None
         self.frame_height = None
 
@@ -111,6 +169,23 @@ class WaylandPortalSession:
         if self.pipeline is not None:
             return
 
+        try:
+            self._init_session()
+        except Exception:
+            if self.restore_token:
+                self.restore_token = None
+                _clear_restore_token()
+                if self.session_handle:
+                    try:
+                        self._call(SESSION, "Close", "()", (), object_path=self.session_handle)
+                    except Exception:
+                        pass
+                    self.session_handle = None
+                self._init_session()
+            else:
+                raise
+
+    def _init_session(self):
         created = self._request(
             REMOTE,
             "CreateSession",
@@ -122,11 +197,18 @@ class WaylandPortalSession:
             raise PortalError("RemoteDesktop portal returned an invalid session handle")
         self.session_handle = session_handle
 
+        devices_options = {
+            "types": GLib.Variant("u", 3),
+            "persist_mode": GLib.Variant("u", 2),
+        }
+        if self.restore_token:
+            devices_options["restore_token"] = GLib.Variant("s", self.restore_token)
+
         self._request(
             REMOTE,
             "SelectDevices",
             "(oa{sv})",
-            (self.session_handle, {"types": GLib.Variant("u", 3)}),
+            (self.session_handle, devices_options),
         )
 
         cursor_mode = 1
@@ -137,17 +219,22 @@ class WaylandPortalSession:
         except Exception:
             pass
 
+        sources_options = {
+            "types": GLib.Variant("u", 1),
+            "multiple": GLib.Variant("b", False),
+            "cursor_mode": GLib.Variant("u", cursor_mode),
+            "persist_mode": GLib.Variant("u", 2),
+        }
+        if self.restore_token:
+            sources_options["restore_token"] = GLib.Variant("s", self.restore_token)
+
         self._request(
             SCREENCAST,
             "SelectSources",
             "(oa{sv})",
             (
                 self.session_handle,
-                {
-                    "types": GLib.Variant("u", 1),
-                    "multiple": GLib.Variant("b", False),
-                    "cursor_mode": GLib.Variant("u", cursor_mode),
-                },
+                sources_options,
             ),
         )
 
@@ -157,6 +244,11 @@ class WaylandPortalSession:
             "(osa{sv})",
             (self.session_handle, "", {}),
         )
+        new_token = started.get("restore_token")
+        if new_token and isinstance(new_token, str):
+            self.restore_token = new_token
+            _save_restore_token(new_token)
+
         self.devices = int(started.get("devices", 0))
         if (self.devices & 3) != 3:
             raise PortalError("Desktop permission did not grant both pointer and keyboard control")
@@ -182,11 +274,25 @@ class WaylandPortalSession:
         if not ok:
             raise PortalError("Could not map the captured PipeWire frame")
         try:
-            data = bytes(mapping.data)
+            raw_data = bytes(mapping.data)
         finally:
             buffer.unmap(mapping)
-        if not data or len(data) > MAX_SCREENSHOT_BYTES:
-            raise PortalError("PipeWire produced an empty or oversized PNG frame")
+        if not raw_data:
+            raise PortalError("PipeWire produced an empty frame")
+        if self.use_raw_fallback:
+            caps = sample.get_caps()
+            if not caps or caps.get_size() == 0:
+                raise PortalError("Could not determine frame format from PipeWire stream")
+            structure = caps.get_structure(0)
+            width = structure.get_value("width")
+            height = structure.get_value("height")
+            if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+                raise PortalError("Invalid frame dimensions from PipeWire stream")
+            data = raw_rgba_to_png(width, height, raw_data)
+        else:
+            data = raw_data
+        if len(data) > MAX_SCREENSHOT_BYTES:
+            raise PortalError("PipeWire produced an oversized PNG frame")
         self.frame_width, self.frame_height = png_size(data)
         return data
 
@@ -385,9 +491,9 @@ class WaylandPortalSession:
         convert = Gst.ElementFactory.make("videoconvert", "convert")
         encoder = Gst.ElementFactory.make("pngenc", "encoder")
         sink = Gst.ElementFactory.make("appsink", "sink")
-        if not all((pipeline, source, convert, encoder, sink)):
+        if not all((pipeline, source, convert, sink)):
             raise PortalError(
-                "Required GStreamer elements are missing; install gstreamer1.0-pipewire and the standard base/good plugins"
+                "Required GStreamer elements are missing; install the PipeWire GStreamer plugin and standard base plugins"
             )
         source.set_property("fd", self.pipewire_fd)
         source.set_property("path", str(self.stream_node))
@@ -400,10 +506,18 @@ class WaylandPortalSession:
             sink.set_property("drop", True)
         pipeline.add(source)
         pipeline.add(convert)
-        pipeline.add(encoder)
-        pipeline.add(sink)
-        if not source.link(convert) or not convert.link(encoder) or not encoder.link(sink):
-            raise PortalError("Could not build the PipeWire-to-PNG GStreamer pipeline")
+        if encoder is not None:
+            self.use_raw_fallback = False
+            pipeline.add(encoder)
+            pipeline.add(sink)
+            if not source.link(convert) or not convert.link(encoder) or not encoder.link(sink):
+                raise PortalError("Could not build the PipeWire-to-PNG GStreamer pipeline")
+        else:
+            self.use_raw_fallback = True
+            sink.set_property("caps", Gst.Caps.from_string("video/x-raw,format=RGBA"))
+            pipeline.add(sink)
+            if not source.link(convert) or not convert.link(sink):
+                raise PortalError("Could not build the PipeWire raw video GStreamer pipeline")
         result = pipeline.set_state(Gst.State.PLAYING)
         if result == Gst.StateChangeReturn.FAILURE:
             pipeline.set_state(Gst.State.NULL)

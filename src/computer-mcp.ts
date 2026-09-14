@@ -8,6 +8,7 @@ import {
   type ComputerBackend,
   type ComputerObservation,
 } from "./computer.js";
+import { createPiLinkComputerBackend } from "./computer-wayland.js";
 import type { ToolAuditEventInput } from "./audit.js";
 
 export interface ComputerToolAuditSink {
@@ -15,6 +16,7 @@ export interface ComputerToolAuditSink {
 }
 
 interface ComputerToolResult {
+  [x: string]: unknown;
   content: Array<
     | { type: "text"; text: string }
     | { type: "image"; data: string; mimeType: string }
@@ -105,7 +107,7 @@ export function registerComputerTools(
   backend?: ComputerBackend,
 ): void {
   if (policy.computerControl !== true) return;
-  const selectedBackend = backend ?? createSystemComputerBackend();
+  const selectedBackend = backend ?? createPiLinkComputerBackend();
 
   server.registerTool("computer_observe", {
     title: "Observe Desktop",
