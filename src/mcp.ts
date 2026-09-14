@@ -1,5 +1,6 @@
 import { createMcpServer as createCoreMcpServer } from "./mcp-core.js";
 import { registerComputerTools } from "./computer-mcp.js";
+import { createPiLinkComputerBackend } from "./computer-wayland.js";
 import { authenticatedHarnessClientId } from "./harness.js";
 import { createGatewayMcpServer, gatewayWorkerSessionId } from "./llm-gateway-mcp.js";
 import { gatewayModeEnabled, getLlmGatewayRuntime } from "./llm-gateway-runtime.js";
@@ -30,6 +31,7 @@ export function createMcpServer(
       args[1],
       args[4],
       authenticatedHarnessClientId(args[0]),
+      createPiLinkComputerBackend(),
     );
     return handle;
   }
