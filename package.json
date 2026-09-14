@@ -13,6 +13,7 @@
   "files": [
     ".env.example",
     "dist",
+    "src/computer-wayland-helper.py",
     "chat-cli",
     "README.md",
     "LICENSE",
