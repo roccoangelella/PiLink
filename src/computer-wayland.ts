@@ -146,13 +146,18 @@ class LinuxWaylandPortalComputerBackend implements ComputerBackend {
 
     child.stdout.on("data", (chunk: Buffer) => this.consumeStdout(chunk));
     child.stderr.on("data", (chunk: Buffer) => {
+      if (this.child !== child) return;
       this.stderrTail = `${this.stderrTail}${chunk.toString("utf8")}`.slice(-MAX_HELPER_STDERR_BYTES);
     });
-    child.once("error", (error) => this.failHelper(new Error(`Wayland portal helper failed to start: ${safeMessage(error.message)}`)));
+    child.once("error", (error) => {
+      if (this.child !== child) return;
+      this.failHelper(new Error(`Wayland portal helper failed to start: ${safeMessage(error.message)}`));
+    });
     child.once("exit", (code, signal) => {
+      if (this.child !== child) return;
       const detail = this.stderrTail.trim();
       const suffix = detail ? `: ${safeMessage(detail)}` : "";
-      this.failHelper(new Error(`Wayland portal helper exited (${signal || code ?? "unknown"})${suffix}`));
+      this.failHelper(new Error(`Wayland portal helper exited (${signal || (code ?? "unknown")})${suffix}`));
     });
   }
 
