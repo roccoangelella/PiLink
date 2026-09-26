@@ -32,7 +32,7 @@ test("auto-wake is opt-in and restricted to graphical Linux CLI endpoint launche
 test("wake URLs require one random nonce and the exact prefill phrase", () => {
   const nonce = "0123456789abcdef0123456789abcdef";
   assert.equal(buildGatewayWakeUrl(nonce),
-    `https://chatgpt.com/?q=%40PiLink-desktop%20wake%20up&pilink_wake=${nonce}`);
+    `https://chatgpt.com/?q=%40PiLink%20Gateway%20wake%20up&pilink_wake=${nonce}`);
   assert.throws(() => buildGatewayWakeUrl("not-a-nonce"));
   assert.throws(() => buildGatewayWakeUrl("../123456789abcdef0123456789abcdef"));
 });
@@ -78,7 +78,7 @@ test("browser driver opens a nonce-tagged URL in Brave or the default browser, n
         const url = new URL(args.at(-1));
         assert.equal(url.origin, "https://chatgpt.com");
         assert.equal(url.pathname, "/");
-        assert.equal(url.searchParams.get("q"), "@PiLink-desktop wake up");
+        assert.equal(url.searchParams.get("q"), "@PiLink Gateway wake up");
         assert.match(url.searchParams.get("pilink_wake"), /^[0-9a-f]{32}$/);
         assert.equal(url.searchParams.size, 2);
         assert.deepEqual(args.slice(0, -1), browser === "brave-browser.desktop" ? ["--new-window"] : []);

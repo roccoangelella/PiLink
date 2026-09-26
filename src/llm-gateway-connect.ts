@@ -83,7 +83,7 @@ export function printGatewayReady(info: GatewayConnectorInfo): void {
   }
   lines.push(
     "  OAuth setup   pilink gateway connect",
-    "  Wake          @PiLink wake",
+    "  Wake          @PiLink Gateway wake up",
   );
   if (gatewayCompactOutputEnabled()) {
     lines.push("  Debug logs    PILINK_TERMINAL_LOGS=verbose pilink gateway start");

@@ -224,7 +224,7 @@ export class GatewayRequestQueueTimeoutError extends GatewayRequestTimeoutError 
 
   constructor(timeoutSeconds = GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS) {
     super(
-      `Gateway request timed out in queue after ${timeoutSeconds}s before being claimed by ChatGPT. Ensure your ChatGPT conversation is awake with '@PiLink wake'.`,
+      `Gateway request timed out in queue after ${timeoutSeconds}s before being claimed by ChatGPT. Ensure your ChatGPT conversation is awake with '@PiLink Gateway wake up'.`,
     );
     this.name = "GatewayRequestQueueTimeoutError";
     this.timeoutSeconds = timeoutSeconds;

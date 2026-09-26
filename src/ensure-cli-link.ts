@@ -12,12 +12,14 @@ export interface CliLinkResult {
   reason?: string;
   agentsResult?: CliLinkResult;
   singleAgentsResult?: CliLinkResult;
+  gatewayResult?: CliLinkResult;
 }
 
 export interface CliLinkOptions {
   cliTarget?: string;
   agentsCliTarget?: string;
   singleAgentsCliTarget?: string;
+  gatewayCliTarget?: string;
   homeDirectory?: string;
   pathValue?: string;
   nodeExecutable?: string;
@@ -97,6 +99,18 @@ export function ensureCliLink(options: CliLinkOptions = {}): CliLinkResult {
     } else {
       ensurePosixLauncher(binDirectory, singleAgentsCliTarget, "pilink-single-agent", info, warn);
     }
+  }
+
+  const defaultGatewayTarget = path.join(repositoryRoot, "dist", "terminal-launcher-cli.js");
+  const gatewayCliTarget = options.gatewayCliTarget
+    ? path.resolve(options.gatewayCliTarget)
+    : !options.cliTarget && fs.existsSync(defaultGatewayTarget)
+      ? defaultGatewayTarget
+      : undefined;
+  if (gatewayCliTarget && fs.existsSync(gatewayCliTarget)) {
+    primaryResult.gatewayResult = platform === "win32"
+      ? ensureWindowsShim(binDirectory, gatewayCliTarget, nodeExecutable, "pilink-cli", info, warn)
+      : ensurePosixLauncher(binDirectory, gatewayCliTarget, "pilink-cli", info, warn);
   }
 
   return primaryResult;

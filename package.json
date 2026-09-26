@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "bin": {
     "pilink": "dist/terminal-launcher.js",
+    "pilink-cli": "dist/terminal-launcher-cli.js",
     "pilink-agents": "dist/terminal-launcher-agents.js",
     "pilink-single-agents": "dist/terminal-launcher-single-agents.js",
     "pilink-single-agent": "dist/terminal-launcher-single-agents.js"

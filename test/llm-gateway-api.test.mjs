@@ -574,7 +574,7 @@ test("unclaimed request times out fast with 504 gateway_timeout and wake guidanc
   const body = await response.json();
   assert.equal(body.error.type, "gateway_timeout");
   assert.match(body.error.message, /timed out in queue after 1s before being claimed/i);
-  assert.match(body.error.message, /@PiLink wake/i);
+  assert.match(body.error.message, /@PiLink Gateway wake up/i);
   assert.ok(durationMs >= 900 && durationMs < 3500, `Expected queue timeout around 1s, got ${durationMs}ms`);
 
   // Verify store state has no pending queued request

@@ -251,7 +251,7 @@ test("waitForResult throws GatewayRequestQueueTimeoutError fast when queued past
       assert.ok(error instanceof GatewayRequestQueueTimeoutError);
       assert.ok(error instanceof GatewayRequestTimeoutError);
       assert.match(error.message, /timed out in queue after 1s before being claimed/i);
-      assert.match(error.message, /@PiLink wake/i);
+      assert.match(error.message, /@PiLink Gateway wake up/i);
       return true;
     },
   );

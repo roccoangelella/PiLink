@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ensureCliLink, selectCliBinDirectory } from "../dist/ensure-cli-link.js";
+import { resolveGatewayCliArgs } from "../dist/terminal-launcher-cli.js";
 
 function fixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "pilink-cli-link-"));
@@ -43,6 +44,28 @@ test("source build exposes pilink through an existing user PATH directory", () =
       assert.notEqual(fs.statSync(result.linkPath).mode & 0o111, 0);
       assert.notEqual(fs.statSync(launcher).mode & 0o111, 0);
     }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("source build exposes an isolated pilink-cli gateway launcher without overwriting other commands", () => {
+  const { home, bin, launcher } = fixture();
+  const gateway = path.join(path.dirname(launcher), "terminal-launcher-cli.js");
+  fs.writeFileSync(gateway, "#!/usr/bin/env node\n", { mode: 0o600 });
+  const custom = path.join(bin, process.platform === "win32" ? "pilink-cli.cmd" : "pilink-cli");
+  try {
+    const options = { cliTarget: launcher, gatewayCliTarget: gateway, homeDirectory: home,
+      pathValue: bin, platform: process.platform, env: {}, info: () => {}, warn: () => {} };
+    const first = ensureCliLink(options);
+    assert.equal(first.gatewayResult.status, "linked");
+    assert.equal(first.gatewayResult.linkPath, custom);
+    assert.equal(ensureCliLink(options).gatewayResult.status, "already-linked");
+    assert.deepEqual(resolveGatewayCliArgs([]).args, ["gateway", "status"]);
+    assert.deepEqual(resolveGatewayCliArgs(["status"]).args, ["gateway", "status"]);
+    fs.writeFileSync(custom, "unrelated executable");
+    assert.equal(ensureCliLink(options).gatewayResult.status, "conflict");
+    assert.equal(fs.readFileSync(custom, "utf8"), "unrelated executable");
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

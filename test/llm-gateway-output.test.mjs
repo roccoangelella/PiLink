@@ -22,7 +22,7 @@ const compactScript = String.raw`
     "  ChatGPT MCP   https://mcp.example.com/sse",
     "  Local API     http://127.0.0.1:3210/v1",
     "  OAuth setup   pilink gateway connect",
-    "  Wake          @PiLink wake",
+    "  Wake          @PiLink Gateway wake up",
   ]);
 `;
 
@@ -55,7 +55,7 @@ test("gateway compact output suppresses routine noise and keeps actionable event
   assert.match(result.stderr, /Connection details/u);
   assert.match(result.stderr, /ChatGPT MCP\s+https:\/\/mcp\.example\.com\/sse/u);
   assert.ok(result.stderr.indexOf("Connection details") < result.stderr.indexOf("ChatGPT MCP"));
-  assert.ok(result.stderr.indexOf("ChatGPT MCP") < result.stderr.indexOf("Wake          @PiLink wake"));
+  assert.ok(result.stderr.indexOf("ChatGPT MCP") < result.stderr.indexOf("Wake          @PiLink Gateway wake up"));
 });
 
 test("PILINK_TERMINAL_LOGS=verbose restores raw gateway diagnostics", () => {

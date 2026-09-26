@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const WAKE_TEXT = "@PiLink-desktop wake up";
+  const WAKE_TEXT = "@PiLink Gateway wake up";
   const COMPOSER_SELECTOR = '#prompt-textarea, textarea, [contenteditable="true"], [contenteditable=""]';
   const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"], button#composer-submit-button, button[data-testid="composer-submit-button"], button[aria-label="Send prompt"], button[aria-label="Send message"]';
   const MAX_WAIT_MS = 15000;

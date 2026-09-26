@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
-const WAKE = "@PiLink-desktop wake up";
+const WAKE = "@PiLink Gateway wake up";
 const URL_OK = `https://chatgpt.com/?q=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}`;
 
 class FakeClock {

@@ -10,7 +10,7 @@ const AUTO_WAKE_GRACE_MS = 500;
 const AUTO_WAKE_CONFIRM_MS = 30_000;
 const AUTO_WAKE_SUSPENDED_POLL_MS = 5_000;
 const AUTO_WAKE_MAX_FAILED_CYCLES = 1;
-const CHATGPT_WAKE_TEXT = "@PiLink-desktop wake up";
+const CHATGPT_WAKE_TEXT = "@PiLink Gateway wake up";
 
 type WakeOutcome = "confirmed" | "not_needed" | "pending";
 
