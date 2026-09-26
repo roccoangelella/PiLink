@@ -59,8 +59,10 @@ export async function openGatewayConnectorWindow(waitMilliseconds = 30_000): Pro
   );
 }
 
-export function printGatewayReady(info: GatewayConnectorInfo): void {
-  const interactiveApproval = process.stdin.isTTY === true && process.stderr.isTTY === true && process.env.CI !== "true";
+export function printGatewayReady(
+  info: GatewayConnectorInfo,
+  interactiveApproval = process.stdin.isTTY === true && process.stderr.isTTY === true && process.env.CI !== "true",
+): void {
   const lines = [
     "",
     "PiLink Gateway",
@@ -94,7 +96,10 @@ export function printGatewayReady(info: GatewayConnectorInfo): void {
 export async function runGatewayConnect(): Promise<number> {
   try {
     const info = await openGatewayConnectorWindow(3_000);
-    printGatewayReady(info);
+    // `connect` runs in a different process from the server. Its TTY cannot
+    // approve OAuth requests on behalf of a headless service; always show the
+    // one-time owner pairing URL and verification code instead.
+    printGatewayReady(info, false);
     return 0;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

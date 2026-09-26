@@ -254,9 +254,12 @@ test("runGatewayConnect returns 0 on success and 1 on failure", async () => {
 
   const originalStderrWrite = process.stderr.write;
   try {
-    process.stderr.write = () => true;
+    let output = "";
+    process.stderr.write = (chunk) => { output += chunk; return true; };
     const successCode = await runGatewayConnect();
     assert.equal(successCode, 0);
+    assert.match(output, /Owner pairing\s+https:\/\/mcp\.example\.com\/oauth\/pair/u);
+    assert.match(output, /Verify code\s+RUN2-PASS/u);
 
     statusCode = 404; // Non-retryable failure triggers immediate rejection in runGatewayConnect
     const failureCode = await runGatewayConnect();
