@@ -8,7 +8,7 @@ import dotenv from "dotenv";
 import { defaultConfigPath } from "./config.js";
 import { deriveGatewayApiKey } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp, isLoopbackPortAvailable } from "./llm-gateway-ports.js";
-import { runGatewayBrowserSetup, stageGatewayBrowserExtension } from "./llm-gateway-browser-setup.js";
+import { loadedGatewayBrowserExtension, runGatewayBrowserSetup, stageGatewayBrowserExtension } from "./llm-gateway-browser-setup.js";
 
 export interface VerifiedGatewayModel {
   baseUrl: string;
@@ -34,8 +34,7 @@ export async function ensureLocalGateway(
   }
   const values = dotenv.parse(fs.readFileSync(configPath));
   if (verified) {
-    if (!options.stage && process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true" &&
-        process.platform === "linux" && values.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+    if (shouldOfferGatewayBrowserSetup(values.PI_LLM_GATEWAY_AUTO_WAKE, options.stage)) {
       try { await runGatewayBrowserSetup(false); }
       catch (error) { console.error(`[PiLink] Browser setup unavailable: ${error instanceof Error ? error.message : "unknown error"}`); }
     }
@@ -63,6 +62,14 @@ export async function ensureLocalGateway(
       acquired = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (recoverStaleGatewayLock(lock)) {
+        try {
+          fs.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 });
+          acquired = true;
+        } catch (retryError) {
+          if ((retryError as NodeJS.ErrnoException).code !== "EEXIST") throw retryError;
+        }
+      }
     }
     if (acquired) {
       try {
@@ -75,8 +82,7 @@ export async function ensureLocalGateway(
         throw new Error(`Port ${port} or ${apiPort} is occupied by an unverified process; refusing to start or repoint the gateway.`);
       }
       try {
-        if (!options.stage && process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true" &&
-            process.platform === "linux" && values.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+        if (shouldOfferGatewayBrowserSetup(values.PI_LLM_GATEWAY_AUTO_WAKE, options.stage)) {
           // Set the opt-in before starting the server so wake works on the
           // very first launch after the browser's one-time manual approval.
           await runGatewayBrowserSetup(false);
@@ -98,6 +104,33 @@ export async function ensureLocalGateway(
   } finally {
     if (acquired) fs.rmSync(lock, { force: true });
   }
+}
+
+export function recoverStaleGatewayLock(lock: string): boolean {
+  try {
+    const state = fs.lstatSync(lock);
+    if (!state.isFile() || state.isSymbolicLink() || state.size > 32 ||
+        (typeof process.getuid === "function" && state.uid !== process.getuid())) return false;
+    const text = fs.readFileSync(lock, "utf8").trim();
+    if (!/^[1-9]\d{0,9}$/u.test(text)) return false;
+    const pid = Number(text);
+    try { process.kill(pid, 0); return false; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false; }
+    const current = fs.lstatSync(lock);
+    if (state.dev !== current.dev || state.ino !== current.ino || fs.readFileSync(lock, "utf8").trim() !== text) return false;
+    fs.unlinkSync(lock);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shouldOfferGatewayBrowserSetup(wakeSetting: string | undefined, injectedStage?: () => string): boolean {
+  if (injectedStage || process.platform !== "linux" || wakeSetting === "true") return false;
+  // An interactive launch offers the one-time install. In a headless launch,
+  // auto-enable only an extension already loaded in the default browser.
+  return (process.stdin.isTTY === true && process.stderr.isTTY === true && process.env.CI !== "true") ||
+    loadedGatewayBrowserExtension();
 }
 
 function startDetachedGateway(configPath: string): Promise<void> {

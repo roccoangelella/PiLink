@@ -134,13 +134,14 @@ if (command !== "gateway") {
           const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
           const info = await openGatewayConnectorWindow();
           printGatewayReady(info);
-          if (process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true" &&
-              process.env.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
-            // Browser approval cannot be installed silently into a personal
-            // Chrome/Brave profile. Stage and open the extension page here,
-            // instead of leaving the one-time setup undiscoverable.
-            const { runGatewayBrowserSetup } = await import("./llm-gateway-browser-setup.js");
-            await runGatewayBrowserSetup(false);
+          if (process.env.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+            // Offer interactive browser approval; in a headless restart only
+            // enable an extension already verified in the default profile.
+            const { loadedGatewayBrowserExtension, runGatewayBrowserSetup } = await import("./llm-gateway-browser-setup.js");
+            if ((process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") ||
+                loadedGatewayBrowserExtension()) {
+              await runGatewayBrowserSetup(false);
+            }
           }
         } else {
           process.exitCode = process.exitCode || 1;

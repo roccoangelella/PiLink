@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { deriveGatewayApiKey } from "../dist/llm-gateway-api.js";
-import { ensureLocalGateway, ensurePiGatewayModel, verifyLocalGateway } from "../dist/pilink-cli-agent.js";
+import { ensureLocalGateway, ensurePiGatewayModel, recoverStaleGatewayLock, verifyLocalGateway } from "../dist/pilink-cli-agent.js";
 
 const jwtSecret = "a".repeat(32);
 const bootstrapSecret = "b".repeat(32);
@@ -154,6 +154,22 @@ test("concurrent pilink-cli calls auto-start only one configured gateway", async
   assert.equal(results[0].baseUrl, `http://127.0.0.1:${apiPort}/v1`);
   assert.equal(results[1].baseUrl, results[0].baseUrl);
   assert.equal(fs.existsSync(path.join(root, ".pilink-gateway-autostart.lock")), false);
+});
+
+test("gateway auto-start recovers a dead lock but keeps live and symlinked locks", (t) => {
+  if (process.platform !== "linux") return;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pilink-cli-stale-lock-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const lock = path.join(root, "autostart.lock");
+  fs.writeFileSync(lock, String(process.pid), { mode: 0o600 });
+  assert.equal(recoverStaleGatewayLock(lock), false);
+  assert.equal(fs.existsSync(lock), true);
+  fs.writeFileSync(lock, "2147483647", { mode: 0o600 });
+  assert.equal(recoverStaleGatewayLock(lock), true);
+  assert.equal(fs.existsSync(lock), false);
+  fs.symlinkSync(root, lock);
+  assert.equal(recoverStaleGatewayLock(lock), false);
+  assert.equal(fs.lstatSync(lock).isSymbolicLink(), true);
 });
 
 test("auto-start refuses an occupied impostor port instead of moving the gateway", async (t) => {

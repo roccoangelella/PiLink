@@ -88,11 +88,11 @@ See [Runtime mode selection](docs/operations/mode-selection.md) and the [ChatGPT
 
 ## ChatGPT LLM Gateway
 
-PiLink can run a persistent ChatGPT conversation as a local OpenAI-compatible
-model provider for coding agent harnesses (such as [Pi Agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)):
+PiLink exposes a ChatGPT conversation as a local model for coding agents such as [Pi Agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent):
 
 ```bash
-pilink start --mode cli       # or: pilink gateway start
+pilink gateway start         # first-time interactive gateway setup
+pilink-cli                  # thereafter: start Pi Agent here; auto-start the configured gateway if stopped
 ```
 
 - **OpenAI-compatible endpoint:** Loopback API at `http://127.0.0.1:3210/v1`
@@ -109,7 +109,7 @@ pilink start --mode cli       # or: pilink gateway start
   chunks, multi-part text messages, and standard client parameters (`store`,
   `max_completion_tokens`, `temperature`, `top_p`, etc.).
 
-The experimental Chrome/Brave wake extension is built automatically by `npm run build` but stays off until one-time browser approval. Run `pilink gateway browser-extension` to stage it and open the browser's Extensions page; select **Load unpacked** once, then confirm in the setup terminal. Browser security prevents npm from silently installing it in an existing user profile. See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for details and limitations.
+The Chrome/Brave wake extension is built automatically by `npm run build` and staged during gateway setup. The browser still requires one-time **Developer mode → Load unpacked** approval. Once the extension is detected at PiLink's staged path in the default browser profile, `pilink gateway browser-extension` enables wake without an extra `yes`; a running gateway picks up the change without restarting. When detection is unavailable, the setup terminal asks you to confirm loading it. `pilink-cli` launches Pi Agent from your current folder, verifies or safely auto-starts the configured gateway, and keeps local tool execution with Pi Agent. See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for details and limitations.
 
 ## Start PiLink from VS Code
 
