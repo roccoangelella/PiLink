@@ -119,6 +119,12 @@ if (command === "init") {
 } else if (command === "chat") {
   resolveServerReady(false);
   openChatCli();
+} else if (command === "connect") {
+  resolveServerReady(false);
+  void reconnectChatGpt(args).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 } else if (command === "install-vscode-plugin") {
   resolveServerReady(false);
   void installVscodePlugin(args).catch((error: unknown) => {
@@ -147,7 +153,7 @@ if (command === "init") {
 }
 
 function printUsage(): void {
-  console.error("Usage: pilink <init|start|serve|chat|install-vscode-plugin|reset|hosting|agent-auth|clients> [options]");
+  console.error("Usage: pilink <init|start|serve|connect|chat|install-vscode-plugin|reset|hosting|agent-auth|clients> [options]");
   console.error("");
   console.error("Start a public ChatGPT-facing PiLink endpoint:");
   console.error("  pilink start                              Choose an experience, then configure managed HTTPS hosting");
@@ -166,6 +172,7 @@ function printUsage(): void {
   console.error("");
   console.error("Other commands:");
   console.error("  pilink install-vscode-plugin              Install or update PiLink for VS Code");
+  console.error("  pilink connect                            Reopen ChatGPT OAuth pairing for a running single/agents MCP server");
   console.error("  pilink chat                               Open the collaboration monitor manually");
   console.error("  pilink clients list");
   console.error("  pilink clients disable <client-id>");
@@ -1493,6 +1500,25 @@ interface CliOwnerPairing {
   pairingUrl: string;
   verificationCode: string;
   expiresAt: string;
+}
+
+async function reconnectChatGpt(args: string[]): Promise<void> {
+  if (args.length) throw new Error("Usage: pilink connect (no options)");
+  if (!fs.existsSync(configPath)) throw new Error("Start PiLink first to create its private configuration.");
+  loadEnvironment();
+  const config = loadRuntimeConfig();
+  if (process.env.PI_LLM_GATEWAY_ENABLED === "true") {
+    throw new Error("Model gateways use 'pilink gateway connect'; full-access MCP servers use 'pilink connect'.");
+  }
+  if (config.oauthConsentMode !== "paired" || !config.publicChatGptDcr) {
+    throw new Error("This PiLink instance does not have paired ChatGPT Dynamic Client Registration enabled.");
+  }
+  const serverUrl = config.serverUrl.replace(/\/$/u, "");
+  if (!serverUrl.startsWith("https://")) throw new Error("Start PiLink with its public HTTPS hosting before connecting ChatGPT.");
+  const pairing = await requestOwnerPairing(config.port, config.bootstrapSecret, serverUrl);
+  console.error(`Connect a new ChatGPT MCP using ${serverUrl}/sse and OAuth Dynamic Client Registration.`);
+  console.error("Approve the connection in the running PiLink terminal, or use the private owner-pairing page below.");
+  openOwnerPairing(pairing);
 }
 
 async function requestOwnerPairing(

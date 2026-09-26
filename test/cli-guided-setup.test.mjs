@@ -703,6 +703,42 @@ test("automatic router mappings pass cancellation to router operations", async (
   await mappings.release();
 });
 
+test("connect explains that a fresh MCP server must be started first", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-connect-empty-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const result = await runCli(["connect"], root, { PILINK_CONFIG: path.join(root, ".env") });
+  assert.equal(result.code, 1);
+  assert.match(result.output, /Start PiLink first/i);
+});
+
+test("connect reopens owner pairing for a running HTTPS MCP without exposing the bootstrap secret", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-connect-pair-"));
+  const configPath = path.join(root, ".env");
+  let requests = 0;
+  const server = http.createServer((request, response) => {
+    requests++;
+    assert.equal(request.url, "/admin/oauth/pairing");
+    assert.equal(request.method, "POST");
+    assert.equal(request.headers.authorization, `Bearer ${"b".repeat(32)}`);
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({
+      pairing_url: `https://mcp.example.com/oauth/pair?code=${"a".repeat(32)}`,
+      verification_code: "ABCD-EFGH",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    }));
+  });
+  const port = await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+  t.after(async () => { await new Promise((resolve) => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
+  await writeConfig(configPath, root, port);
+  await fs.appendFile(configPath, "\nPI_OAUTH_CONSENT_MODE=paired\nPI_OAUTH_PUBLIC_CHATGPT_DCR=true\nSERVER_URL=https://mcp.example.com\n");
+  const result = await runCli(["connect"], root, { PILINK_CONFIG: configPath, PI_BROWSER_OPEN: "never" });
+  assert.equal(result.code, 0);
+  assert.equal(requests, 1);
+  assert.match(result.output, /mcp\.example\.com\/sse/);
+  assert.match(result.output, /owner pairing URL/i);
+  assert.doesNotMatch(result.output, /Bearer b{32}/);
+});
+
 test("reset --yes removes generated files without removing unrelated data", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-reset-"));
   const configPath = path.join(root, ".env");
