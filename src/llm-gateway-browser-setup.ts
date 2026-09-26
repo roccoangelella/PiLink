@@ -155,9 +155,9 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
     console.error("If the extension is missing or disabled, disable wake with PI_LLM_GATEWAY_AUTO_WAKE=false.");
     return;
   }
-  console.error(`Chrome/Brave wake extension prepared at: ${location}`);
+  console.error(`Chrome/Brave/Chromium wake extension prepared at: ${location}`);
   console.error("One-time browser approval is required; npm cannot silently install an unpacked extension in an existing browser profile.");
-  console.error("In Brave/Chrome Extensions, enable Developer mode, choose 'Load unpacked', and select the directory above.");
+  console.error("In Brave/Chrome/Chromium Extensions, enable Developer mode, choose 'Load unpacked', and select the directory above.");
   console.error("After confirming it is enabled, return to this terminal.");
   if (!process.stdin.isTTY || !process.stderr.isTTY) {
     console.error("Non-interactive setup: after loading the extension in your browser, run 'pilink gateway browser-extension --enable'.");
@@ -167,12 +167,13 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
     const browser = execFileSync("xdg-settings", ["get", "default-web-browser"], { encoding: "utf8", timeout: 1500 }).trim();
     if (browser === "brave-browser.desktop") execFileSync("brave", ["--new-tab", "brave://extensions"], { timeout: 3000, stdio: "ignore" });
     else if (browser === "google-chrome.desktop") execFileSync("google-chrome", ["--new-tab", "chrome://extensions"], { timeout: 3000, stdio: "ignore" });
+    else if (browser === "chromium.desktop") execFileSync("chromium", ["--new-tab", "chrome://extensions"], { timeout: 3000, stdio: "ignore" });
   } catch {
     console.error("Open brave://extensions or chrome://extensions in your browser if its Extensions page did not open.");
   }
   const readline = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const answer = (await readline.question("Is the extension enabled in Chrome/Brave? Type yes to enable auto-wake (yes/no): ")).trim().toLowerCase();
+    const answer = (await readline.question("Is the extension enabled in Chrome/Brave/Chromium? Type yes to enable auto-wake (yes/no): ")).trim().toLowerCase();
     if (answer !== "yes") {
       console.error("Browser wake remains disabled; re-run setup whenever you are ready.");
       return;

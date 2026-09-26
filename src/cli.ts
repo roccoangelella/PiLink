@@ -116,7 +116,7 @@ if (command !== "gateway") {
       process.env.PI_CHAT_CLI = "off";
       process.env.PI_UNSAFE_FULL_ACCESS = "false";
       try {
-        const { installGatewayCompactOutput } = await import("./llm-gateway-output.js");
+        const { installGatewayCompactOutput, writeGatewayCompactLine } = await import("./llm-gateway-output.js");
         installGatewayCompactOutput();
         const { prepareGatewayLaunch } = await import("./llm-gateway-launch.js");
         await prepareGatewayLaunch(subcommand);
@@ -141,6 +141,8 @@ if (command !== "gateway") {
             if ((process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") ||
                 loadedGatewayBrowserExtension()) {
               await runGatewayBrowserSetup(false);
+            } else {
+              writeGatewayCompactLine("Browser wake (optional): run 'pilink gateway browser-extension' to prepare the Chrome/Brave/Chromium extension, then approve Developer mode → Load unpacked in your browser. Auto-wake stays off until approval.");
             }
           }
         } else {
@@ -213,7 +215,7 @@ function printGatewayUsage(): void {
   console.error("  pilink gateway serve              Serve the configured gateway origin and open a short ChatGPT DCR window");
   console.error("  pilink gateway connect            Reopen the short ChatGPT OAuth/DCR registration window");
   console.error("  pilink gateway status             Read local gateway lifecycle and queue status");
-  console.error("  pilink gateway browser-extension  Prepare Chrome/Brave wake extension and open one-time install instructions");
+  console.error("  pilink gateway browser-extension  Prepare Chrome/Brave/Chromium wake extension and show one-time browser approval instructions");
   console.error("  pilink gateway browser-extension --enable  Enable wake after loading the extension in the browser");
   console.error("  pilink gateway release [reason]   Permanently end the active gateway loop until the server is restarted");
   console.error("");
@@ -222,7 +224,7 @@ function printGatewayUsage(): void {
   console.error("If the configured MCP port is busy, gateway start/serve selects the next free MCP/API loopback pair (3200 -> 3201, API 3210 -> 3211).");
   console.error("The selected fallback MCP port is saved so managed hosting and subsequent launches stay consistent.");
   console.error("The OpenAI-compatible API is loopback-only and normally uses MCP PORT + 10.");
-  console.error("Linux browser wake is prepared during interactive gateway setup. Approve the one-time Load unpacked action in Chrome/Brave; auto-wake activates after that approval, never silently before it.");
+  console.error("Linux browser wake is prepared during interactive gateway setup. In headless mode, run 'pilink gateway browser-extension' for instructions. Approve one-time Load unpacked in Chrome/Brave/Chromium; auto-wake never activates silently before approval.");
   console.error("POST /v1/chat/completions supports messages, function tools/tool_calls, tool_choice, parallel_tool_calls, and buffered stream=true/false.");
   console.error("GET /v1/models exposes the compatibility model id 'pilink'; the actual model remains selected in the ChatGPT conversation.");
   console.error("Gateway mode never executes caller-advertised tools. The local agent harness owns permissions and execution.");

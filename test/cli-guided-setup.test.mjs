@@ -93,6 +93,39 @@ test("launch mode flags reject invalid and incompatible choices clearly", async 
   const endpointHelp = await runCli(["start", "--mode", "cli", "--help"], root, {});
   assert.equal(endpointHelp.code, 0);
   assert.match(endpointHelp.output, /start --mode cli\s+ChatGPT model gateway/);
+  const gatewayHelp = await runCli(["gateway", "--help"], root, {});
+  assert.equal(gatewayHelp.code, 0);
+  assert.match(gatewayHelp.output, /Chrome\/Brave\/Chromium/);
+  assert.match(gatewayHelp.output, /Load unpacked/);
+  assert.match(gatewayHelp.output, /pilink gateway browser-extension/);
+});
+
+test("headless gateway serve tells the user how to approve the Chromium wake extension", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-gateway-browser-guide-"));
+  const configPath = path.join(root, ".env");
+  const port = await availablePort();
+  const workspace = path.join(root, "workspace");
+  await fs.mkdir(workspace);
+  await writeConfig(configPath, workspace, port, path.join(root, "private"));
+  const cliProcess = spawnCli(["gateway", "serve"], root, {
+    PILINK_CONFIG: configPath,
+    HOME: root,
+    XDG_CONFIG_HOME: path.join(root, "user-config"),
+    XDG_DATA_HOME: path.join(root, "user-data"),
+  });
+  t.after(async () => {
+    cliProcess.kill("SIGINT");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  let output = "";
+  cliProcess.stdout.on("data", (chunk) => { output += chunk; });
+  cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("Browser wake (optional):")).catch((error) => {
+    throw new Error(`${error.message}\nGateway output:\n${output}`);
+  });
+  assert.match(output, /pilink gateway browser-extension/);
+  assert.match(output, /Developer mode → Load unpacked/);
+  assert.match(output, /Auto-wake stays off until approval/);
 });
 
 test("install-vscode-plugin installs VSPiLink once without starting PiLink or opening VS Code", async (t) => {
