@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { enableGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
+import { enableGatewayBrowserWake, loadedGatewayBrowserExtension, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
 
 const source = fileURLToPath(new URL("../browser-extension/", import.meta.url));
 
@@ -26,6 +26,29 @@ test("setup stages only the narrowly scoped Chrome/Brave extension and is idempo
   assert.throws(() => stageGatewayBrowserExtension({ source, destination }), /another PiLink checkout/);
   const stat = await fs.stat(destination);
   assert.equal(stat.mode & 0o777, 0o700);
+});
+
+test("an unpacked extension already loaded by Brave enables wake without a second yes", async (t) => {
+  if (process.platform !== "linux") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-already-loaded-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, "staged");
+  const profileRoot = path.join(root, "Brave-Browser");
+  const profile = path.join(profileRoot, "Default");
+  await fs.mkdir(profile, { recursive: true });
+  stageGatewayBrowserExtension({ source, destination });
+  const entry = { location: 4, path: destination, active_permissions: { scriptable_host: ["https://chatgpt.com/*"] }, withholding_permissions: false };
+  const pref = path.join(profile, "Preferences");
+  const save = (value) => fs.writeFile(pref, JSON.stringify({ extensions: { settings: { unrelated: { location: 4, path: "/nonexistent/extension" }, pilink: value } } }));
+  assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
+  await save(entry);
+  assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), true);
+  await save({ ...entry, state: 0 });
+  assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
+  await save({ ...entry, path: path.join(root, "another-extension") });
+  assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
+  await save({ ...entry, active_permissions: { scriptable_host: ["https://example.com/*"] } });
+  assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
 });
 
 test("setup refuses to overwrite a symlink destination", async (t) => {
