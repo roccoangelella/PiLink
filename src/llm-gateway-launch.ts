@@ -8,7 +8,7 @@ import {
   normalizeFixedDomainTunnelId,
   provisionFixedDomainTunnel,
 } from "./hosting/fixed-domain.js";
-import { selectGatewayPorts } from "./llm-gateway-ports.js";
+import { selectGatewayPorts, type GatewayPortSelection } from "./llm-gateway-ports.js";
 
 export async function prepareGatewayLaunch(subcommand: "start" | "serve"): Promise<void> {
   const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
@@ -18,6 +18,7 @@ export async function prepareGatewayLaunch(subcommand: "start" | "serve"): Promi
   const config = loadRuntimeConfig();
   const explicitApiPort = optionalPort(process.env.PI_LLM_GATEWAY_PORT, "PI_LLM_GATEWAY_PORT");
   const selection = await selectGatewayPorts(config.port, explicitApiPort);
+  assertGatewayAutoStartPorts(selection);
 
   process.env.PORT = String(selection.mcpPort);
   if (explicitApiPort === undefined) process.env.PI_LLM_GATEWAY_PORT = String(selection.apiPort);
@@ -41,6 +42,12 @@ export async function prepareGatewayLaunch(subcommand: "start" | "serve"): Promi
     `OpenAI-compatible API: http://127.0.0.1:${selection.apiPort}/v1`,
   );
   console.error(`[Gateway] Saved PORT=${selection.mcpPort} in ${configPath} so subsequent PiLink launches use the same reachable origin.`);
+}
+
+export function assertGatewayAutoStartPorts(selection: GatewayPortSelection, env: NodeJS.ProcessEnv = process.env): void {
+  if (selection.changed && env.PILINK_GATEWAY_NO_PORT_FALLBACK === "true") {
+    throw new Error(`Automatic gateway startup refused to change the configured MCP/API ports ${selection.requestedMcpPort}/${selection.requestedApiPort}. Another process may own the original endpoint.`);
+  }
 }
 
 async function repointFixedDomainGateway(configPath: string, mcpPort: number): Promise<void> {

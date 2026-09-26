@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { startGatewayApi } from "../dist/llm-gateway-api.js";
-import { probeGatewayReadiness } from "../dist/llm-gateway-runtime.js";
+import { probeGatewayReadiness, watchGatewayBrowserApproval } from "../dist/llm-gateway-runtime.js";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
 
 const FIXTURE_API_KEY = "fixture-api-key";
@@ -28,6 +28,30 @@ function listen(server, port = 0) {
     server.listen({ host: "127.0.0.1", port }, () => resolve(server.address().port));
   });
 }
+
+test("browser approval enables and disables a running gateway without a restart", async (t) => {
+  if (process.platform !== "linux") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-wake-approval-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const configPath = path.join(root, ".env");
+  await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=false\n", { mode: 0o600 });
+  const updates = [];
+  const watcher = watchGatewayBrowserApproval({
+    configPath, intervalMs: 10,
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true" },
+    store: { async status() { return { state: "released" }; } },
+    onChange: (enabled) => updates.push(enabled),
+  });
+  t.after(() => watcher.close());
+  assert.equal(watcher.isActive(), false);
+  await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=true\n", { mode: 0o600 });
+  for (let i = 0; i < 50 && !watcher.isActive(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(watcher.isActive(), true);
+  await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=false\n", { mode: 0o600 });
+  for (let i = 0; i < 50 && watcher.isActive(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(watcher.isActive(), false);
+  assert.ok(updates.includes(true));
+});
 
 test("closing a port-0 gateway before listen cancels the pending bind", async (t) => {
   const messages = [];

@@ -25,7 +25,7 @@ export interface GatewayApiOptions {
   host?: string;
   profile?: GatewayApiProfile;
   log?: (message: string) => void;
-  allowInactiveQueueForAutoWake?: boolean;
+  allowInactiveQueueForAutoWake?: boolean | (() => boolean);
 }
 
 export interface StartedGatewayApi {
@@ -224,10 +224,13 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
     }
 
     try {
-      if (!await options.store.isAvailable() && !options.allowInactiveQueueForAutoWake) {
+      const mayQueueForWake = typeof options.allowInactiveQueueForAutoWake === "function"
+        ? options.allowInactiveQueueForAutoWake()
+        : options.allowInactiveQueueForAutoWake === true;
+      if (!await options.store.isAvailable() && !mayQueueForWake) {
         res.status(503).json(openAiError(
           "pilink_chat_inactive",
-          "No active ChatGPT gateway loop. Send the PiLink wake command in the connected ChatGPT conversation first.",
+          "No active ChatGPT gateway loop. Send '@PiLink Gateway wake up' in its connected ChatGPT conversation. Automatic wake requires one-time Brave/Chrome extension approval: run 'pilink gateway browser-extension'.",
         ));
         return;
       }

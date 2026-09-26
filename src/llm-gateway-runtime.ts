@@ -1,5 +1,7 @@
-import { loadRuntimeConfig } from "./config.js";
-import { gatewayAutoWakeEnabled, startGatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
+import fs from "node:fs";
+import dotenv from "dotenv";
+import { defaultConfigPath, loadRuntimeConfig } from "./config.js";
+import { gatewayAutoWakeEnabled, startGatewayAutoWakeSupervisor, type GatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
 import { deriveGatewayApiKey, startGatewayApi, type StartedGatewayApi } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import {
@@ -62,7 +64,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     claimLeaseSeconds,
   });
   const activation = store.activate();
-  const autoWakeEnabled = gatewayAutoWakeEnabled();
+  const autoWakeAdmission = { enabled: gatewayAutoWakeEnabled() };
   let api: StartedGatewayApi;
   try {
     api = startGatewayApi({
@@ -72,7 +74,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
       requestTimeoutSeconds,
       queueTimeoutSeconds,
       profile,
-      allowInactiveQueueForAutoWake: autoWakeEnabled,
+      allowInactiveQueueForAutoWake: () => autoWakeAdmission.enabled,
     });
   } catch (error) {
     // Activation starts before synchronous API validation/bind setup. Consume
@@ -90,13 +92,61 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     console.error(`[Gateway] Unable to become ready: ${error instanceof Error ? error.message : String(error)}`);
     void api.close().catch(() => undefined);
   });
-  if (autoWakeEnabled) {
-    void ready.then(() => {
-      startGatewayAutoWakeSupervisor({ store });
-    }).catch(() => undefined);
-  }
+  void ready.then(() => {
+    watchGatewayBrowserApproval({
+      store,
+      onChange(enabled) { autoWakeAdmission.enabled = enabled; },
+    });
+  }).catch(() => undefined);
   sharedRuntime = { store, api, apiKey, ready };
   return sharedRuntime;
+}
+
+export function watchGatewayBrowserApproval(options: {
+  store: Pick<LlmGatewayJobStore, "status">;
+  configPath?: string;
+  env?: NodeJS.ProcessEnv;
+  intervalMs?: number;
+  onChange?: (enabled: boolean) => void;
+}): { isActive(): boolean; close(): void } {
+  const configPath = options.configPath ?? process.env.PILINK_CONFIG ?? defaultConfigPath();
+  const env = options.env ?? process.env;
+  let supervisor: GatewayAutoWakeSupervisor | undefined;
+  let active = false;
+  let closed = false;
+  const refresh = (): void => {
+    if (closed) return;
+    let approval = env.PI_LLM_GATEWAY_AUTO_WAKE;
+    try {
+      if (fs.existsSync(configPath) && fs.statSync(configPath).isFile() && !fs.lstatSync(configPath).isSymbolicLink()) {
+        const configured = dotenv.parse(fs.readFileSync(configPath));
+        if (configured.PI_LLM_GATEWAY_AUTO_WAKE !== undefined) approval = configured.PI_LLM_GATEWAY_AUTO_WAKE;
+      }
+    } catch {
+      return; // Keep the previous policy if a config update is temporarily unreadable.
+    }
+    const effectiveEnv = { ...env, PI_LLM_GATEWAY_AUTO_WAKE: approval };
+    const desired = gatewayAutoWakeEnabled(effectiveEnv);
+    if (desired === active) { options.onChange?.(active); return; }
+    if (desired) {
+      supervisor = startGatewayAutoWakeSupervisor({ store: options.store, env: effectiveEnv });
+      active = Boolean(supervisor);
+      if (active) console.error("[Gateway] Browser wake enabled after Chrome/Brave extension approval.");
+    } else {
+      supervisor?.close();
+      supervisor = undefined;
+      active = false;
+      console.error("[Gateway] Browser wake disabled.");
+    }
+    options.onChange?.(active);
+  };
+  refresh();
+  const timer = setInterval(refresh, options.intervalMs ?? 1_000);
+  timer.unref();
+  return {
+    isActive: () => active,
+    close() { closed = true; clearInterval(timer); supervisor?.close(); },
+  };
 }
 
 export async function probeGatewayReadiness(

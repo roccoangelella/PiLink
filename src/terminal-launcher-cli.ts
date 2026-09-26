@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { verifyLocalGateway, ensurePiGatewayModel } from "./pilink-cli-agent.js";
+import { ensureLocalGateway, ensurePiGatewayModel } from "./pilink-cli-agent.js";
 import { runTerminalLauncher } from "./terminal-launcher.js";
 
 const modulePath = fileURLToPath(import.meta.url);
@@ -39,7 +39,7 @@ export async function runPiLinkCliLauncher(argv: readonly string[] = process.arg
   }
   let environment: NodeJS.ProcessEnv = process.env;
   if (resolved.action === "pi") {
-    const gateway = await verifyLocalGateway();
+    const gateway = await ensureLocalGateway();
     ensurePiGatewayModel(gateway.baseUrl);
     environment = { ...process.env, PILINK_GATEWAY_API_KEY: gateway.apiKey };
   }

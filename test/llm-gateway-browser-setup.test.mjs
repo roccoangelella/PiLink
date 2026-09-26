@@ -21,6 +21,9 @@ test("setup stages only the narrowly scoped Chrome/Brave extension and is idempo
   rememberGatewayBrowserExtensionSource(destination, fileURLToPath(new URL("../", import.meta.url)));
   const saved = JSON.parse(await fs.readFile(path.join(destination, ".pilink-source.json"), "utf8"));
   assert.equal(saved.source_root, await fs.realpath(fileURLToPath(new URL("../", import.meta.url))));
+  assert.equal(stageGatewayBrowserExtension({ source, destination }), destination);
+  await fs.writeFile(path.join(destination, ".pilink-source.json"), JSON.stringify({ source_root: root }));
+  assert.throws(() => stageGatewayBrowserExtension({ source, destination }), /another PiLink checkout/);
   const stat = await fs.stat(destination);
   assert.equal(stat.mode & 0o777, 0o700);
 });

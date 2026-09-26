@@ -586,6 +586,32 @@ test("unclaimed request times out fast with 504 gateway_timeout and wake guidanc
 
 
 
+test("auto-wake admission switches on after browser approval without restarting the API", async (t) => {
+  const policy = { enabled: false };
+  const { store, apiKey, baseUrl } = await fixture(t, {
+    allowInactiveQueueForAutoWake: () => policy.enabled,
+    queueTimeoutSeconds: 3,
+  });
+  const request = () => fetch(`${baseUrl}/chat/completions`, {
+    method: "POST", headers: headers(apiKey),
+    body: JSON.stringify({ model: "pilink", messages: [{ role: "user", content: "wake test" }] }),
+  });
+  const inactive = await request();
+  assert.equal(inactive.status, 503);
+  policy.enabled = true;
+  const activeRequest = request();
+  await sleep(30);
+  assert.equal((await store.status()).queued, 1);
+  const claimed = await store.exchange("wake-toggle-worker", undefined, 2);
+  assert.equal(claimed.state, "request");
+  const completion = store.exchange("wake-toggle-worker", {
+    requestId: claimed.request.request_id, claimToken: claimed.request.claim_token, response: "ready",
+  }, 2);
+  assert.equal((await (await activeRequest).json()).choices[0].message.content, "ready");
+  await store.release("test cleanup");
+  await completion;
+});
+
 test("CLI auto-wake admission can queue the first request before a worker is active", async (t) => {
   const { store, apiKey, baseUrl } = await fixture(t, {
     allowInactiveQueueForAutoWake: true,

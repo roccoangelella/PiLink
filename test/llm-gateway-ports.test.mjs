@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { gatewayApiPortForMcp, selectGatewayPorts } from "../dist/llm-gateway-ports.js";
+import { assertGatewayAutoStartPorts } from "../dist/llm-gateway-launch.js";
 
 test("gateway derives its local API port ten above MCP", () => {
   assert.equal(gatewayApiPortForMcp(3200), 3210);
@@ -20,6 +21,14 @@ test("gateway falls from occupied 3200 to 3201 and moves the API pair with it", 
   assert.equal(selection.apiPort, 3211);
   assert.equal(selection.changed, true);
   assert.deepEqual(probed.slice(0, 3), [3200, 3201, 3211]);
+});
+
+test("automatic gateway startup refuses fallback instead of repointing an occupied hostname", async () => {
+  const changed = await selectGatewayPorts(3200, undefined, async (port) => port !== 3200);
+  assert.throws(() => assertGatewayAutoStartPorts(changed, { PILINK_GATEWAY_NO_PORT_FALLBACK: "true" }), /refused to change/u);
+  assert.doesNotThrow(() => assertGatewayAutoStartPorts(changed, {}));
+  const original = await selectGatewayPorts(3200, undefined, async () => true);
+  assert.doesNotThrow(() => assertGatewayAutoStartPorts(original, { PILINK_GATEWAY_NO_PORT_FALLBACK: "true" }));
 });
 
 test("gateway skips a candidate whose derived API port is occupied", async () => {

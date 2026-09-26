@@ -1,15 +1,115 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import dotenv from "dotenv";
 import { defaultConfigPath } from "./config.js";
 import { deriveGatewayApiKey } from "./llm-gateway-api.js";
-import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
+import { gatewayApiPortForMcp, isLoopbackPortAvailable } from "./llm-gateway-ports.js";
+import { runGatewayBrowserSetup, stageGatewayBrowserExtension } from "./llm-gateway-browser-setup.js";
 
 export interface VerifiedGatewayModel {
   baseUrl: string;
   apiKey: string;
+}
+
+const AUTOSTART_WAIT_MS = 30_000;
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+
+/** Launch at most one configured gateway, never repointing an occupied origin. */
+export async function ensureLocalGateway(
+  configPath = process.env.PILINK_CONFIG || defaultConfigPath(),
+  options: { start?: (configPath: string) => void | Promise<void>; waitMs?: number; stage?: () => string } = {},
+): Promise<VerifiedGatewayModel> {
+  let verified: VerifiedGatewayModel | undefined;
+  try {
+    verified = await verifyLocalGateway(configPath);
+  } catch (initialError) {
+    if (!fs.existsSync(configPath)) throw initialError;
+  }
+  if (!fs.statSync(configPath).isFile() || fs.lstatSync(configPath).isSymbolicLink()) {
+    throw new Error("Gateway configuration must be a regular private file before automatic startup.");
+  }
+  const values = dotenv.parse(fs.readFileSync(configPath));
+  if (verified) {
+    if (!options.stage && process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true" &&
+        process.platform === "linux" && values.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+      try { await runGatewayBrowserSetup(false); }
+      catch (error) { console.error(`[PiLink] Browser setup unavailable: ${error instanceof Error ? error.message : "unknown error"}`); }
+    }
+    return verified;
+  }
+  const port = parseGatewayPort(values.PORT || "3200", "PORT");
+  const apiPort = values.PI_LLM_GATEWAY_PORT
+    ? parseGatewayPort(values.PI_LLM_GATEWAY_PORT, "PI_LLM_GATEWAY_PORT")
+    : gatewayApiPortForMcp(port);
+  if (values.PI_HOSTING_MODE !== "cloudflare-fixed" || !values.PI_CLOUDFLARE_TOKEN_FILE ||
+      !values.SERVER_URL?.startsWith("https://")) {
+    throw new Error("Automatic startup requires a previously configured fixed-domain gateway. Run 'pilink gateway start' interactively first.");
+  }
+  const token = path.resolve(values.PI_CLOUDFLARE_TOKEN_FILE);
+  if (!fs.existsSync(token) || fs.lstatSync(token).isSymbolicLink() || !fs.statSync(token).isFile()) {
+    throw new Error("The configured Cloudflare tunnel token is missing; run 'pilink gateway start' interactively.");
+  }
+  const lock = path.join(path.dirname(configPath), ".pilink-gateway-autostart.lock");
+  const waitMs = options.waitMs ?? AUTOSTART_WAIT_MS;
+  const deadline = Date.now() + waitMs;
+  let acquired = false;
+  try {
+    try {
+      fs.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 });
+      acquired = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    if (acquired) {
+      try {
+        return await verifyLocalGateway(configPath);
+      } catch {
+        // No verified owner yet. An unrelated listener is never a reason to
+        // select a fallback port or rewrite a Cloudflare ingress rule.
+      }
+      if (!await isLoopbackPortAvailable(port) || !await isLoopbackPortAvailable(apiPort)) {
+        throw new Error(`Port ${port} or ${apiPort} is occupied by an unverified process; refusing to start or repoint the gateway.`);
+      }
+      try {
+        if (!options.stage && process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true" &&
+            process.platform === "linux" && values.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+          // Set the opt-in before starting the server so wake works on the
+          // very first launch after the browser's one-time manual approval.
+          await runGatewayBrowserSetup(false);
+        } else {
+          const location = (options.stage ?? stageGatewayBrowserExtension)();
+          console.error(`[PiLink] Browser wake extension prepared at ${location}. Brave's one-time Load unpacked approval is still required if it is not yet enabled.`);
+        }
+      } catch (error) {
+        console.error(`[PiLink] Browser extension could not be staged: ${error instanceof Error ? error.message : "unavailable"}. Run 'pilink gateway browser-extension' after building.`);
+      }
+      console.error("[PiLink] Starting the configured ChatGPT gateway in the background...");
+      await (options.start ?? startDetachedGateway)(configPath);
+    }
+    while (Date.now() < deadline) {
+      try { return await verifyLocalGateway(configPath); } catch { /* Still starting. */ }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error("PiLink gateway did not become ready. Run 'pilink gateway start' in a terminal to see setup or hosting errors.");
+  } finally {
+    if (acquired) fs.rmSync(lock, { force: true });
+  }
+}
+
+function startDetachedGateway(configPath: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(moduleDirectory, "cli.js"), "gateway", "start"], {
+      cwd: path.resolve(moduleDirectory, ".."),
+      env: { ...process.env, PILINK_CONFIG: configPath, PILINK_GATEWAY_NO_PORT_FALLBACK: "true", PI_BROWSER_OPEN: "never" },
+      stdio: "ignore", detached: true, windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => { child.unref(); resolve(); });
+  });
 }
 
 /** Only the local gateway that owns the private configuration may supply Pi's model. */

@@ -21,6 +21,16 @@ export function stageGatewayBrowserExtension(options: {
   if (fs.existsSync(destination) && (fs.lstatSync(destination).isSymbolicLink() || !fs.lstatSync(destination).isDirectory())) {
     throw new Error("Browser extension destination must be a normal directory, not a symlink");
   }
+  const sourceMarker = path.join(destination, ".pilink-source.json");
+  if (fs.existsSync(sourceMarker)) {
+    if (!fs.lstatSync(sourceMarker).isFile() || fs.lstatSync(sourceMarker).isSymbolicLink()) {
+      throw new Error("Refusing an unsafe browser extension source marker");
+    }
+    const owner = JSON.parse(fs.readFileSync(sourceMarker, "utf8")) as { source_root?: unknown };
+    if (owner.source_root !== fs.realpathSync(REPOSITORY_ROOT)) {
+      throw new Error("Refusing to overwrite an extension approved from another PiLink checkout");
+    }
+  }
   const manifest = JSON.parse(fs.readFileSync(path.join(source, "manifest.json"), "utf8")) as {
     manifest_version?: number;
     permissions?: unknown;
@@ -75,7 +85,7 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
   if (enable) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
-    console.error("Browser wake enabled in the PiLink .env. Restart the gateway to apply it.");
+    console.error("Browser wake enabled in the private PiLink .env. A running gateway applies it within a few seconds.");
     console.error("If the extension is missing or disabled, disable wake with PI_LLM_GATEWAY_AUTO_WAKE=false.");
     return;
   }
@@ -103,7 +113,7 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
     }
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
-    console.error("Browser wake enabled. Restart the gateway to apply the new setting.");
+    console.error("Browser wake enabled. A running gateway applies it within a few seconds.");
   } finally {
     readline.close();
   }

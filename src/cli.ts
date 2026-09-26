@@ -134,6 +134,14 @@ if (command !== "gateway") {
           const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
           const info = await openGatewayConnectorWindow();
           printGatewayReady(info);
+          if (process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true" &&
+              process.env.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+            // Browser approval cannot be installed silently into a personal
+            // Chrome/Brave profile. Stage and open the extension page here,
+            // instead of leaving the one-time setup undiscoverable.
+            const { runGatewayBrowserSetup } = await import("./llm-gateway-browser-setup.js");
+            await runGatewayBrowserSetup(false);
+          }
         } else {
           process.exitCode = process.exitCode || 1;
         }
@@ -213,7 +221,7 @@ function printGatewayUsage(): void {
   console.error("If the configured MCP port is busy, gateway start/serve selects the next free MCP/API loopback pair (3200 -> 3201, API 3210 -> 3211).");
   console.error("The selected fallback MCP port is saved so managed hosting and subsequent launches stay consistent.");
   console.error("The OpenAI-compatible API is loopback-only and normally uses MCP PORT + 10.");
-  console.error("Experimental Linux browser auto-wake is OFF by default. Run 'pilink gateway browser-extension' to install it once in Chrome/Brave; no keyboard daemon or desktop automation is required.");
+  console.error("Linux browser wake is prepared during interactive gateway setup. Approve the one-time Load unpacked action in Chrome/Brave; auto-wake activates after that approval, never silently before it.");
   console.error("POST /v1/chat/completions supports messages, function tools/tool_calls, tool_choice, parallel_tool_calls, and buffered stream=true/false.");
   console.error("GET /v1/models exposes the compatibility model id 'pilink'; the actual model remains selected in the ChatGPT conversation.");
   console.error("Gateway mode never executes caller-advertised tools. The local agent harness owns permissions and execution.");
