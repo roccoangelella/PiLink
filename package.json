@@ -59,8 +59,9 @@
   },
   "scripts": {
     "setup": "npm run build",
-    "build": "npm run build:core && node dist/ensure-cli-link.js",
+    "build": "npm run build:core && npm run build:browser-extension && node dist/ensure-cli-link.js",
     "build:core": "tsc",
+    "build:browser-extension": "node scripts/build-browser-extension.mjs",
     "cli": "node dist/terminal-launcher.js",
     "cli:agents": "node dist/terminal-launcher-agents.js",
     "cli:single-agents": "node dist/terminal-launcher-single-agents.js",
@@ -80,7 +81,7 @@
     "release:stage": "node scripts/stage-release.mjs",
     "release:verify": "node scripts/verify-release.mjs",
     "release:check": "npm run release:stage && npm run release:verify",
-    "prepack": "npm run build:core"
+    "prepack": "npm run build:core && npm run build:browser-extension"
   },
   "dependencies": {
     "@achingbrain/nat-port-mapper": "^4.0.5",

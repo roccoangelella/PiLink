@@ -40,29 +40,15 @@ In the connected ChatGPT conversation, send:
 ```
 ChatGPT invokes `gateway_exchange` to poll for jobs. When `state=idle` (`continue=true`), it immediately re-polls without user output; when `state=request`, it processes the prompt. Exactly one active ChatGPT conversation acts as the worker at a time. Use `pilink gateway release` to exit the loop cleanly.
 
-### Automatic wake on Linux (CLI endpoint only)
+### Experimental Chrome/Brave browser wake (CLI endpoint)
 
-The CLI endpoint includes a deliberately small Linux auto-waker for both X11 and Wayland. It is enabled only when PiLink was launched through `pilink start --mode cli`, `pilink serve --mode cli`, or the equivalent `pilink gateway start|serve` path. Single-agent and collaboration modes never start it.
+`npm run build` compiles the gateway and builds a small Manifest V3 extension in `dist/browser-extension`. It does **not** silently install browser code or alter the logged-in browser profile. Run `pilink gateway browser-extension` once: PiLink copies the extension to a stable private user-data directory and opens Chrome/Brave's Extensions page. Enable **Developer mode**, select **Load unpacked**, and choose the printed directory. Return to the terminal and type `yes` after the browser shows the extension as enabled. The same one-time setup writes `PI_LLM_GATEWAY_AUTO_WAKE=true` in the private PiLink configuration; restart the gateway. In non-interactive sessions, run `pilink gateway browser-extension --enable` only after verifying the browser extension yourself. The one-time browser approval cannot be replaced by npm build on an ordinary Chrome/Brave profile. Subsequent `npm run build` invocations from this same, approved checkout refresh the stable unpacked files automatically; reload the extension in the browser (or restart the browser) to activate a changed content script. A different test clone cannot silently overwrite the installed extension.
 
-The implementation intentionally has only one input dependency: `ydotool`. It uses `xdg-open` to ask the desktop to open the user's default browser, waits briefly for the new ChatGPT tab to become usable, then asks `ydotoold` to emit one Linux Enter key event. Because `ydotool` uses the kernel `uinput` path, the same driver works on native Wayland browsers and X11 without browser-specific automation.
+The extension requests no network or extra browser permissions beyond its declared ChatGPT content-script host match. It is injected only on `https://chatgpt.com/*` and does nothing unless the page is `/` with exactly `q=@Pilink-desktop wake up` and a new 128-bit PiLink wake nonce. After ChatGPT consumes `q` to pre-fill, it also accepts the same root URL with only the original nonce remaining; other navigation or query changes fail closed. It waits up to 15 seconds for one composer containing exactly that phrase, focuses it and clicks exactly one enabled send button in its form. If the UI is ambiguous or changes, it does not click. It never reads cookies, chat history, unrelated messages or credentials; the only DOM text inspected is the pre-filled composer. On a nonce-tagged wake page it also displays a small diagnostic badge with fixed labels (for example: editor not found, phrase not ready, button not found or clicked). It never displays prompt contents or the nonce. If no badge appears after opening a new nonce-tagged URL, verify that the extension is enabled in this browser profile and reload it on the Extensions page after a source update. It does not bypass login, CAPTCHA, Cloudflare or the ChatGPT connector's permissions. A content script can run without sending global keys or stealing window focus on Wayland/X11; successful background submission on ChatGPT still needs a live smoke test.
 
-The waker reacts when queued gateway work needs a worker and also re-establishes the worker after a previously active ChatGPT session disconnects. It does not auto-open a browser on a fresh gateway before any worker has ever connected. The gateway status must report `next_action="wake_worker"`.
+When gateway status reports `next_action="wake_worker"` for queued work, or after a previously active worker disconnects, PiLink opens a new chat using the **existing default browser profile**. Brave uses a new window in the existing profile; other browsers use `xdg-open`. The extension attempts the one-time submit, while the gateway confirms success only when ChatGPT contacts `gateway_exchange`. It makes at most one attempt per persistent wake condition. Browser DOM changes, an unavailable extension or a detached ChatGPT connector still require manual wake. The old un-targeted `ydotool` Enter path is removed.
 
-Wake sequence:
-
-1. verify `xdg-open`, `ydotool`, and the current `ydotoold` Unix socket before opening anything;
-2. open `https://chatgpt.com/?q=wake` (or the `?prompt=` form) through the user's default browser;
-3. wait 1.5 seconds for the browser/tab to settle;
-4. emit exactly one Enter press through `ydotool`;
-5. confirm success only from PiLink's own gateway status when the ChatGPT worker contacts `gateway_exchange`.
-
-There is no DOM scraping, browser remote-debugging port, private ChatGPT API, cookie access, CAPTCHA handling, or Cloudflare bypass. PiLink performs only one automatic wake cycle for a persistent `wake_worker` condition, so it will not keep opening tabs or repeatedly inject Enter.
-
-`ydotool` sends input to whichever application has keyboard focus. PiLink therefore relies on the normal desktop behavior that opening a browser URL brings the new ChatGPT tab/window to the foreground; it does not attempt to bypass Wayland focus rules. Do not switch focus during the short wake interval. If your compositor/browser refuses to focus an externally opened URL, disable auto-wake or use the manual `@PiLink wake` fallback.
-
-The `ydotoold` daemon is required by current `ydotool` releases and needs access to `/dev/uinput`. PiLink does not modify udev rules, user groups, privileges, or systemd units automatically. On distributions that package a user service, configure it according to the distribution's policy and verify that the PiLink user can access the daemon socket. PiLink checks the socket before opening ChatGPT and fails without opening a tab when it is unavailable.
-
-Set `PI_LLM_GATEWAY_AUTO_WAKE=false` to disable the feature. `PI_LLM_GATEWAY_AUTO_WAKE_PARAM=prompt` selects `?prompt=` instead of the default `?q=`. While auto-wake is enabled, the local OpenAI-compatible endpoint may accept the first request while no worker is active so the supervisor has queued work to wake for; the existing queue timeout remains the hard bound.
+**Unverified:** The browser extension's synthetic send-button click has not yet been confirmed to invoke the specific `@Pilink-desktop` connector in a real ChatGPT session. The previous real smoke test showed that `?q=` pre-fills the field but a global Enter left it unsent. Do not merge or enable this experimental path until the installed extension submits the message and the gateway records worker contact.
 
 ## OpenAI API & Tool Calling
 
@@ -132,8 +118,7 @@ ChatGPT calls `gateway_call_local_tool`, and PiLink returns an OpenAI envelope w
 | `PI_LLM_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `60` | Absolute admission/wake deadline while a request remains queued; the effective value is bounded by the request timeout. |
 | `PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS` | `900` | Durable claim lease before an uncompleted request returns to the queue. Runtime uses at least this default and does not make a lease a model-progress signal. |
 | `PI_LLM_GATEWAY_STALE_SECONDS` | `120` | Worker inactivity threshold before session is marked stale. |
-| `PI_LLM_GATEWAY_AUTO_WAKE` | `true` in graphical Linux CLI endpoint launches | Set to `false` to disable the Linux auto-waker. It is ignored outside CLI endpoint launches and requires either `WAYLAND_DISPLAY` or `DISPLAY`. |
-| `PI_LLM_GATEWAY_AUTO_WAKE_PARAM` | `q` | ChatGPT URL parameter used by auto-wake: `q` or `prompt`. |
+| `PI_LLM_GATEWAY_AUTO_WAKE` | `false` | Set by `pilink gateway browser-extension --enable` after the extension is loaded in Chrome/Brave. Off by default. |
 | `PILINK_TERMINAL_LOGS` | `compact` | Set to `verbose` to display raw tunnel, HTTP, and MCP traffic. |
 
 | Error / Command | Cause & Resolution |
@@ -141,7 +126,7 @@ ChatGPT calls `gateway_call_local_tool`, and PiLink returns an OpenAI envelope w
 | **HTTP 401 `invalid_api_key`** | Missing or incorrect bearer token. Set `Authorization: Bearer $PI_LLM_GATEWAY_API_KEY`. |
 | **HTTP 400/413 `invalid_request_error`** | Malformed JSON or a request body over the 2 MiB limit. Correct the request; no job was enqueued. |
 | **HTTP 503 `pilink_chat_inactive`** | Worker loop inactive. Send `@PiLink wake` in the connected ChatGPT conversation. |
-| **HTTP 504 `gateway_timeout`** | The absolute request or queue deadline elapsed. In Linux CLI mode this can also mean auto-wake opened/submitted but no worker became active before the bounded queue deadline. Check the ChatGPT tab, `ydotoold`, and `/dev/uinput` access. |
+| **HTTP 504 `gateway_timeout`** | The absolute request or queue deadline elapsed. In Linux CLI mode, check whether the Chrome/Brave wake extension is enabled and whether the ChatGPT connector actually contacted the gateway. |
 | **MCP `worker_busy` / persistent transport timeout** | Discard the wrong or stale completion, use the finite no-completion recovery polls, then inspect `pilink gateway status` and reconnect/wake the single worker if needed. Do not run an unbounded retry loop. |
 | **OAuth DCR Expired** | 5-minute registration window closed. Run `pilink gateway connect` to reopen it. |
 | **Port Conflicts** | Gateway launch preflights a free MCP/API pair when no explicit API port is pinned. The API readiness promise still rejects `EADDRINUSE`; it never prints a ready endpoint for an occupied port. |

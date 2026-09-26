@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Pilink Wake",
+  "version": "1.0.0",
+  "description": "Send the exact Pilink wake phrase on an explicitly authorized ChatGPT tab.",
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["wake.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

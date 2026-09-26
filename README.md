@@ -109,7 +109,7 @@ pilink start --mode cli       # or: pilink gateway start
   chunks, multi-part text messages, and standard client parameters (`store`,
   `max_completion_tokens`, `temperature`, `top_p`, etc.).
 
-See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for protocol and setup details.
+The experimental Chrome/Brave wake extension is built automatically by `npm run build` but stays off until one-time browser approval. Run `pilink gateway browser-extension` to stage it and open the browser's Extensions page; select **Load unpacked** once, then confirm in the setup terminal. Browser security prevents npm from silently installing it in an existing user profile. See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for details and limitations.
 
 ## Start PiLink from VS Code
 
