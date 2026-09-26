@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildGatewayWakeUrl,
   gatewayAutoWakeEnabled,
+  gatewayYdotoolSocketPath,
   shouldAutoWakeGateway,
 } from "../dist/llm-gateway-auto-wake.js";
 
@@ -24,18 +25,18 @@ function status(overrides = {}) {
   };
 }
 
-test("auto-wake is restricted to Linux CLI endpoint launches", () => {
-  const cliGatewayEnv = {
+test("auto-wake is restricted to graphical Linux CLI endpoint launches", () => {
+  const base = {
     PI_LLM_GATEWAY_ENABLED: "true",
     PILINK_GATEWAY_LAUNCH: "true",
-    DISPLAY: ":0",
   };
-  assert.equal(gatewayAutoWakeEnabled(cliGatewayEnv, "linux"), true);
+  assert.equal(gatewayAutoWakeEnabled({ ...base, DISPLAY: ":0" }, "linux"), true);
+  assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: "wayland-0" }, "linux"), true);
+  assert.equal(gatewayAutoWakeEnabled(base, "linux"), false);
   assert.equal(gatewayAutoWakeEnabled({ PI_LLM_GATEWAY_ENABLED: "true", DISPLAY: ":0" }, "linux"), false);
   assert.equal(gatewayAutoWakeEnabled({ PILINK_GATEWAY_LAUNCH: "true", DISPLAY: ":0" }, "linux"), false);
-  assert.equal(gatewayAutoWakeEnabled({ PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true" }, "linux"), false);
-  assert.equal(gatewayAutoWakeEnabled(cliGatewayEnv, "darwin"), false);
-  assert.equal(gatewayAutoWakeEnabled({ ...cliGatewayEnv, PI_LLM_GATEWAY_AUTO_WAKE: "false" }, "linux"), false);
+  assert.equal(gatewayAutoWakeEnabled({ ...base, DISPLAY: ":0" }, "darwin"), false);
+  assert.equal(gatewayAutoWakeEnabled({ ...base, DISPLAY: ":0", PI_LLM_GATEWAY_AUTO_WAKE: "false" }, "linux"), false);
 });
 
 test("wake URLs use only the supported q or prompt query parameter", () => {
@@ -43,7 +44,19 @@ test("wake URLs use only the supported q or prompt query parameter", () => {
   assert.equal(buildGatewayWakeUrl("prompt"), "https://chatgpt.com/?prompt=wake");
 });
 
-test("auto-wake requires queued work and an explicit wake_worker status", () => {
+test("ydotool socket follows upstream environment precedence", () => {
+  assert.equal(
+    gatewayYdotoolSocketPath({ YDOTOOL_SOCKET: "/custom/ydotool.sock", XDG_RUNTIME_DIR: "/run/user/1000" }),
+    "/custom/ydotool.sock",
+  );
+  assert.equal(
+    gatewayYdotoolSocketPath({ XDG_RUNTIME_DIR: "/run/user/1000" }),
+    "/run/user/1000/.ydotool_socket",
+  );
+  assert.equal(gatewayYdotoolSocketPath({}), "/tmp/.ydotool_socket");
+});
+
+test("auto-wake requires queued work or a previously active worker and explicit wake_worker status", () => {
   assert.equal(shouldAutoWakeGateway(status()), true);
   assert.equal(shouldAutoWakeGateway(status({ queued: 0 })), false);
   assert.equal(shouldAutoWakeGateway(status({ queued: 0 }), true), true);

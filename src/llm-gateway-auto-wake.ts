@@ -7,13 +7,11 @@ import type { GatewayStatusSnapshot, LlmGatewayJobStore } from "./llm-gateway-st
 const AUTO_WAKE_POLL_MS = 750;
 const AUTO_WAKE_GRACE_MS = 500;
 const AUTO_WAKE_CONFIRM_MS = 7_000;
-const AUTO_WAKE_COOLDOWN_MS = 15_000;
 const AUTO_WAKE_SUSPENDED_POLL_MS = 5_000;
-const AUTO_WAKE_MAX_FAILED_CYCLES = 2;
-const CHATGPT_WINDOW_TIMEOUT_MS = 8_000;
-const CHATGPT_WINDOW_POLL_MS = 200;
-const CHATGPT_SETTLE_MS = 350;
+const AUTO_WAKE_MAX_FAILED_CYCLES = 1;
+const CHATGPT_SETTLE_MS = 1_500;
 const CHATGPT_WAKE_TEXT = "wake";
+const ENTER_KEYCODE = "28";
 
 type GatewayWakeQueryParam = "q" | "prompt";
 type WakeOutcome = "confirmed" | "not_needed" | "pending";
@@ -22,14 +20,8 @@ export interface GatewayAutoWakeSupervisor {
   close(): void;
 }
 
-export interface GatewayWakePage {
-  windowId: string;
-}
-
 export interface GatewayWakeDriver {
-  open(): Promise<GatewayWakePage>;
-  submitBackground(page: GatewayWakePage): Promise<void>;
-  submitForeground(page: GatewayWakePage): Promise<void>;
+  wake(): Promise<void>;
 }
 
 export interface GatewayAutoWakeSupervisorOptions {
@@ -40,7 +32,6 @@ export interface GatewayAutoWakeSupervisorOptions {
   pollIntervalMs?: number;
   wakeGraceMs?: number;
   confirmationMs?: number;
-  cooldownMs?: number;
   maxFailedCycles?: number;
   log?: (message: string) => void;
 }
@@ -57,7 +48,7 @@ export function gatewayAutoWakeEnabled(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (platform !== "linux") return false;
-  if (!env.DISPLAY?.trim()) return false;
+  if (!hasGraphicalSession(env)) return false;
   if (env.PI_LLM_GATEWAY_ENABLED !== "true" || env.PILINK_GATEWAY_LAUNCH !== "true") return false;
   return !/^(?:0|false|no|off)$/iu.test(env.PI_LLM_GATEWAY_AUTO_WAKE?.trim() ?? "");
 }
@@ -66,6 +57,13 @@ export function buildGatewayWakeUrl(param: GatewayWakeQueryParam = "q"): string 
   const url = new URL("https://chatgpt.com/");
   url.searchParams.set(param, CHATGPT_WAKE_TEXT);
   return url.toString();
+}
+
+export function gatewayYdotoolSocketPath(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.YDOTOOL_SOCKET?.trim();
+  if (configured) return configured;
+  const runtimeDir = env.XDG_RUNTIME_DIR?.trim();
+  return runtimeDir ? path.join(runtimeDir, ".ydotool_socket") : "/tmp/.ydotool_socket";
 }
 
 export function shouldAutoWakeGateway(status: GatewayStatusSnapshot, previouslyActive = false): boolean {
@@ -86,7 +84,6 @@ export function startGatewayAutoWakeSupervisor(
   const pollIntervalMs = positiveDelay(options.pollIntervalMs, AUTO_WAKE_POLL_MS);
   const wakeGraceMs = nonNegativeDelay(options.wakeGraceMs, AUTO_WAKE_GRACE_MS);
   const confirmationMs = positiveDelay(options.confirmationMs, AUTO_WAKE_CONFIRM_MS);
-  const cooldownMs = nonNegativeDelay(options.cooldownMs, AUTO_WAKE_COOLDOWN_MS);
   const maxFailedCycles = positiveInteger(options.maxFailedCycles, AUTO_WAKE_MAX_FAILED_CYCLES);
   const log = options.log ?? ((message: string) => console.error("[Gateway] Auto-wake: " + message));
 
@@ -94,7 +91,6 @@ export function startGatewayAutoWakeSupervisor(
   let stopped = false;
   let running = false;
   let failedCycles = 0;
-  let nextAllowedAt = 0;
   let hasSeenWorker = false;
   let driverPromise: Promise<GatewayWakeDriver> | undefined = options.driver
     ? Promise.resolve(options.driver)
@@ -128,10 +124,9 @@ export function startGatewayAutoWakeSupervisor(
       }
       if (!shouldAutoWakeGateway(status, hasSeenWorker)) {
         failedCycles = 0;
-        nextAllowedAt = 0;
         return;
       }
-      if (failedCycles >= maxFailedCycles || Date.now() < nextAllowedAt) return;
+      if (failedCycles >= maxFailedCycles) return;
 
       if (wakeGraceMs > 0) await sleep(wakeGraceMs);
       const rechecked = await options.store.status();
@@ -140,7 +135,6 @@ export function startGatewayAutoWakeSupervisor(
       }
       if (!shouldAutoWakeGateway(rechecked, hasSeenWorker)) {
         failedCycles = 0;
-        nextAllowedAt = 0;
         return;
       }
 
@@ -148,27 +142,20 @@ export function startGatewayAutoWakeSupervisor(
       log(reconnectOnly
         ? "the previous ChatGPT worker disconnected; opening the default browser to re-establish it."
         : "queued work has no listening ChatGPT worker; opening the default browser.");
+
       const driver = await getDriver();
-      const outcome = await runWakeCycle(options.store, driver, confirmationMs, log, reconnectOnly);
+      const outcome = await runWakeCycle(options.store, driver, confirmationMs, reconnectOnly);
       if (outcome === "confirmed") {
         failedCycles = 0;
-        nextAllowedAt = 0;
         log("worker contact confirmed by the gateway.");
       } else if (outcome === "not_needed") {
         failedCycles = 0;
-        nextAllowedAt = 0;
       } else {
         failedCycles += 1;
-        nextAllowedAt = Date.now() + cooldownMs;
-        if (failedCycles >= maxFailedCycles) {
-          log("no worker contact after two bounded attempts; pausing until gateway state changes. Manual wake may be required.");
-        } else {
-          log("no worker contact yet; one rate-limited retry remains.");
-        }
+        log("no worker contact after the bounded wake attempt; pausing until gateway state changes. Manual wake may be required.");
       }
     } catch (error) {
       failedCycles += 1;
-      nextAllowedAt = Date.now() + cooldownMs;
       if (error instanceof GatewayAutoWakeUnavailableError) failedCycles = maxFailedCycles;
       log("unable to wake automatically: " + errorMessage(error));
       if (failedCycles >= maxFailedCycles) {
@@ -193,25 +180,9 @@ async function runWakeCycle(
   store: Pick<LlmGatewayJobStore, "status">,
   driver: GatewayWakeDriver,
   confirmationMs: number,
-  log: (message: string) => void,
   reconnectOnly: boolean,
 ): Promise<WakeOutcome> {
-  const page = await driver.open();
-  let backgroundSent = false;
-  try {
-    await driver.submitBackground(page);
-    backgroundSent = true;
-  } catch (error) {
-    log("background Enter was not accepted by the window system: " + errorMessage(error));
-  }
-
-  if (backgroundSent) {
-    const outcome = await waitForWakeOutcome(store, confirmationMs, reconnectOnly);
-    if (outcome !== "pending") return outcome;
-  }
-
-  log("worker still absent; briefly focusing the same ChatGPT window for one Enter retry.");
-  await driver.submitForeground(page);
+  await driver.wake();
   return waitForWakeOutcome(store, confirmationMs, reconnectOnly);
 }
 
@@ -232,122 +203,53 @@ async function waitForWakeOutcome(
 }
 
 async function prepareLinuxGatewayWakeDriver(env: NodeJS.ProcessEnv): Promise<GatewayWakeDriver> {
-  if (!env.DISPLAY?.trim()) {
+  if (!hasGraphicalSession(env)) {
     throw new GatewayAutoWakeUnavailableError(
-      "Linux auto-wake currently requires an X11-compatible DISPLAY; Wayland-only sessions are not automated.",
+      "Linux auto-wake requires a graphical X11 or Wayland session.",
     );
   }
-  const [xdgOpen, xdotool] = await Promise.all([
+
+  const [xdgOpen, ydotool] = await Promise.all([
     resolveExecutable("xdg-open", env),
-    resolveExecutable("xdotool", env),
+    resolveExecutable("ydotool", env),
   ]);
   if (!xdgOpen) {
     throw new GatewayAutoWakeUnavailableError("xdg-open was not found on PATH; install xdg-utils or disable auto-wake.");
   }
-  if (!xdotool) {
-    throw new GatewayAutoWakeUnavailableError("xdotool was not found on PATH; install xdotool or disable auto-wake.");
+  if (!ydotool) {
+    throw new GatewayAutoWakeUnavailableError(
+      "ydotool was not found on PATH; install ydotool and start ydotoold, or disable auto-wake.",
+    );
   }
 
   const param = wakeQueryParam(env.PI_LLM_GATEWAY_AUTO_WAKE_PARAM);
   const wakeUrl = buildGatewayWakeUrl(param);
 
-  const xdo = (args: string[], timeoutMs = 5_000): Promise<string> =>
-    runExecutable(xdotool, args, env, timeoutMs);
-
-  const activeWindow = async (): Promise<string | undefined> => {
-    try {
-      const id = (await xdo(["getactivewindow"])).trim();
-      return /^\d+$/u.test(id) ? id : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-
-  const windowName = async (id: string): Promise<string> => {
-    try {
-      return (await xdo(["getwindowname", id])).trim();
-    } catch {
-      return "";
-    }
-  };
-
-  const chatGptWindows = async (): Promise<string[]> => {
-    try {
-      return (await xdo(["search", "--onlyvisible", "--name", "ChatGPT"]))
-        .split(/\s+/u)
-        .filter((id) => /^\d+$/u.test(id));
-    } catch {
-      return [];
-    }
-  };
-
-  const restoreWindow = async (id: string | undefined): Promise<void> => {
-    if (!id) return;
-    const current = await activeWindow();
-    if (current === id) return;
-    try {
-      await xdo(["windowactivate", "--sync", id]);
-    } catch {
-      // The user's previous window may have closed while the browser opened.
-    }
-  };
-
   return {
-    async open(): Promise<GatewayWakePage> {
-      const previousWindow = await activeWindow();
-      const previousTitle = previousWindow ? await windowName(previousWindow) : "";
-      const previousWasChatGpt = previousTitle.toLowerCase().includes("chatgpt");
-      const existingChatGptWindows = new Set(await chatGptWindows());
+    async wake(): Promise<void> {
+      await assertYdotoolReady(env);
       await runExecutable(xdgOpen, [wakeUrl], env, 5_000);
-
-      let target: string | undefined;
-      const deadline = Date.now() + CHATGPT_WINDOW_TIMEOUT_MS;
-      while (Date.now() < deadline) {
-        const active = await activeWindow();
-        const activeTitle = active ? await windowName(active) : "";
-        const activeIsChatGpt = activeTitle.toLowerCase().includes("chatgpt");
-        const activeChangedUnambiguously =
-          activeIsChatGpt &&
-          (active !== previousWindow || !previousWasChatGpt || activeTitle !== previousTitle);
-        if (active && activeChangedUnambiguously) {
-          target = active;
-          break;
-        }
-
-        const matches = await chatGptWindows();
-        const newlyVisible = matches.filter((id) => !existingChatGptWindows.has(id));
-        if (newlyVisible.length === 1) {
-          target = newlyVisible[0];
-          break;
-        }
-        await sleep(CHATGPT_WINDOW_POLL_MS);
-      }
-
       await sleep(CHATGPT_SETTLE_MS);
-      await restoreWindow(previousWindow);
-      if (!target) {
-        throw new Error(
-          "the ChatGPT browser tab opened, but its window could not be identified safely without DOM inspection.",
-        );
-      }
-      return { windowId: target };
-    },
-
-    async submitBackground(page: GatewayWakePage): Promise<void> {
-      await xdo(["key", "--window", page.windowId, "--clearmodifiers", "Return"]);
-    },
-
-    async submitForeground(page: GatewayWakePage): Promise<void> {
-      const previousWindow = await activeWindow();
-      try {
-        await xdo(["windowactivate", "--sync", page.windowId]);
-        await sleep(120);
-        await xdo(["key", "--clearmodifiers", "Return"]);
-      } finally {
-        await restoreWindow(previousWindow);
-      }
+      await runExecutable(ydotool, ["key", `${ENTER_KEYCODE}:1`, `${ENTER_KEYCODE}:0`], env, 5_000);
     },
   };
+}
+
+async function assertYdotoolReady(env: NodeJS.ProcessEnv): Promise<void> {
+  const socketPath = gatewayYdotoolSocketPath(env);
+  try {
+    const stat = await fs.stat(socketPath);
+    if (!stat.isSocket()) throw new Error("not a Unix socket");
+    await fs.access(socketPath, fsConstants.R_OK | fsConstants.W_OK);
+  } catch {
+    throw new GatewayAutoWakeUnavailableError(
+      `ydotoold socket is not ready at ${socketPath}; start ydotoold and ensure the current user can access its socket and /dev/uinput.`,
+    );
+  }
+}
+
+function hasGraphicalSession(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.WAYLAND_DISPLAY?.trim() || env.DISPLAY?.trim());
 }
 
 function wakeQueryParam(value: string | undefined): GatewayWakeQueryParam {
@@ -394,9 +296,10 @@ function runExecutable(
         timeout: timeoutMs,
         maxBuffer: 64 * 1024,
       },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         if (error) {
-          reject(error);
+          const detail = stderr.trim() || stdout.trim() || error.message;
+          reject(new Error(detail));
           return;
         }
         resolve(stdout.trim());
