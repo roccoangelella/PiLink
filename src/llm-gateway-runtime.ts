@@ -1,5 +1,5 @@
 import { loadRuntimeConfig } from "./config.js";
-import { startGatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
+import { gatewayAutoWakeEnabled, startGatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
 import { deriveGatewayApiKey, startGatewayApi, type StartedGatewayApi } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import {
@@ -62,6 +62,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     claimLeaseSeconds,
   });
   const activation = store.activate();
+  const autoWakeEnabled = gatewayAutoWakeEnabled();
   let api: StartedGatewayApi;
   try {
     api = startGatewayApi({
@@ -71,6 +72,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
       requestTimeoutSeconds,
       queueTimeoutSeconds,
       profile,
+      allowInactiveQueueForAutoWake: autoWakeEnabled,
     });
   } catch (error) {
     // Activation starts before synchronous API validation/bind setup. Consume
@@ -88,9 +90,11 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     console.error(`[Gateway] Unable to become ready: ${error instanceof Error ? error.message : String(error)}`);
     void api.close().catch(() => undefined);
   });
-  void ready.then(() => {
-    startGatewayAutoWakeSupervisor({ store });
-  }).catch(() => undefined);
+  if (autoWakeEnabled) {
+    void ready.then(() => {
+      startGatewayAutoWakeSupervisor({ store });
+    }).catch(() => undefined);
+  }
   sharedRuntime = { store, api, apiKey, ready };
   return sharedRuntime;
 }

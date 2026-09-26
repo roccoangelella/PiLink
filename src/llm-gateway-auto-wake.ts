@@ -13,7 +13,7 @@ const AUTO_WAKE_MAX_FAILED_CYCLES = 2;
 const CHATGPT_WINDOW_TIMEOUT_MS = 8_000;
 const CHATGPT_WINDOW_POLL_MS = 200;
 const CHATGPT_SETTLE_MS = 350;
-const CHATGPT_WAKE_TEXT = "@PiLink wake";
+const CHATGPT_WAKE_TEXT = "wake";
 
 type GatewayWakeQueryParam = "q" | "prompt";
 type WakeOutcome = "confirmed" | "not_needed" | "pending";
@@ -57,6 +57,7 @@ export function gatewayAutoWakeEnabled(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (platform !== "linux") return false;
+  if (!env.DISPLAY?.trim()) return false;
   if (env.PI_LLM_GATEWAY_ENABLED !== "true" || env.PILINK_GATEWAY_LAUNCH !== "true") return false;
   return !/^(?:0|false|no|off)$/iu.test(env.PI_LLM_GATEWAY_AUTO_WAKE?.trim() ?? "");
 }
@@ -67,9 +68,9 @@ export function buildGatewayWakeUrl(param: GatewayWakeQueryParam = "q"): string 
   return url.toString();
 }
 
-export function shouldAutoWakeGateway(status: GatewayStatusSnapshot): boolean {
+export function shouldAutoWakeGateway(status: GatewayStatusSnapshot, previouslyActive = false): boolean {
   return status.state !== "released" &&
-    status.queued > 0 &&
+    (status.queued > 0 || previouslyActive) &&
     status.next_action === "wake_worker" &&
     !status.worker_polling &&
     !status.processing_claim;
@@ -94,6 +95,7 @@ export function startGatewayAutoWakeSupervisor(
   let running = false;
   let failedCycles = 0;
   let nextAllowedAt = 0;
+  let hasSeenWorker = false;
   let driverPromise: Promise<GatewayWakeDriver> | undefined = options.driver
     ? Promise.resolve(options.driver)
     : undefined;
@@ -121,7 +123,10 @@ export function startGatewayAutoWakeSupervisor(
     running = true;
     try {
       const status = await options.store.status();
-      if (!shouldAutoWakeGateway(status)) {
+      if (status.state === "active" || status.worker_polling || status.worker_contact === "recent") {
+        hasSeenWorker = true;
+      }
+      if (!shouldAutoWakeGateway(status, hasSeenWorker)) {
         failedCycles = 0;
         nextAllowedAt = 0;
         return;
@@ -130,15 +135,21 @@ export function startGatewayAutoWakeSupervisor(
 
       if (wakeGraceMs > 0) await sleep(wakeGraceMs);
       const rechecked = await options.store.status();
-      if (!shouldAutoWakeGateway(rechecked)) {
+      if (rechecked.state === "active" || rechecked.worker_polling || rechecked.worker_contact === "recent") {
+        hasSeenWorker = true;
+      }
+      if (!shouldAutoWakeGateway(rechecked, hasSeenWorker)) {
         failedCycles = 0;
         nextAllowedAt = 0;
         return;
       }
 
-      log("queued work has no listening ChatGPT worker; opening the default browser.");
+      const reconnectOnly = rechecked.queued === 0 && hasSeenWorker;
+      log(reconnectOnly
+        ? "the previous ChatGPT worker disconnected; opening the default browser to re-establish it."
+        : "queued work has no listening ChatGPT worker; opening the default browser.");
       const driver = await getDriver();
-      const outcome = await runWakeCycle(options.store, driver, confirmationMs, log);
+      const outcome = await runWakeCycle(options.store, driver, confirmationMs, log, reconnectOnly);
       if (outcome === "confirmed") {
         failedCycles = 0;
         nextAllowedAt = 0;
@@ -183,6 +194,7 @@ async function runWakeCycle(
   driver: GatewayWakeDriver,
   confirmationMs: number,
   log: (message: string) => void,
+  reconnectOnly: boolean,
 ): Promise<WakeOutcome> {
   const page = await driver.open();
   let backgroundSent = false;
@@ -194,24 +206,26 @@ async function runWakeCycle(
   }
 
   if (backgroundSent) {
-    const outcome = await waitForWakeOutcome(store, confirmationMs);
+    const outcome = await waitForWakeOutcome(store, confirmationMs, reconnectOnly);
     if (outcome !== "pending") return outcome;
   }
 
   log("worker still absent; briefly focusing the same ChatGPT window for one Enter retry.");
   await driver.submitForeground(page);
-  return waitForWakeOutcome(store, confirmationMs);
+  return waitForWakeOutcome(store, confirmationMs, reconnectOnly);
 }
 
 async function waitForWakeOutcome(
   store: Pick<LlmGatewayJobStore, "status">,
   timeoutMs: number,
+  reconnectOnly: boolean,
 ): Promise<WakeOutcome> {
   const deadline = Date.now() + timeoutMs;
   while (true) {
     const status = await store.status();
-    if (status.state === "released" || status.queued === 0) return "not_needed";
-    if (!shouldAutoWakeGateway(status)) return "confirmed";
+    if (status.state === "released") return "not_needed";
+    if (!reconnectOnly && status.queued === 0) return "not_needed";
+    if (!shouldAutoWakeGateway(status, reconnectOnly)) return "confirmed";
     if (Date.now() >= deadline) return "pending";
     await sleep(Math.min(250, Math.max(1, deadline - Date.now())));
   }
@@ -281,6 +295,8 @@ async function prepareLinuxGatewayWakeDriver(env: NodeJS.ProcessEnv): Promise<Ga
   return {
     async open(): Promise<GatewayWakePage> {
       const previousWindow = await activeWindow();
+      const previousTitle = previousWindow ? await windowName(previousWindow) : "";
+      const previousWasChatGpt = previousTitle.toLowerCase().includes("chatgpt");
       const existingChatGptWindows = new Set(await chatGptWindows());
       await runExecutable(xdgOpen, [wakeUrl], env, 5_000);
 
@@ -288,7 +304,12 @@ async function prepareLinuxGatewayWakeDriver(env: NodeJS.ProcessEnv): Promise<Ga
       const deadline = Date.now() + CHATGPT_WINDOW_TIMEOUT_MS;
       while (Date.now() < deadline) {
         const active = await activeWindow();
-        if (active && (await windowName(active)).toLowerCase().includes("chatgpt")) {
+        const activeTitle = active ? await windowName(active) : "";
+        const activeIsChatGpt = activeTitle.toLowerCase().includes("chatgpt");
+        const activeChangedUnambiguously =
+          activeIsChatGpt &&
+          (active !== previousWindow || !previousWasChatGpt || activeTitle !== previousTitle);
+        if (active && activeChangedUnambiguously) {
           target = active;
           break;
         }
@@ -297,10 +318,6 @@ async function prepareLinuxGatewayWakeDriver(env: NodeJS.ProcessEnv): Promise<Ga
         const newlyVisible = matches.filter((id) => !existingChatGptWindows.has(id));
         if (newlyVisible.length === 1) {
           target = newlyVisible[0];
-          break;
-        }
-        if (matches.length === 1) {
-          target = matches[0];
           break;
         }
         await sleep(CHATGPT_WINDOW_POLL_MS);

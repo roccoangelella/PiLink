@@ -28,23 +28,26 @@ test("auto-wake is restricted to Linux CLI endpoint launches", () => {
   const cliGatewayEnv = {
     PI_LLM_GATEWAY_ENABLED: "true",
     PILINK_GATEWAY_LAUNCH: "true",
+    DISPLAY: ":0",
   };
   assert.equal(gatewayAutoWakeEnabled(cliGatewayEnv, "linux"), true);
-  assert.equal(gatewayAutoWakeEnabled({ PI_LLM_GATEWAY_ENABLED: "true" }, "linux"), false);
-  assert.equal(gatewayAutoWakeEnabled({ PILINK_GATEWAY_LAUNCH: "true" }, "linux"), false);
+  assert.equal(gatewayAutoWakeEnabled({ PI_LLM_GATEWAY_ENABLED: "true", DISPLAY: ":0" }, "linux"), false);
+  assert.equal(gatewayAutoWakeEnabled({ PILINK_GATEWAY_LAUNCH: "true", DISPLAY: ":0" }, "linux"), false);
+  assert.equal(gatewayAutoWakeEnabled({ PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true" }, "linux"), false);
   assert.equal(gatewayAutoWakeEnabled(cliGatewayEnv, "darwin"), false);
   assert.equal(gatewayAutoWakeEnabled({ ...cliGatewayEnv, PI_LLM_GATEWAY_AUTO_WAKE: "false" }, "linux"), false);
 });
 
 test("wake URLs use only the supported q or prompt query parameter", () => {
-  assert.equal(buildGatewayWakeUrl("q"), "https://chatgpt.com/?q=%40PiLink+wake");
-  assert.equal(buildGatewayWakeUrl("prompt"), "https://chatgpt.com/?prompt=%40PiLink+wake");
+  assert.equal(buildGatewayWakeUrl("q"), "https://chatgpt.com/?q=wake");
+  assert.equal(buildGatewayWakeUrl("prompt"), "https://chatgpt.com/?prompt=wake");
 });
 
 test("auto-wake requires queued work and an explicit wake_worker status", () => {
   assert.equal(shouldAutoWakeGateway(status()), true);
   assert.equal(shouldAutoWakeGateway(status({ queued: 0 })), false);
-  assert.equal(shouldAutoWakeGateway(status({ next_action: "poll" })), false);
+  assert.equal(shouldAutoWakeGateway(status({ queued: 0 }), true), true);
+  assert.equal(shouldAutoWakeGateway(status({ next_action: "poll" }), true), false);
   assert.equal(shouldAutoWakeGateway(status({ worker_polling: true })), false);
   assert.equal(shouldAutoWakeGateway(status({ processing_claim: true })), false);
   assert.equal(shouldAutoWakeGateway(status({ state: "released", next_action: "none" })), false);

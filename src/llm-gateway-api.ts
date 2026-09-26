@@ -25,6 +25,7 @@ export interface GatewayApiOptions {
   host?: string;
   profile?: GatewayApiProfile;
   log?: (message: string) => void;
+  allowInactiveQueueForAutoWake?: boolean;
 }
 
 export interface StartedGatewayApi {
@@ -223,7 +224,7 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
     }
 
     try {
-      if (!await options.store.isAvailable()) {
+      if (!await options.store.isAvailable() && !options.allowInactiveQueueForAutoWake) {
         res.status(503).json(openAiError(
           "pilink_chat_inactive",
           "No active ChatGPT gateway loop. Send the PiLink wake command in the connected ChatGPT conversation first.",
