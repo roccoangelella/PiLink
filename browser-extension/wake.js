@@ -3,7 +3,7 @@
 
   const WAKE_TEXT = "@PiLink-desktop wake up";
   const COMPOSER_SELECTOR = '#prompt-textarea, textarea, [contenteditable="true"], [contenteditable=""]';
-  const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"], button[aria-label="Send prompt"], button[aria-label="Send message"]';
+  const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"], button#composer-submit-button, button[data-testid="composer-submit-button"], button[aria-label="Send prompt"], button[aria-label="Send message"]';
   const MAX_WAIT_MS = 15000;
   const POLL_MS = 100;
 
@@ -52,14 +52,18 @@
   // A small, non-interactive diagnostic is visible only on a PiLink wake URL.
   // It shows fixed status labels, never user messages, cookies or tokens.
   let badge = null;
-  if (document.body && typeof document.createElement === "function") {
-    badge = document.createElement("div");
-    badge.style.cssText = "position:fixed;top:12px;right:12px;z-index:2147483647;" +
-      "padding:8px 12px;border-radius:8px;background:#142334;color:white;" +
-      "font:13px system-ui,sans-serif;pointer-events:none;max-width:320px";
-    document.body.appendChild(badge);
-  }
-  function status(label) {
+  let lastStatus = "extension active; checking the editor";
+  function status(label = lastStatus) {
+    lastStatus = label;
+    // document_start captures ?q before the site can consume it; the body
+    // may not exist until a later readiness check.
+    if (!badge && document.body && typeof document.createElement === "function") {
+      badge = document.createElement("div");
+      badge.style.cssText = "position:fixed;top:12px;right:12px;z-index:2147483647;" +
+        "padding:8px 12px;border-radius:8px;background:#142334;color:white;" +
+        "font:13px system-ui,sans-serif;pointer-events:none;max-width:320px";
+      document.body.appendChild(badge);
+    }
     if (badge) badge.textContent = `PiLink wake: ${label}`;
   }
   status("extension active; checking the editor");
@@ -114,16 +118,30 @@
     if (form && typeof form.querySelectorAll === "function") {
       const localButtons = form.querySelectorAll(SEND_BUTTON_SELECTOR);
       if (localButtons.length > 0) return localButtons;
+      // A generic submit could be an unrelated action even in the editor
+      // form. Accept only known send labels; unfamiliar UI fails closed.
+      const localSubmit = Array.from(form.querySelectorAll('button[type="submit"][aria-label]'))
+        .filter((button) => /^(?:Send(?: (?:message|prompt))?|Invia(?: messaggio)?)$/i
+          .test(button.getAttribute("aria-label")?.trim() ?? ""));
+      if (localSubmit.length > 0) return localSubmit;
     }
-    // ChatGPT has moved composer controls across container boundaries before.
-    // On the exact new-chat wake URL, accept a document-level fallback only
-    // when the send selector remains unique; ambiguity still fails closed.
-    return document.querySelectorAll(SEND_BUTTON_SELECTOR);
+    // ChatGPT may place the send control outside the form. Only known
+    // explicit send selectors can be used across the document, and only
+    // when exactly one candidate exists; never pick a generic submit here.
+    const candidates = document.querySelectorAll(SEND_BUTTON_SELECTOR);
+    if (!form) return candidates;
+    // Do not click a send control inside a different form if ChatGPT puts
+    // the composer's own control outside its form.
+    return Array.from(candidates).filter((button) => {
+      const owner = typeof button.closest === "function" ? button.closest("form") : null;
+      return owner === null || owner === form;
+    });
   }
 
   function checkReady() {
     timer = null;
     if (finished) return;
+    status();
     if (!stillOnWakePage()) {
       finish("ChatGPT changed the wake URL; nothing sent");
       return;

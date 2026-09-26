@@ -534,7 +534,7 @@ function parseCollaborationTask(value: Record<string, unknown>): CollaborationTa
     throw new Error("Invalid collaboration task response");
   }
   const dependencies = Array.isArray(value.dependencies)
-    ? value.dependencies.slice(0, 50).flatMap((candidate) => {
+    ? value.dependencies.slice(0, 50).flatMap((candidate): CollaborationTaskDependency[] => {
         const dependency = record(candidate);
         const dependencyTaskId = safeIdentifier(dependency.task_id, "");
         const condition = dependency.condition;

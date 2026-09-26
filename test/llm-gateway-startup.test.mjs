@@ -9,6 +9,8 @@ import { startGatewayApi } from "../dist/llm-gateway-api.js";
 import { probeGatewayReadiness } from "../dist/llm-gateway-runtime.js";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
 
+const FIXTURE_API_KEY = "fixture-api-key";
+
 async function storeFixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-gateway-startup-"));
   const workspace = path.join(root, "workspace");
@@ -31,7 +33,7 @@ test("closing a port-0 gateway before listen cancels the pending bind", async (t
   const messages = [];
   const api = startGatewayApi({
     store: {},
-    apiKey: "startup-test-key",
+    apiKey: FIXTURE_API_KEY,
     port: 0,
     log: (message) => messages.push(message),
   });
@@ -45,7 +47,7 @@ test("closing a port-0 gateway before listen cancels the pending bind", async (t
 });
 
 test("gateway close is idempotent for concurrent callers", async () => {
-  const api = startGatewayApi({ store: {}, apiKey: "startup-test-key", port: 0, log: () => undefined });
+  const api = startGatewayApi({ store: {}, apiKey: FIXTURE_API_KEY, port: 0, log: () => undefined });
   const first = api.close();
   const second = api.close();
   assert.strictEqual(second, first);
@@ -87,7 +89,7 @@ test("gateway readiness reports the actual port and authenticated local reachabi
   const store = await storeFixture(t);
   const api = startGatewayApi({
     store,
-    apiKey: "startup-test-key",
+    apiKey: FIXTURE_API_KEY,
     port: 0,
     log: () => undefined,
   });
@@ -98,7 +100,7 @@ test("gateway readiness reports the actual port and authenticated local reachabi
   assert.ok(api.port > 0);
   assert.equal(new URL(api.baseUrl).port, String(api.port));
   const response = await fetch(`${api.baseUrl}/models`, {
-    headers: { authorization: "Bearer startup-test-key" },
+    headers: { authorization: `Bearer ${FIXTURE_API_KEY}` },
   });
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).data.map((model) => model.id), ["pilink"]);
@@ -113,7 +115,7 @@ test("gateway readiness rejects an occupied port without publishing an endpoint"
   const messages = [];
   const api = startGatewayApi({
     store,
-    apiKey: "startup-test-key",
+    apiKey: FIXTURE_API_KEY,
     port,
     log: (message) => messages.push(message),
   });

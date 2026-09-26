@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   buildGatewayWakeUrl,
   gatewayAutoWakeEnabled,
@@ -42,6 +45,50 @@ test("wake needs queued work or a previously active worker and explicit wake_wor
   assert.equal(shouldAutoWakeGateway(status({ worker_polling: true })), false);
   assert.equal(shouldAutoWakeGateway(status({ processing_claim: true })), false);
   assert.equal(shouldAutoWakeGateway(status({ state: "released", next_action: "none" })), false);
+});
+
+test("browser driver opens a nonce-tagged URL in Brave or the default browser, never a keyboard daemon", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-wake-driver-"));
+  const log = path.join(root, "opened");
+  const writeCommand = async (name, body) => fs.writeFile(path.join(root, name), `#!/bin/sh\n${body}\n`, { mode: 0o700 });
+  try {
+    for (const browser of ["brave-browser.desktop", "firefox.desktop"]) {
+      await writeCommand("xdg-settings", `printf '%s\\n' '${browser}'`);
+      await writeCommand("brave", `printf '%s\\n' "$@" > '${log}'`);
+      await writeCommand("xdg-open", `printf '%s\\n' "$@" > '${log}'`);
+      await fs.rm(log, { force: true });
+      const supervisor = startGatewayAutoWakeSupervisor({
+        store: { status: async () => status() },
+        env: { PATH: `${root}:/usr/bin:/bin`, DISPLAY: ":0", PI_LLM_GATEWAY_ENABLED: "true",
+          PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+        platform: "linux", pollIntervalMs: 5, wakeGraceMs: 0, confirmationMs: 25,
+        log: () => {},
+      });
+      assert.ok(supervisor);
+      try {
+        // Driver preparation, execFile, and the status recheck are asynchronous.
+        let output = "";
+        for (let attempt = 0; attempt < 80; attempt++) {
+          try { output = await fs.readFile(log, "utf8"); } catch { /* not yet created */ }
+          if (output.includes("https://chatgpt.com/")) break;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        assert.match(output, /https:\/\/chatgpt\.com\//);
+        const args = output.trim().split("\n");
+        const url = new URL(args.at(-1));
+        assert.equal(url.origin, "https://chatgpt.com");
+        assert.equal(url.pathname, "/");
+        assert.equal(url.searchParams.get("q"), "@PiLink-desktop wake up");
+        assert.match(url.searchParams.get("pilink_wake"), /^[0-9a-f]{32}$/);
+        assert.equal(url.searchParams.size, 2);
+        assert.deepEqual(args.slice(0, -1), browser === "brave-browser.desktop" ? ["--new-window"] : []);
+      } finally {
+        supervisor.close();
+      }
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("supervisor opens only once per persistent wake condition and waits for real worker contact", async () => {

@@ -47,7 +47,7 @@ class FakeDate extends Date {
 
 class FakeForm {
   constructor(buttons = []) { this.buttons = buttons; }
-  querySelectorAll() { return this.buttons.slice(); }
+  querySelectorAll(selector) { return this.buttons.filter((button) => button.matches(selector)); }
 }
 
 class FakeComposer {
@@ -64,13 +64,33 @@ class FakeComposer {
 }
 
 class FakeButton {
-  constructor({ disabled = false, ariaDisabled = null } = {}) {
+  constructor({ id = null, testId = null, type = null, ariaLabel = null, disabled = false, ariaDisabled = null } = {}) {
+    this.id = id;
+    this.testId = testId;
+    this.type = type;
+    this.ariaLabel = ariaLabel;
     this.disabled = disabled;
     this.ariaDisabled = ariaDisabled;
     this.isSendButton = true;
     this.clickCount = 0;
+    this.form = null;
   }
-  getAttribute(name) { return name === "aria-disabled" ? this.ariaDisabled : null; }
+  closest(selector) { return selector === "form" ? this.form : null; }
+  getAttribute(name) {
+    return name === "aria-disabled" ? this.ariaDisabled : name === "aria-label" ? this.ariaLabel : null;
+  }
+  matches(selector) {
+    // Plain fixtures represent the existing known send selector; explicit
+    // fixtures match only the selector they declare.
+    if (!this.id && !this.testId && !this.type && !this.ariaLabel) return selector !== 'button[type="submit"][aria-label]';
+    return selector.split(",").some((part) => {
+      const s = part.trim();
+      return (this.id && s === `button#${this.id}`) ||
+        (this.testId && s === `button[data-testid="${this.testId}"]`) ||
+        (this.ariaLabel && s === `button[aria-label="${this.ariaLabel}"]`) ||
+        (this.type === "submit" && this.ariaLabel && s === 'button[type="submit"][aria-label]');
+    });
+  }
   click() { this.clickCount++; }
 }
 
@@ -83,12 +103,14 @@ function makeStore() {
   };
 }
 
-function runExtension({ href = URL_OK, composers = [], documentButtons = [], store = makeStore(), clock = new FakeClock() } = {}) {
+function runExtension({ href = URL_OK, composers = [], documentButtons = [], store = makeStore(), clock = new FakeClock(), bodyReady = true } = {}) {
   const banners = [];
+  const body = { appendChild: (element) => banners.push(element) };
   const document = {
-    querySelectorAll: (selector) => selector === COMPOSER_SELECTOR_FOR_TEST ? composers.slice() : documentButtons.slice(),
+    querySelectorAll: (selector) => selector === COMPOSER_SELECTOR_FOR_TEST
+      ? composers.slice() : documentButtons.filter((button) => button.matches(selector)),
     createElement: () => ({ style: {}, textContent: "" }),
-    body: { appendChild: (element) => banners.push(element) },
+    body: bodyReady ? body : null,
   };
   FakeDate.clock = clock;
   const context = vm.createContext({
@@ -101,7 +123,7 @@ function runExtension({ href = URL_OK, composers = [], documentButtons = [], sto
     clearTimeout: clock.clearTimeout,
   });
   vm.runInContext(extensionSource, context, { timeout: 1000 });
-  return { clock, document, store, context, banners };
+  return { clock, document, body, store, context, banners };
 }
 
 const COMPOSER_SELECTOR_FOR_TEST = '#prompt-textarea, textarea, [contenteditable="true"], [contenteditable=""]';
@@ -119,6 +141,7 @@ test("manifest is MV3 with only the ChatGPT content-script match and no permissi
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.content_scripts[0].matches, ["https://chatgpt.com/*"]);
   assert.deepEqual(manifest.content_scripts[0].js, ["wake.js"]);
+  assert.equal(manifest.content_scripts[0].run_at, "document_start");
   assert.equal("permissions" in manifest, false);
   assert.equal("host_permissions" in manifest, false);
   assert.equal("background" in manifest, false);
@@ -156,6 +179,9 @@ test("non-matching URL conditions do nothing", () => {
     `${URL_OK}&extra=1`,
     URL_OK.replace("chatgpt.com/", "chatgpt.com/path/"),
     `https://chatgpt.com/?q=${encodeURIComponent(WAKE)}&q=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}`,
+    `https://chatgpt.com/?q=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}#chat`,
+    `https://evil.example/?q=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}`,
+    `http://chatgpt.com/?q=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}`,
   ]) {
     runExtension({ href, composers: [composer] });
   }
@@ -221,6 +247,21 @@ test("ChatGPT consuming only ?q retains the nonce and permits one exact send", (
   assert.equal(button.clickCount, 1);
 });
 
+test("captures the authorized URL before ChatGPT consumes q or creates the body", () => {
+  const clock = new FakeClock();
+  const composers = [];
+  const { button, composer } = readyFixture();
+  const { context, document, body, banners } = runExtension({ composers, clock, bodyReady: false });
+  assert.equal(banners.length, 0);
+  context.location.href = `https://chatgpt.com/?pilink_wake=${NONCE}`;
+  document.body = body;
+  composers.push(composer);
+  clock.advance(200);
+  assert.equal(button.clickCount, 1);
+  assert.equal(banners.length, 1);
+  assert.equal(banners[0].textContent, "PiLink wake: clicked the send button once");
+});
+
 test("a nonce alone cannot start the extension, and added parameters cancel it", () => {
   const initial = readyFixture();
   const alone = runExtension({ href: `https://chatgpt.com/?pilink_wake=${NONCE}`, composers: [initial.composer] });
@@ -274,4 +315,83 @@ test("changed text and readiness beyond the deadline never send", () => {
   clock.advance(16000);
   assert.equal(late.composer.focusCount, 0);
   assert.equal(late.button.clickCount, 0);
+});
+
+test("current ChatGPT composer-submit-button is selected by id or test id, once", () => {
+  for (const button of [new FakeButton({ id: "composer-submit-button" }),
+    new FakeButton({ testId: "composer-submit-button" })]) {
+    const composer = new FakeComposer({ form: new FakeForm([button]) });
+    runExtension({ composers: [composer] });
+    assert.equal(button.clickCount, 1);
+    assert.equal(composer.focusCount, 1);
+  }
+  const external = new FakeButton({ id: "composer-submit-button" });
+  runExtension({ composers: [new FakeComposer({ form: null })], documentButtons: [external] });
+  assert.equal(external.clickCount, 1);
+});
+
+test("document fallback cannot click another form's send button", () => {
+  const otherForm = new FakeForm();
+  const unrelated = new FakeButton({ id: "composer-submit-button" });
+  unrelated.form = otherForm;
+  const composer = new FakeComposer({ form: new FakeForm() });
+  const { clock, banners } = runExtension({ composers: [composer], documentButtons: [unrelated] });
+  clock.advance(15000);
+  assert.equal(unrelated.clickCount, 0);
+  assert.match(banners[0].textContent, /send button not ready/);
+});
+
+test("ambiguous matching send buttons fail closed", () => {
+  const one = new FakeButton({ id: "composer-submit-button" });
+  const two = new FakeButton({ testId: "composer-submit-button" });
+  const { banners } = runExtension({ composers: [new FakeComposer({ form: new FakeForm([one, two]) })] });
+  assert.equal(one.clickCount + two.clickCount, 0);
+  assert.match(banners[0].textContent, /multiple send buttons/);
+});
+
+test("unique localized submit button in the editor form takes priority over another document button", () => {
+  const local = new FakeButton({ type: "submit", ariaLabel: "Invia" });
+  const unrelated = new FakeButton({ id: "composer-submit-button" });
+  const composer = new FakeComposer({ form: new FakeForm([local]) });
+  runExtension({ composers: [composer], documentButtons: [unrelated] });
+  assert.equal(local.clickCount, 1);
+  assert.equal(unrelated.clickCount, 0);
+});
+
+test("ambiguous localized form buttons cannot fall through to a document button", () => {
+  const one = new FakeButton({ type: "submit", ariaLabel: "Invia" });
+  const two = new FakeButton({ type: "submit", ariaLabel: "Send" });
+  const external = new FakeButton({ id: "composer-submit-button" });
+  const { banners } = runExtension({
+    composers: [new FakeComposer({ form: new FakeForm([one, two]) })],
+    documentButtons: [external],
+  });
+  assert.equal(one.clickCount + two.clickCount + external.clickCount, 0);
+  assert.match(banners[0].textContent, /multiple send buttons/);
+});
+
+test("unrelated labelled submit in the editor form is never clicked", () => {
+  const unrelated = new FakeButton({ type: "submit", ariaLabel: "Delete conversation" });
+  const { clock, banners } = runExtension({ composers: [new FakeComposer({ form: new FakeForm([unrelated]) })] });
+  clock.advance(15000);
+  assert.equal(unrelated.clickCount, 0);
+  assert.match(banners[0].textContent, /send button not ready/);
+});
+
+test("disabled send control never clicks, even after the deadline", () => {
+  const button = new FakeButton({ id: "composer-submit-button", disabled: true });
+  const { clock, banners } = runExtension({ composers: [new FakeComposer({ form: new FakeForm([button]) })] });
+  clock.advance(15000);
+  assert.equal(button.clickCount, 0);
+  assert.match(banners[0].textContent, /enabled send button not ready/);
+});
+
+test("generic document submit cannot be guessed without a composer form", () => {
+  const unrelated = new FakeButton({ type: "submit", ariaLabel: "Invia" });
+  const { clock, banners } = runExtension({
+    composers: [new FakeComposer({ form: null })], documentButtons: [unrelated],
+  });
+  clock.advance(15000);
+  assert.equal(unrelated.clickCount, 0);
+  assert.match(banners[0].textContent, /send button not ready/);
 });

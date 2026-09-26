@@ -278,7 +278,7 @@ class ExtensionController {
       prompt: "Optional acceptance criteria or scope",
       ignoreFocusOut: true,
     });
-    const selected = await vscode.window.showQuickPick<CollaborationTaskPriority>(["P0", "P1", "P2", "P3"], {
+    const selected = await vscode.window.showQuickPick(["P0", "P1", "P2", "P3"], {
       title: "Task priority",
       placeHolder: "P2",
       ignoreFocusOut: true,
@@ -287,7 +287,7 @@ class ExtensionController {
     await createAdminTask(snapshot.port, snapshot.bootstrapSecret, {
       title: title.trim(),
       ...(details?.trim() ? { details: details.trim() } : {}),
-      priority: selected,
+      priority: selected as CollaborationTaskPriority,
     });
   }
 

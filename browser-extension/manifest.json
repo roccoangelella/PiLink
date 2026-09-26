@@ -7,7 +7,7 @@
     {
       "matches": ["https://chatgpt.com/*"],
       "js": ["wake.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }
