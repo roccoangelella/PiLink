@@ -40,6 +40,22 @@ In the connected ChatGPT conversation, send:
 ```
 ChatGPT invokes `gateway_exchange` to poll for jobs. When `state=idle` (`continue=true`), it immediately re-polls without user output; when `state=request`, it processes the prompt. Exactly one active ChatGPT conversation acts as the worker at a time. Use `pilink gateway release` to exit the loop cleanly.
 
+### Automatic wake on Linux (CLI endpoint only)
+
+The CLI endpoint now includes a conservative Linux/X11 auto-waker. It is enabled only when PiLink was launched through `pilink start --mode cli`, `pilink serve --mode cli`, or the equivalent `pilink gateway start|serve` path. Single-agent and collaboration modes never start it.
+
+The waker reacts only when there is queued gateway work and the gateway status reports `next_action=\"wake_worker\"`. It never scrapes ChatGPT, reads the DOM, calls private ChatGPT endpoints, copies cookies, or bypasses browser challenges. Instead it:
+
+1. opens `https://chatgpt.com/?q=%40PiLink+wake` (or the `?prompt=` form) with the user's default browser via `xdg-open`;
+2. identifies the visible ChatGPT browser window with `xdotool`;
+3. first sends Enter directly to that window without activating it;
+4. if gateway worker contact is still absent, briefly activates that same window, sends Enter once, and restores the previously active window;
+5. confirms success only from PiLink's own gateway status, never from page contents.
+
+The Linux implementation currently requires an X11-compatible graphical session with `xdg-open` and `xdotool` available. Wayland-only sessions where `xdotool` cannot see the browser fail safely and leave the gateway usable with the normal manual wake. A failed wake is rate-limited: at most two wake cycles are attempted while the same `wake_worker` condition persists, then PiLink pauses auto-wake until gateway state changes. Login screens, CAPTCHAs, Cloudflare challenges, and similar browser protections are never automated.
+
+Set `PI_LLM_GATEWAY_AUTO_WAKE=false` to disable the feature. `PI_LLM_GATEWAY_AUTO_WAKE_PARAM=prompt` selects `?prompt=` instead of the default `?q=`.
+
 ## OpenAI API & Tool Calling
 
 ### Test Completion Request
@@ -108,6 +124,8 @@ ChatGPT calls `gateway_call_local_tool`, and PiLink returns an OpenAI envelope w
 | `PI_LLM_GATEWAY_QUEUE_TIMEOUT_SECONDS` | `60` | Absolute admission/wake deadline while a request remains queued; the effective value is bounded by the request timeout. |
 | `PI_LLM_GATEWAY_CLAIM_LEASE_SECONDS` | `900` | Durable claim lease before an uncompleted request returns to the queue. Runtime uses at least this default and does not make a lease a model-progress signal. |
 | `PI_LLM_GATEWAY_STALE_SECONDS` | `120` | Worker inactivity threshold before session is marked stale. |
+| `PI_LLM_GATEWAY_AUTO_WAKE` | `true` in Linux CLI endpoint launches | Set to `false` to disable the Linux auto-waker. It is ignored outside CLI endpoint launches. |
+| `PI_LLM_GATEWAY_AUTO_WAKE_PARAM` | `q` | ChatGPT URL parameter used by auto-wake: `q` or `prompt`. |
 | `PILINK_TERMINAL_LOGS` | `compact` | Set to `verbose` to display raw tunnel, HTTP, and MCP traffic. |
 
 | Error / Command | Cause & Resolution |
