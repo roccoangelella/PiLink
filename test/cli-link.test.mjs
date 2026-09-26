@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ensureCliLink, selectCliBinDirectory } from "../dist/ensure-cli-link.js";
-import { resolveGatewayCliArgs } from "../dist/terminal-launcher-cli.js";
+import { resolvePiLinkCliArgs } from "../dist/terminal-launcher-cli.js";
 
 function fixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "pilink-cli-link-"));
@@ -49,7 +49,7 @@ test("source build exposes pilink through an existing user PATH directory", () =
   }
 });
 
-test("source build exposes an isolated pilink-cli gateway launcher without overwriting other commands", () => {
+test("source build exposes the Pi Agent pilink-cli launcher without overwriting other commands", () => {
   const { home, bin, launcher } = fixture();
   const gateway = path.join(path.dirname(launcher), "terminal-launcher-cli.js");
   fs.writeFileSync(gateway, "#!/usr/bin/env node\n", { mode: 0o600 });
@@ -61,8 +61,11 @@ test("source build exposes an isolated pilink-cli gateway launcher without overw
     assert.equal(first.gatewayResult.status, "linked");
     assert.equal(first.gatewayResult.linkPath, custom);
     assert.equal(ensureCliLink(options).gatewayResult.status, "already-linked");
-    assert.deepEqual(resolveGatewayCliArgs([]).args, ["gateway", "status"]);
-    assert.deepEqual(resolveGatewayCliArgs(["status"]).args, ["gateway", "status"]);
+    assert.deepEqual(resolvePiLinkCliArgs([]), { action: "pi", args: ["--provider", "pilink", "--model", "pilink"] });
+    assert.deepEqual(resolvePiLinkCliArgs(["--continue"]), { action: "pi", args: ["--provider", "pilink", "--model", "pilink", "--continue"] });
+    assert.deepEqual(resolvePiLinkCliArgs(["status"]), { action: "gateway", args: ["gateway", "status"] });
+    assert.deepEqual(resolvePiLinkCliArgs(["gateway", "connect"]), { action: "gateway", args: ["gateway", "connect"] });
+    assert.throws(() => resolvePiLinkCliArgs(["--model", "other"]), /always uses the PiLink gateway model/u);
     fs.writeFileSync(custom, "unrelated executable");
     assert.equal(ensureCliLink(options).gatewayResult.status, "conflict");
     assert.equal(fs.readFileSync(custom, "utf8"), "unrelated executable");
