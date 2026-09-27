@@ -45,7 +45,7 @@ export async function prepareKwinWakeFocusGuard(env: NodeJS.ProcessEnv): Promise
   try {
     await fs.writeFile(script, kwinWakeFocusScript(), { mode: 0o600 });
     const id = (await call(qdbus, ["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.loadScript", script, plugin], env)).trim();
-    if (!/^[1-9]\d{0,6}$/u.test(id)) throw new Error("Invalid KWin script ID");
+    if (!/^(?:0|[1-9]\d{0,6})$/u.test(id)) throw new Error("Invalid KWin script ID");
     await call(qdbus, ["org.kde.KWin", `/Scripting/Script${id}`, "org.kde.kwin.Script.run"], env);
   } catch {
     await call(qdbus, ["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", plugin], env).catch(() => {});
