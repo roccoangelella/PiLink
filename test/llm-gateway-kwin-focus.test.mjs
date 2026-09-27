@@ -90,7 +90,9 @@ test("KWin guard loads and unloads a temporary script via a fake DBus executable
   await fs.writeFile(fake, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$QDBUS_LOG"\ncase "$*" in *loadScript*) printf '0\\n';; esac\n`, { mode: 0o700 });
   const env = { ...process.env, PATH: `${root}:/usr/bin:/bin`, QDBUS_LOG: log,
     XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE" };
+  delete env.PI_LLM_GATEWAY_RESTORE_FOCUS;
   assert.equal(await prepareKwinWakeFocusGuard({ ...env, XDG_CURRENT_DESKTOP: "GNOME" }), undefined);
+  assert.equal(await prepareKwinWakeFocusGuard({ ...env, PI_LLM_GATEWAY_RESTORE_FOCUS: "false" }), undefined);
   const guard = await prepareKwinWakeFocusGuard(env);
   assert.ok(guard);
   const before = (await fs.readFile(log, "utf8")).trim().split("\n");
