@@ -10,10 +10,9 @@
  * 5. Cleans up processes and temporary data cleanly within the worktree.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { createServer } from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,8 +56,7 @@ async function findBrowserBinary() {
 
   for (const candidate of candidates) {
     try {
-      const { execSync } = await import("node:child_process");
-      const resolved = execSync(`which ${candidate} 2>/dev/null`, { encoding: "utf8" }).trim();
+      const resolved = execFileSync("which", [candidate], { encoding: "utf8", timeout: 1000 }).trim();
       if (resolved) {
         return resolved;
       }
