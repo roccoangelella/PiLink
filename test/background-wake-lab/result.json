@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "browserBinary": "/usr/bin/brave",
+  "isolatedUserDataDir": "/home/rocco/Desktop/Cosine/GitHub/PiLink-agy-wake/test/background-wake-lab/.tmp-run/brave-profile-bMOPjh",
+  "tabCreated": true,
+  "tabUrl": "chrome-extension://pjmafihdkmhogdeelhoedalmchchhdel/page.html",
+  "tabActive": false,
+  "tabVisibilityState": "hidden",
+  "tabHasFocus": false,
+  "verifiedInactive": true,
+  "screenshotPath": "/home/rocco/Desktop/Cosine/GitHub/PiLink-agy-wake/test/background-wake-lab/fixture.png",
+  "screenshotSizeBytes": 26290,
+  "timestamp": "2026-09-27T10:28:31.888Z"
+}
