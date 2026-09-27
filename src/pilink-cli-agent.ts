@@ -8,7 +8,7 @@ import dotenv from "dotenv";
 import { defaultConfigPath } from "./config.js";
 import { deriveGatewayApiKey } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp, isLoopbackPortAvailable } from "./llm-gateway-ports.js";
-import { loadedGatewayBrowserExtension, runGatewayBrowserSetup, stageGatewayBrowserExtension } from "./llm-gateway-browser-setup.js";
+import { gatewayBrowserExtensionNeedsReload, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, runGatewayBrowserSetup, stageGatewayBrowserExtension } from "./llm-gateway-browser-setup.js";
 
 export interface VerifiedGatewayModel {
   baseUrl: string;
@@ -34,7 +34,8 @@ export async function ensureLocalGateway(
   }
   const values = dotenv.parse(fs.readFileSync(configPath));
   if (verified) {
-    if (shouldOfferGatewayBrowserSetup(values.PI_LLM_GATEWAY_AUTO_WAKE, options.stage)) {
+    if (shouldOfferGatewayBrowserSetup(values.PI_LLM_GATEWAY_AUTO_WAKE, options.stage) ||
+        (!options.stage && gatewayBrowserExtensionNeedsReload())) {
       try { await runGatewayBrowserSetup(false); }
       catch (error) { console.error(`[PiLink] Browser setup unavailable: ${error instanceof Error ? error.message : "unknown error"}`); }
     }
@@ -82,13 +83,19 @@ export async function ensureLocalGateway(
         throw new Error(`Port ${port} or ${apiPort} is occupied by an unverified process; refusing to start or repoint the gateway.`);
       }
       try {
-        if (shouldOfferGatewayBrowserSetup(values.PI_LLM_GATEWAY_AUTO_WAKE, options.stage)) {
+        if (shouldOfferGatewayBrowserSetup(values.PI_LLM_GATEWAY_AUTO_WAKE, options.stage) ||
+            (!options.stage && gatewayBrowserExtensionNeedsReload())) {
           // Set the opt-in before starting the server so wake works on the
           // very first launch after the browser's one-time manual approval.
           await runGatewayBrowserSetup(false);
         } else {
-          const location = (options.stage ?? stageGatewayBrowserExtension)();
-          console.error(`[PiLink] Browser wake extension prepared at ${location}. Brave's one-time Load unpacked approval is still required if it is not yet enabled.`);
+          const location = options.stage ? options.stage() :
+            stageGatewayBrowserExtension({ connectorName: values.PI_LLM_GATEWAY_CONNECTOR_NAME });
+          if (!options.stage && gatewayBrowserExtensionNeedsReload(location) && values.PI_LLM_GATEWAY_AUTO_WAKE === "true") {
+            pauseGatewayBrowserWake(configPath);
+            console.error("[PiLink] Auto-wake paused: reload the updated browser extension and run 'pilink gateway browser-extension' to confirm it.");
+          }
+          console.error(`[PiLink] Browser wake extension prepared at ${location}. In Brave open brave://extensions, or in Chrome/Chromium open chrome://extensions; turn on Developer mode, click Load unpacked and choose that directory once.`);
         }
       } catch (error) {
         console.error(`[PiLink] Browser extension could not be staged: ${error instanceof Error ? error.message : "unavailable"}. Run 'pilink gateway browser-extension' after building.`);

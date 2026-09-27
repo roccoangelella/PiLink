@@ -58,6 +58,36 @@ test("gateway compact output suppresses routine noise and keeps actionable event
   assert.ok(result.stderr.indexOf("ChatGPT MCP") < result.stderr.indexOf("Wake          @PiLink Gateway wake up"));
 });
 
+test("ordinary gateway answers echo visibly while the Cloudflare token stays hidden on a TTY", (t) => {
+  if (process.platform !== "linux") return t.skip("PTY fixture requires Linux and Python");
+  const python = String.raw`
+import os,pty,subprocess,select,time
+script='import {createInterface} from "node:readline/promises"; import {Writable} from "node:stream"; import {installGatewayCompactOutput,gatewayVisiblePromptOutput} from "./dist/llm-gateway-output.js"; installGatewayCompactOutput(); let r=createInterface({input:process.stdin,output:gatewayVisiblePromptOutput(),terminal:true}); await r.question("ChatGPT connection name: "); r.close(); let muted=false; const hidden=new Writable({write(chunk,enc,cb){if(!muted)process.stderr.write(chunk);cb()}}); r=createInterface({input:process.stdin,output:hidden,terminal:true}); process.stderr.write("Cloudflare API token (input hidden): "); muted=true; await r.question(""); r.close(); process.stderr.write("\\n")'
+m,s=pty.openpty();p=subprocess.Popen(['node','--input-type=module','--eval',script],stdin=s,stdout=s,stderr=s,preexec_fn=os.setsid);os.close(s)
+out=b'';sent_name=False;sent_token=False;deadline=time.time()+6
+while time.time()<deadline and p.poll() is None:
+ ready,_,_=select.select([m],[],[],.1)
+ if ready:
+  try:out+=os.read(m,4096)
+  except OSError:break
+ if not sent_name and b'ChatGPT connection name' in out:
+  os.write(m,b'Visible Answer\r');sent_name=True
+ if sent_name and not sent_token and b'Cloudflare API token' in out:
+  os.write(m,b'NEVER_ECHO_FAKE_TOKEN\r');sent_token=True
+try:p.wait(timeout=2)
+except subprocess.TimeoutExpired:p.kill();p.wait()
+try:
+ while True:out+=os.read(m,4096)
+except OSError:pass
+os.close(m)
+print('exit',p.returncode,'name_sent',sent_name,'secret_sent',sent_token,'visible_answer',b'Visible Answer' in out,'secret_hidden',b'NEVER_ECHO_FAKE_TOKEN' not in out)
+raise SystemExit(0 if p.returncode==0 and sent_token and b'Visible Answer' in out and b'NEVER_ECHO_FAKE_TOKEN' not in out else 1)
+`;
+  const result = spawnSync("python3", ["-c", python], { cwd: process.cwd(), encoding: "utf8", timeout: 12_000 });
+  if (result.error?.code === "ENOENT") return t.skip("Python not installed");
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
 test("PILINK_TERMINAL_LOGS=verbose restores raw gateway diagnostics", () => {
   const result = spawnSync(process.execPath, ["--input-type=module", "--eval", verboseScript], {
     cwd: process.cwd(),
@@ -75,6 +105,9 @@ const hostingPromptsScript = String.raw`
   installGatewayCompactOutput();
   process.stderr.write("Select hosting [1/2/3]: ");
   process.stderr.write("Fixed Cloudflare hostname (for example mcp.example.com): ");
+  process.stderr.write("ChatGPT connection name [PiLink Gateway]: ");
+  process.stderr.write("After loading and enabling the extension, type yes to enable auto-wake, or skip: ");
+  console.error("2026-09-26T19:58:44Z INF Tunnel connection noise");
   process.stderr.write("Cloudflare API token: ");
   process.stderr.write("Allow PiLink to request these temporary router mappings? [y/N]: ");
   process.stderr.write("Type DIRECT after completing the router configuration: ");
@@ -89,6 +122,9 @@ test("gateway compact output preserves interactive hosting and network setup pro
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /Select hosting \[1\/2\/3\]: /u);
   assert.match(result.stderr, /Fixed Cloudflare hostname \(for example mcp\.example\.com\): /u);
+  assert.match(result.stderr, /ChatGPT connection name \[PiLink Gateway\]: /u);
+  assert.match(result.stderr, /After loading and enabling the extension, type yes to enable auto-wake, or skip:/u);
+  assert.doesNotMatch(result.stderr, /Tunnel connection noise/u);
   assert.match(result.stderr, /Cloudflare API token: /u);
   assert.match(result.stderr, /Allow PiLink to request these temporary router mappings\? \[y\/N\]: /u);
   assert.match(result.stderr, /Type DIRECT after completing the router configuration: /u);

@@ -1,3 +1,5 @@
+import { Writable } from "node:stream";
+
 let installed = false;
 let originalWrite: typeof process.stderr.write | undefined;
 let pending = "";
@@ -9,6 +11,9 @@ const INTERACTIVE_PROMPTS = [
   "Approve this ChatGPT connection?",
   "Select hosting",
   "Fixed Cloudflare hostname",
+  "ChatGPT connection name",
+  "After loading and enabling",
+  "After clicking Reload",
   "Cloudflare API token",
   "Allow PiLink to request these temporary router mappings?",
   "Type DIRECT after completing the router configuration:",
@@ -53,6 +58,16 @@ export function writeGatewayCompactBlock(lines: readonly string[]): void {
 
 export function gatewayCompactOutputEnabled(): boolean {
   return compactMode;
+}
+
+/** Bypass compact log filtering for non-secret readline prompts and typed input. */
+export function gatewayVisiblePromptOutput(): Writable {
+  return new Writable({
+    write(chunk: Buffer | string, _encoding, callback) {
+      rawWrite(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+      callback();
+    },
+  });
 }
 
 function consume(text: string): void {

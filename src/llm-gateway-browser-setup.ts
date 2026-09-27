@@ -5,6 +5,9 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { defaultConfigPath } from "./config.js";
+import dotenv from "dotenv";
+import { gatewayConnectorName, gatewayWakeText } from "./llm-gateway-wake-name.js";
+import { gatewayVisiblePromptOutput } from "./llm-gateway-output.js";
 
 const BUILT_EXTENSION = path.join(path.dirname(fileURLToPath(import.meta.url)), "browser-extension");
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,6 +16,7 @@ export function stageGatewayBrowserExtension(options: {
   source?: string;
   destination?: string;
   env?: NodeJS.ProcessEnv;
+  connectorName?: string;
 } = {}): string {
   const env = options.env ?? process.env;
   const dataHome = env.XDG_DATA_HOME?.trim() || path.join(os.homedir(), ".local", "share");
@@ -42,7 +46,11 @@ export function stageGatewayBrowserExtension(options: {
       manifest.content_scripts[0].js?.join() !== "wake.js") {
     throw new Error("Refusing an unexpected Chrome/Brave wake extension manifest");
   }
-  const script = fs.readFileSync(path.join(source, "wake.js"));
+  const template = fs.readFileSync(path.join(source, "wake.js"), "utf8");
+  const defaultPhrase = 'const WAKE_TEXT = "@PiLink Gateway wake up";';
+  if (template.split(defaultPhrase).length !== 2) throw new Error("Unexpected PiLink wake extension template");
+  const script = template.replace(defaultPhrase,
+    `const WAKE_TEXT = ${JSON.stringify(gatewayWakeText({ PI_LLM_GATEWAY_CONNECTOR_NAME: options.connectorName }))};`);
   fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
   for (const name of ["manifest.json", "wake.js"]) {
     const file = path.join(destination, name);
@@ -50,8 +58,16 @@ export function stageGatewayBrowserExtension(options: {
       throw new Error(`Browser extension destination ${name} is not a normal file`);
     }
   }
+  const scriptFile = path.join(destination, "wake.js");
+  const reloadMarker = path.join(destination, ".pilink-reload-required");
+  if (fs.existsSync(reloadMarker) && (!fs.lstatSync(reloadMarker).isFile() || fs.lstatSync(reloadMarker).isSymbolicLink())) {
+    throw new Error("Refusing an unsafe browser extension reload marker");
+  }
+  const approvedScriptChanged = fs.existsSync(sourceMarker) && fs.existsSync(scriptFile) &&
+    fs.readFileSync(scriptFile, "utf8") !== script;
   fs.writeFileSync(path.join(destination, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
-  fs.writeFileSync(path.join(destination, "wake.js"), script, { mode: 0o600 });
+  fs.writeFileSync(scriptFile, script, { mode: 0o600 });
+  if (approvedScriptChanged && !fs.existsSync(reloadMarker)) fs.writeFileSync(reloadMarker, "reload required\n", { flag: "wx", mode: 0o600 });
   return destination;
 }
 
@@ -65,12 +81,20 @@ export function rememberGatewayBrowserExtensionSource(destination: string, sourc
 }
 
 export function enableGatewayBrowserWake(configPath = process.env.PILINK_CONFIG || defaultConfigPath()): void {
+  writeGatewayBrowserWake(true, configPath);
+}
+
+export function pauseGatewayBrowserWake(configPath = process.env.PILINK_CONFIG || defaultConfigPath()): void {
+  writeGatewayBrowserWake(false, configPath);
+}
+
+function writeGatewayBrowserWake(enabled: boolean, configPath: string): void {
   if (!fs.existsSync(configPath) || !fs.lstatSync(configPath).isFile() || fs.lstatSync(configPath).isSymbolicLink()) {
     throw new Error("PiLink .env must be an existing regular private file before enabling browser wake");
   }
   const current = fs.readFileSync(configPath, "utf8");
   const lines = current.split("\n").filter((line) => !line.startsWith("PI_LLM_GATEWAY_AUTO_WAKE="));
-  lines.push("PI_LLM_GATEWAY_AUTO_WAKE=true");
+  lines.push(`PI_LLM_GATEWAY_AUTO_WAKE=${enabled}`);
   const temporary = path.join(path.dirname(configPath), `.pilink-browser-setup-${process.pid}-${Date.now()}`);
   try {
     fs.writeFileSync(temporary, lines.join("\n"), { mode: 0o600, flag: "wx" });
@@ -78,6 +102,16 @@ export function enableGatewayBrowserWake(configPath = process.env.PILINK_CONFIG 
   } finally {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
+}
+
+export function configuredGatewayConnectorName(): string {
+  const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
+  if (fs.existsSync(configPath) && fs.lstatSync(configPath).isFile() && !fs.lstatSync(configPath).isSymbolicLink()) {
+    const config = dotenv.parse(fs.readFileSync(configPath));
+    return gatewayConnectorName({ PI_LLM_GATEWAY_CONNECTOR_NAME:
+      process.env.PI_LLM_GATEWAY_CONNECTOR_NAME || config.PI_LLM_GATEWAY_CONNECTOR_NAME });
+  }
+  return gatewayConnectorName();
 }
 
 export function loadedGatewayBrowserExtension(options: {
@@ -140,9 +174,25 @@ export function loadedGatewayBrowserExtension(options: {
   return false;
 }
 
+export function gatewayBrowserExtensionNeedsReload(destination = path.resolve(
+  process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "pilink", "browser-extension",
+)): boolean {
+  const marker = path.join(destination, ".pilink-reload-required");
+  return fs.existsSync(marker) && fs.lstatSync(marker).isFile() && !fs.lstatSync(marker).isSymbolicLink();
+}
+
 export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
-  const location = stageGatewayBrowserExtension();
-  if (!enable && loadedGatewayBrowserExtension({ destination: location })) {
+  const location = stageGatewayBrowserExtension({ connectorName: configuredGatewayConnectorName() });
+  const reloadRequired = gatewayBrowserExtensionNeedsReload(location);
+  if (reloadRequired) {
+    const configPath = process.env.PILINK_CONFIG || defaultConfigPath();
+    if (fs.existsSync(configPath) && dotenv.parse(fs.readFileSync(configPath)).PI_LLM_GATEWAY_AUTO_WAKE === "true") {
+      pauseGatewayBrowserWake(configPath);
+      process.env.PI_LLM_GATEWAY_AUTO_WAKE = "false";
+      console.error("Auto-wake paused until the updated extension has been reloaded and confirmed.");
+    }
+  }
+  if (!enable && !reloadRequired && loadedGatewayBrowserExtension({ destination: location })) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
     console.error("PiLink Wake is already loaded in the default browser. Auto-wake enabled without another confirmation; the running gateway applies it within a few seconds.");
@@ -151,16 +201,22 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
   if (enable) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
+    fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
     console.error("Browser wake enabled in the private PiLink .env. A running gateway applies it within a few seconds.");
     console.error("If the extension is missing or disabled, disable wake with PI_LLM_GATEWAY_AUTO_WAKE=false.");
     return;
   }
   console.error(`Chrome/Brave/Chromium wake extension prepared at: ${location}`);
-  console.error("One-time browser approval is required; npm cannot silently install an unpacked extension in an existing browser profile.");
-  console.error("In Brave/Chrome/Chromium Extensions, enable Developer mode, choose 'Load unpacked', and select the directory above.");
-  console.error("After confirming it is enabled, return to this terminal.");
+  console.error("Browser steps: open brave://extensions (Brave) or chrome://extensions (Chrome/Chromium).");
+  if (reloadRequired) {
+    console.error("Files changed: find PiLink Wake and click Reload on its extension card so it uses the new connection name. Keep it enabled.");
+  } else {
+    console.error("One-time browser approval is required; npm cannot silently install an unpacked extension in an existing browser profile.");
+    console.error("1. Switch on Developer mode (top right). 2. Click Load unpacked (top left). 3. Select the DIRECTORY above, not manifest.json. 4. Keep the extension enabled.");
+  }
+  console.error("Then return to this terminal. PiLink cannot perform that browser approval for you.");
   if (!process.stdin.isTTY || !process.stderr.isTTY) {
-    console.error("Non-interactive setup: after loading the extension in your browser, run 'pilink gateway browser-extension --enable'.");
+    console.error("Non-interactive setup: after loading or reloading the extension in your browser, run 'pilink gateway browser-extension --enable'.");
     return;
   }
   try {
@@ -171,16 +227,26 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
   } catch {
     console.error("Open brave://extensions or chrome://extensions in your browser if its Extensions page did not open.");
   }
-  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  const readline = createInterface({ input: process.stdin, output: gatewayVisiblePromptOutput(), terminal: true });
   try {
-    const answer = (await readline.question("Is the extension enabled in Chrome/Brave/Chromium? Type yes to enable auto-wake (yes/no): ")).trim().toLowerCase();
-    if (answer !== "yes") {
-      console.error("Browser wake remains disabled; re-run setup whenever you are ready.");
+    while (true) {
+      const answer = (await readline.question(reloadRequired
+        ? "After clicking Reload and confirming it is enabled, type yes to enable auto-wake, or skip: "
+        : "After loading and enabling the extension, type yes to enable auto-wake, or skip: ")).trim().toLowerCase();
+      if (answer === "skip" || answer === "no") {
+        console.error("Browser wake remains disabled; re-run setup whenever you are ready.");
+        return;
+      }
+      if (answer !== "yes") {
+        console.error("Please type yes only after browser approval, or skip to leave wake disabled.");
+        continue;
+      }
+      enableGatewayBrowserWake();
+      rememberGatewayBrowserExtensionSource(location);
+      fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
+      console.error("Browser wake enabled. A running gateway applies it within a few seconds.");
       return;
     }
-    enableGatewayBrowserWake();
-    rememberGatewayBrowserExtensionSource(location);
-    console.error("Browser wake enabled. A running gateway applies it within a few seconds.");
   } finally {
     readline.close();
   }

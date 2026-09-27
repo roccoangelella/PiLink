@@ -4,13 +4,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import type { GatewayStatusSnapshot, LlmGatewayJobStore } from "./llm-gateway-store.js";
+import { gatewayWakeText } from "./llm-gateway-wake-name.js";
 
 const AUTO_WAKE_POLL_MS = 750;
 const AUTO_WAKE_GRACE_MS = 500;
 const AUTO_WAKE_CONFIRM_MS = 30_000;
 const AUTO_WAKE_SUSPENDED_POLL_MS = 5_000;
 const AUTO_WAKE_MAX_FAILED_CYCLES = 1;
-const CHATGPT_WAKE_TEXT = "@PiLink Gateway wake up";
 
 type WakeOutcome = "confirmed" | "not_needed" | "pending";
 
@@ -53,9 +53,9 @@ export function gatewayAutoWakeEnabled(
   return env.PI_LLM_GATEWAY_AUTO_WAKE?.trim().toLowerCase() === "true";
 }
 
-export function buildGatewayWakeUrl(nonce: string): string {
+export function buildGatewayWakeUrl(nonce: string, env: NodeJS.ProcessEnv = process.env): string {
   if (!/^[0-9a-f]{32}$/u.test(nonce)) throw new Error("Wake nonce must be 16 random bytes encoded as lowercase hex");
-  return `https://chatgpt.com/?q=${encodeURIComponent(CHATGPT_WAKE_TEXT)}&pilink_wake=${nonce}`;
+  return `https://chatgpt.com/?q=${encodeURIComponent(gatewayWakeText(env))}&pilink_wake=${nonce}`;
 }
 
 export function shouldAutoWakeGateway(status: GatewayStatusSnapshot, previouslyActive = false): boolean {
@@ -194,7 +194,7 @@ async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv): Promise<Gateway
     async wake(): Promise<void> {
       // A fresh nonce is used for each attempt, and the extension uses
       // sessionStorage to suppress duplicate sends from refresh/re-navigation.
-      const url = buildGatewayWakeUrl(randomBytes(16).toString("hex"));
+      const url = buildGatewayWakeUrl(randomBytes(16).toString("hex"), env);
       if (useBrave && brave) await runExecutable(brave, ["--new-window", url], env, 5_000);
       else await runExecutable(xdgOpen, [url], env, 5_000);
     },

@@ -8,7 +8,9 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable, Transform, Writable } from "node:stream";
-import { createInterface } from "node:readline/promises";
+import { createInterface as createReadlineInterface } from "node:readline/promises";
+import { gatewayVisiblePromptOutput } from "./llm-gateway-output.js";
+import { DEFAULT_GATEWAY_CONNECTOR_NAME, gatewayWakeText, validateGatewayConnectorName } from "./llm-gateway-wake-name.js";
 import { fileURLToPath } from "node:url";
 import { loadEnvironment, loadRuntimeConfig, defaultConfigPath, defaultCoordinationDataDir, type RuntimeConfig } from "./config.js";
 import { chatCliAutoLaunchEnabled, launchChatCli } from "./chat-cli.js";
@@ -27,6 +29,16 @@ import { ensureCliLink } from "./ensure-cli-link.js";
 import { resolveCloudflaredRelease } from "./hosting/cloudflared-release.js";
 import { fixedDomainCloudflaredArgs, normalizeFixedDomainHostname, normalizeFixedDomainTunnelId, provisionFixedDomainTunnel, resolveFixedDomainTokenFile } from "./hosting/fixed-domain.js";
 import { runAgentAuthCli } from "./agents/auth-cli.js";
+
+function createInterface(options: Parameters<typeof createReadlineInterface>[0]) {
+  // Compact gateway diagnostics must never swallow visible answers to ordinary
+  // questions. Secret questions use their own muted output and remain hidden.
+  if (options.input === process.stdin && options.output === process.stderr) {
+    return createReadlineInterface({ ...options, output: gatewayVisiblePromptOutput(),
+      terminal: process.stdin.isTTY === true && process.stderr.isTTY === true });
+  }
+  return createReadlineInterface(options);
+}
 
 assertRequiredNodeVersion();
 const [, , command = "start", ...args] = process.argv;
@@ -533,11 +545,11 @@ function assertSafeResetTarget(target: string): void {
   }
 }
 
-async function handleSetupMode(): Promise<void> {
+async function handleSetupMode(): Promise<boolean> {
   if (!fs.existsSync(configPath) || args.includes("--yes")) {
     console.error("--setup deletes PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh.");
     removeGeneratedState();
-    return;
+    return true;
   }
 
   const existingConfigPath = path.resolve(configPath);
@@ -548,6 +560,7 @@ async function handleSetupMode(): Promise<void> {
   console.error(`Existing configuration found at: ${existingConfigPath}`);
   console.error("1. Create a new separate instance (new config directory and port)");
   console.error("2. Completely overwrite and reset the existing instance");
+  console.error("Press Enter or type q to cancel without changing anything.");
   const readline = createInterface({ input: process.stdin, output: process.stderr });
 
   try {
@@ -575,15 +588,19 @@ async function handleSetupMode(): Promise<void> {
       process.env.PILINK_CONFIG = configPath;
       process.env.PORT = String(newPort);
       initialize(newPort);
-      return;
+      return true;
     }
 
     if (choice === "2") {
-      console.error("--setup deletes PiLink's generated configuration, OAuth clients, managed hosting binaries, and Caddy TLS state before starting fresh.");
+      console.error("Removing the existing PiLink configuration, OAuth clients, hosting binaries, and Caddy TLS state so fresh setup can begin...");
       removeGeneratedState();
-      return;
+      return true;
     }
 
+    if (!choice || choice.toLowerCase() === "q") {
+      console.error("Setup cancelled; the existing PiLink configuration was not changed.");
+      return false;
+    }
     throw new Error("Setup cancelled: choose 1 for a separate instance or 2 to overwrite the existing instance.");
   } finally {
     readline.close();
@@ -941,8 +958,9 @@ function armChatCliAutoLaunch(server: StartedServer, prerequisite: Promise<unkno
 }
 
 async function start(options: LaunchOptions): Promise<void> {
-  if (options.setup) {
-    await handleSetupMode();
+  if (options.setup && !(await handleSetupMode())) {
+    resolveServerReady(false);
+    return;
   }
   const mode = await selectLaunchMode(options.mode);
   if (mode === "cli") {
@@ -954,6 +972,7 @@ async function start(options: LaunchOptions): Promise<void> {
     return;
   }
   if (!fs.existsSync(configPath)) initialize();
+  if (process.env.PILINK_GATEWAY_LAUNCH === "true") await configureGatewayConnectorName();
   configureRuntimeMode(mode);
   let hostingMode: HostingMode;
   try {
@@ -975,6 +994,45 @@ async function start(options: LaunchOptions): Promise<void> {
     return;
   }
   await startQuickTunnel(options.unsafe, options.setup);
+}
+
+async function configureGatewayConnectorName(): Promise<void> {
+  loadEnvironment();
+  const existing = process.env.PI_LLM_GATEWAY_CONNECTOR_NAME?.trim();
+  let name = existing ? validateGatewayConnectorName(existing) : DEFAULT_GATEWAY_CONNECTOR_NAME;
+  if (!existing && process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") {
+    console.error("\nChoose the exact name you will give this MCP connection in ChatGPT. PiLink uses it for @mentions that wake the worker.");
+    const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+    try {
+      while (true) {
+        const answer = (await readline.question(`ChatGPT connection name [${DEFAULT_GATEWAY_CONNECTOR_NAME}]: `)).trim();
+        try {
+          name = validateGatewayConnectorName(answer || DEFAULT_GATEWAY_CONNECTOR_NAME);
+          break;
+        } catch (error) {
+          console.error(error instanceof Error ? error.message : String(error));
+        }
+      }
+    } finally {
+      readline.close();
+    }
+  } else if (!existing) {
+    console.error(`ChatGPT connection name defaults to '${name}'. To choose another for headless setup, set PI_LLM_GATEWAY_CONNECTOR_NAME before starting the gateway.`);
+  }
+  const savedName = dotenv.parse(fs.readFileSync(configPath)).PI_LLM_GATEWAY_CONNECTOR_NAME;
+  if (savedName !== name) {
+    // An already loaded content script pins the old phrase. Do not silently
+    // keep auto-wake enabled until the operator reloads the extension.
+    const previouslyEnabled = process.env.PI_LLM_GATEWAY_AUTO_WAKE === "true";
+    saveConfig({ PI_LLM_GATEWAY_CONNECTOR_NAME: name,
+      ...(previouslyEnabled ? { PI_LLM_GATEWAY_AUTO_WAKE: "false" } : {}) });
+    if (previouslyEnabled) {
+      process.env.PI_LLM_GATEWAY_AUTO_WAKE = "false";
+      console.error("Connection name changed: browser auto-wake is paused until you reload PiLink Wake in Extensions and confirm setup.");
+    }
+  }
+  process.env.PI_LLM_GATEWAY_CONNECTOR_NAME = name;
+  console.error(`Wake message for this ChatGPT connection: ${gatewayWakeText()}`);
 }
 
 async function startCloudflareNamed(unsafe: boolean, forceSetup: boolean): Promise<void> {
@@ -1147,7 +1205,7 @@ async function configureCloudflareNamedHosting(): Promise<void> {
   console.error("  Zone → DNS → Edit");
   console.error("  Zone → Zone → Read");
   console.error("Scope the token to the account and DNS zone you want PiLink to use. PiLink uses this token only for provisioning and never writes it to configuration.");
-  const readline = createInterface({ input: process.stdin, output: process.stderr });
+  const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: process.stdin.isTTY === true && process.stderr.isTTY === true });
   let hostname: string;
   try {
     hostname = normalizeFixedDomainHostname(await readline.question("Fixed Cloudflare hostname (for example mcp.example.com): "));

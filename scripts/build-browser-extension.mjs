@@ -30,13 +30,12 @@ if (fs.existsSync(marker)) {
   }
   const saved = JSON.parse(fs.readFileSync(marker, "utf8"));
   if (saved.source_root === fs.realpathSync(root)) {
-    for (const name of ["manifest.json", "wake.js"]) {
-      const target = path.join(installed, name);
-      if (fs.existsSync(target) && (fs.lstatSync(target).isSymbolicLink() || !fs.lstatSync(target).isFile())) {
-        throw new Error("Refusing to overwrite an unsafe installed browser-extension file");
-      }
-      fs.copyFileSync(path.join(destination, name), target);
-    }
-    console.error("[PiLink] Previously approved unpacked browser extension refreshed. Reload it in Chrome/Brave if it is open.");
+    // A generated install pins the exact configured ChatGPT connection name.
+    // Re-copying the default template would silently break custom wake-ups.
+    const { configuredGatewayConnectorName, stageGatewayBrowserExtension } =
+      await import("../dist/llm-gateway-browser-setup.js");
+    stageGatewayBrowserExtension({ source: destination, destination: installed,
+      connectorName: configuredGatewayConnectorName() });
+    console.error("[PiLink] Previously approved unpacked browser extension refreshed. Reload it in Chrome/Brave/Chromium if it is open.");
   }
 }

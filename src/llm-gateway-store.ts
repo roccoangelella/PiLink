@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { gatewayWakeText } from "./llm-gateway-wake-name.js";
 import {
   GATEWAY_MODEL,
   copyGatewayAssistantCompletion,
@@ -224,7 +225,7 @@ export class GatewayRequestQueueTimeoutError extends GatewayRequestTimeoutError 
 
   constructor(timeoutSeconds = GATEWAY_DEFAULT_QUEUE_TIMEOUT_SECONDS) {
     super(
-      `Gateway request timed out in queue after ${timeoutSeconds}s before being claimed by ChatGPT. Ensure your ChatGPT conversation is awake with '@PiLink Gateway wake up'.`,
+      `Gateway request timed out in queue after ${timeoutSeconds}s before being claimed by ChatGPT. Ensure your ChatGPT conversation is awake with '${gatewayWakeText()}'.`,
     );
     this.name = "GatewayRequestQueueTimeoutError";
     this.timeoutSeconds = timeoutSeconds;

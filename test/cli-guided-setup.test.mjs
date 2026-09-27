@@ -109,6 +109,7 @@ test("headless gateway serve tells the user how to approve the Chromium wake ext
   await writeConfig(configPath, workspace, port, path.join(root, "private"));
   const cliProcess = spawnCli(["gateway", "serve"], root, {
     PILINK_CONFIG: configPath,
+    PI_LLM_GATEWAY_CONNECTOR_NAME: "My Coding Connector",
     HOME: root,
     XDG_CONFIG_HOME: path.join(root, "user-config"),
     XDG_DATA_HOME: path.join(root, "user-data"),
@@ -121,9 +122,10 @@ test("headless gateway serve tells the user how to approve the Chromium wake ext
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
   await waitFor(() => output.includes("Browser wake (optional):")).catch((error) => {
-    throw new Error(`${error.message}\nGateway output:\n${output}`);
+    throw new Error(`${error.message}; gateway ready: ${output.includes("Status        ready")}; received ${output.length} bytes`);
   });
   assert.match(output, /pilink gateway browser-extension/);
+  assert.match(output, /Wake\s+@My Coding Connector wake up/);
   assert.match(output, /Developer mode → Load unpacked/);
   assert.match(output, /Auto-wake stays off until approval/);
 });
@@ -1042,6 +1044,27 @@ test("start --setup rejects an invalid setup choice without deleting the existin
   assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PORT=${port}`));
   const originalStore = JSON.parse(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"));
   assert.equal(originalStore.clients[0].client_id, "original-client");
+});
+
+test("start --setup Enter cancels cleanly without deleting the existing instance", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-setup-cancel-"));
+  const configPath = path.join(root, ".env");
+  const dataPath = path.join(root, "data");
+  const port = await availablePort();
+  await writeConfig(configPath, root, port, dataPath);
+  await fs.mkdir(dataPath);
+  await fs.writeFile(path.join(dataPath, "clients.json"), "preserve\n");
+  const cliProcess = spawnCli(["start", "--setup"], root, { PILINK_CONFIG: configPath });
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  let output = "";
+  cliProcess.stderr.on("data", (chunk) => { output += chunk; });
+  await waitFor(() => output.includes("How should PiLink continue? [1/2]:"));
+  cliProcess.stdin.write("\n");
+  const [code] = await once(cliProcess, "exit");
+  assert.equal(code, 0);
+  assert.match(output, /Setup cancelled; the existing PiLink configuration was not changed/);
+  assert.match(await fs.readFile(configPath, "utf8"), new RegExp(`PORT=${port}`));
+  assert.equal(await fs.readFile(path.join(dataPath, "clients.json"), "utf8"), "preserve\n");
 });
 
 test("start --setup option 1 creates a separate instance without deleting existing config", async (t) => {

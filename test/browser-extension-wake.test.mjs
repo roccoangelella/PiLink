@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { stageGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
 import vm from "node:vm";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
@@ -103,7 +107,7 @@ function makeStore() {
   };
 }
 
-function runExtension({ href = URL_OK, composers = [], documentButtons = [], store = makeStore(), clock = new FakeClock(), bodyReady = true } = {}) {
+function runExtension({ href = URL_OK, composers = [], documentButtons = [], store = makeStore(), clock = new FakeClock(), bodyReady = true, source = extensionSource } = {}) {
   const banners = [];
   const body = { appendChild: (element) => banners.push(element) };
   const document = {
@@ -122,7 +126,7 @@ function runExtension({ href = URL_OK, composers = [], documentButtons = [], sto
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
   });
-  vm.runInContext(extensionSource, context, { timeout: 1000 });
+  vm.runInContext(source, context, { timeout: 1000 });
   return { clock, document, body, store, context, banners };
 }
 
@@ -152,6 +156,21 @@ test("matching URL focuses the exact composer and clicks its unique send button 
   runExtension({ composers: [composer] });
   assert.equal(composer.focusCount, 1);
   assert.equal(button.clickCount, 1);
+});
+
+test("a custom-name staged extension sends only its pinned wake phrase", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pilink-custom-extension-vm-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, "extension");
+  stageGatewayBrowserExtension({ source: fileURLToPath(new URL("../browser-extension/", import.meta.url)), destination, connectorName: "My Coding Connector" });
+  const source = await readFile(path.join(destination, "wake.js"), "utf8");
+  const phrase = "@My Coding Connector wake up";
+  const button = new FakeButton();
+  const composer = new FakeComposer({ text: phrase, form: new FakeForm([button]) });
+  runExtension({ source, href: `https://chatgpt.com/?q=${encodeURIComponent(phrase)}&pilink_wake=${NONCE}`, composers: [composer] });
+  assert.equal(button.clickCount, 1);
+  runExtension({ source, composers: [composer] });
+  assert.equal(button.clickCount, 1, "a default-name URL must not be sent by the custom-name extension");
 });
 
 test("contenteditable composer is supported when its own text exactly matches", () => {

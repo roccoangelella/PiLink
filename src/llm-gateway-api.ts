@@ -13,6 +13,7 @@ import {
   type GatewayRequestPayload,
 } from "./llm-gateway-store.js";
 import { validateGatewayRequestPayload } from "./llm-gateway-protocol.js";
+import { gatewayWakeText } from "./llm-gateway-wake-name.js";
 
 export type GatewayApiProfile = "compatibility" | "strict";
 
@@ -230,7 +231,7 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
       if (!await options.store.isAvailable() && !mayQueueForWake) {
         res.status(503).json(openAiError(
           "pilink_chat_inactive",
-          "No active ChatGPT gateway loop. Send '@PiLink Gateway wake up' in its connected ChatGPT conversation. Automatic wake requires one-time Brave/Chrome extension approval: run 'pilink gateway browser-extension'.",
+          `No active ChatGPT gateway loop. Send '${gatewayWakeText()}' in its connected ChatGPT conversation. Automatic wake requires one-time Brave/Chrome/Chromium extension approval: run 'pilink gateway browser-extension'.`,
         ));
         return;
       }

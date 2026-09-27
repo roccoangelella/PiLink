@@ -60,7 +60,8 @@ test("browser driver opens a nonce-tagged URL in Brave or the default browser, n
       const supervisor = startGatewayAutoWakeSupervisor({
         store: { status: async () => status() },
         env: { PATH: `${root}:/usr/bin:/bin`, DISPLAY: ":0", PI_LLM_GATEWAY_ENABLED: "true",
-          PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+          PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true",
+          PI_LLM_GATEWAY_CONNECTOR_NAME: browser === "brave-browser.desktop" ? "My Coding Connector" : "PiLink Gateway" },
         platform: "linux", pollIntervalMs: 5, wakeGraceMs: 0, confirmationMs: 25,
         log: () => {},
       });
@@ -78,7 +79,8 @@ test("browser driver opens a nonce-tagged URL in Brave or the default browser, n
         const url = new URL(args.at(-1));
         assert.equal(url.origin, "https://chatgpt.com");
         assert.equal(url.pathname, "/");
-        assert.equal(url.searchParams.get("q"), "@PiLink Gateway wake up");
+        assert.equal(url.searchParams.get("q"), browser === "brave-browser.desktop"
+          ? "@My Coding Connector wake up" : "@PiLink Gateway wake up");
         assert.match(url.searchParams.get("pilink_wake"), /^[0-9a-f]{32}$/);
         assert.equal(url.searchParams.size, 2);
         assert.deepEqual(args.slice(0, -1), browser === "brave-browser.desktop" ? ["--new-window"] : []);

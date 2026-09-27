@@ -134,12 +134,13 @@ if (command !== "gateway") {
           const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
           const info = await openGatewayConnectorWindow();
           printGatewayReady(info);
-          if (process.env.PI_LLM_GATEWAY_AUTO_WAKE !== "true") {
+          const { gatewayBrowserExtensionNeedsReload, loadedGatewayBrowserExtension, runGatewayBrowserSetup } =
+            await import("./llm-gateway-browser-setup.js");
+          if (process.env.PI_LLM_GATEWAY_AUTO_WAKE !== "true" || gatewayBrowserExtensionNeedsReload()) {
             // Offer interactive browser approval; in a headless restart only
             // enable an extension already verified in the default profile.
-            const { loadedGatewayBrowserExtension, runGatewayBrowserSetup } = await import("./llm-gateway-browser-setup.js");
             if ((process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") ||
-                loadedGatewayBrowserExtension()) {
+                loadedGatewayBrowserExtension() || gatewayBrowserExtensionNeedsReload()) {
               await runGatewayBrowserSetup(false);
             } else {
               writeGatewayCompactLine("Browser wake (optional): run 'pilink gateway browser-extension' to prepare the Chrome/Brave/Chromium extension, then approve Developer mode → Load unpacked in your browser. Auto-wake stays off until approval.");

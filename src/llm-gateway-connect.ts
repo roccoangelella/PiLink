@@ -2,6 +2,7 @@ import { loadEnvironment, loadRuntimeConfig } from "./config.js";
 import { deriveGatewayApiKey } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import { gatewayCompactOutputEnabled, writeGatewayCompactBlock } from "./llm-gateway-output.js";
+import { gatewayWakeText } from "./llm-gateway-wake-name.js";
 
 export interface GatewayConnectorInfo {
   mcpUrl: string;
@@ -85,7 +86,7 @@ export function printGatewayReady(
   }
   lines.push(
     "  OAuth setup   pilink gateway connect",
-    "  Wake          @PiLink Gateway wake up",
+    `  Wake          ${gatewayWakeText()}`,
   );
   if (gatewayCompactOutputEnabled()) {
     lines.push("  Debug logs    PILINK_TERMINAL_LOGS=verbose pilink gateway start");
