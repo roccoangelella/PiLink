@@ -268,7 +268,7 @@ async function run() {
         await swWs.connect();
         await swWs.send("Runtime.enable");
         const evalSw = await swWs.send("Runtime.evaluate", {
-          expression: "new Promise((res) => chrome.tabs.query({ url: chrome.runtime.getURL('page.html') }, (tabs) => res(tabs[0])))",
+          expression: "new Promise((res) => chrome.tabs.get(createdTabId, (tab) => res(tab)))",
           awaitPromise: true,
           returnByValue: true
         });

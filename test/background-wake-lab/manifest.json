@@ -3,16 +3,7 @@
   "name": "Background Wake Lab MV3 Fixture",
   "version": "1.0.0",
   "description": "Disposable MV3 extension fixture testing chrome.tabs.create with active:false",
-  "permissions": [
-    "tabs"
-  ],
   "background": {
     "service_worker": "service-worker.js"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["page.html"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }
