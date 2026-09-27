@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-/** Restore the prior KDE window when PiLink's new Brave window takes focus. Never send keys. */
+/** Experimental KDE focus restoration. Opt-in only: background ChatGPT send is unverified. Never send keys. */
 export function kwinWakeFocusScript(): string {
   return `"use strict";
 const previous = workspace.activeWindow;
@@ -35,8 +35,10 @@ export interface FocusGuard { close(): Promise<void> }
 
 /** Unsupported/unavailable compositor: do nothing and keep the existing browser behavior. */
 export async function prepareKwinWakeFocusGuard(env: NodeJS.ProcessEnv): Promise<FocusGuard | undefined> {
-  if (env.XDG_SESSION_TYPE !== "wayland" || !env.XDG_CURRENT_DESKTOP?.split(":").includes("KDE") ||
-      env.PI_LLM_GATEWAY_RESTORE_FOCUS === "false") return undefined;
+  // Backgrounding Brave before ChatGPT sends has failed in a real operator test.
+  // Preserve the proven foreground wake unless the operator explicitly opts in.
+  if (env.PI_LLM_GATEWAY_RESTORE_FOCUS !== "true" || env.XDG_SESSION_TYPE !== "wayland" ||
+      !env.XDG_CURRENT_DESKTOP?.split(":").includes("KDE")) return undefined;
   const qdbus = await findQdbus(env);
   if (!qdbus) return undefined;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-wake-focus-"));
