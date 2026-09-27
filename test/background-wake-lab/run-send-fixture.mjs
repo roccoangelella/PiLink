@@ -81,7 +81,8 @@ async function main() {
     "--remote-debugging-address=127.0.0.1", `--load-extension=${extension}`,
     `--disable-extensions-except=${extension}`, "--no-first-run", "--no-default-browser-check",
     "--disable-sync", "--disable-background-networking", "--disable-component-update",
-    "--disable-gpu", "--no-proxy-server", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
+    "--disable-gpu", "--proxy-server=http=127.0.0.1:1;https=127.0.0.1:1",
+    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
     "about:blank",
   ], { stdio: "ignore" });
   let control, page;
