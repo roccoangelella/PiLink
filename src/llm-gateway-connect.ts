@@ -2,7 +2,7 @@ import { loadEnvironment, loadRuntimeConfig } from "./config.js";
 import { deriveGatewayApiKey } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import { gatewayCompactOutputEnabled, writeGatewayCompactBlock } from "./llm-gateway-output.js";
-import { gatewayWakeText } from "./llm-gateway-wake-name.js";
+import { gatewayConnectorName } from "./llm-gateway-wake-name.js";
 
 export interface GatewayConnectorInfo {
   mcpUrl: string;
@@ -66,14 +66,15 @@ export function printGatewayReady(
 ): void {
   const lines = [
     "",
-    "PiLink Gateway",
+    "PiLink Gateway — Step 1: connect ChatGPT",
     "  Status        ready",
     interactiveApproval
-      ? "  ChatGPT OAuth DCR open for 5 minutes; approve new connections in this terminal."
-      : "  ChatGPT OAuth owner pairing required before a new connector can be authorized.",
+      ? "  In ChatGPT, add an MCP connection with the name and MCP URL below. Choose OAuth/DCR within 5 minutes; approve its separate terminal request within 90 seconds."
+      : "  In ChatGPT, add an MCP connection with the name below and MCP URL below. Choose OAuth/DCR, then complete owner pairing below.",
     `  Logs          ${gatewayCompactOutputEnabled() ? "compact" : "verbose"}`,
     "",
     "Connection details",
+    `  Name          ${gatewayConnectorName()}`,
     `  ChatGPT MCP   ${info.mcpUrl}`,
     `  Local API     ${info.apiBaseUrl}`,
     `  API key       ${info.apiKey}`,
@@ -85,13 +86,44 @@ export function printGatewayReady(
     );
   }
   lines.push(
-    "  OAuth setup   pilink gateway connect",
-    `  Wake          ${gatewayWakeText()}`,
+    "  Retry OAuth   pilink gateway connect (if the 5-minute window expires)",
+    "  Next          Browser wake setup appears only after ChatGPT finishes connecting.",
   );
   if (gatewayCompactOutputEnabled()) {
     lines.push("  Debug logs    PILINK_TERMINAL_LOGS=verbose pilink gateway start");
   }
   writeGatewayCompactBlock(lines);
+}
+
+// Registration alone is not a connection: wait for ChatGPT to exchange its
+// authorization code for a token before offering browser wake setup.
+export async function waitForGatewayChatGptConnection(waitMilliseconds = 5 * 60_000): Promise<boolean> {
+  loadEnvironment();
+  const config = loadRuntimeConfig();
+  const deadline = Date.now() + waitMilliseconds;
+  do {
+    try {
+      const response = await fetch(`http://127.0.0.1:${config.port}/admin/status`, {
+        headers: { authorization: `Bearer ${config.bootstrapSecret}`, accept: "application/json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (response.ok) {
+        const body = await response.text();
+        if (Buffer.byteLength(body, "utf8") <= 16 * 1024) {
+          const status: unknown = JSON.parse(body);
+          if (isRecord(status) && isRecord(status.activity) && Array.isArray(status.activity.clients) &&
+              status.activity.clients.some((client: unknown) => isRecord(client) &&
+                (typeof client.tokenIssuedAt === "string" || typeof client.mcpInitializedAt === "string"))) return true;
+        }
+      }
+    } catch {
+      // A stopped gateway or incomplete status response is not a connection.
+    }
+    if (Date.now() >= deadline) break;
+    await delay(Math.min(1_000, Math.max(1, deadline - Date.now())));
+  } while (true);
+  return false;
 }
 
 export async function runGatewayConnect(): Promise<number> {

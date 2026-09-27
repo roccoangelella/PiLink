@@ -12,7 +12,7 @@ const INTERACTIVE_PROMPTS = [
   "Select hosting",
   "Fixed Cloudflare hostname",
   "ChatGPT connection name",
-  "After loading and enabling",
+  "After loading PiLink Wake",
   "After clicking Reload",
   "Cloudflare API token",
   "Allow PiLink to request these temporary router mappings?",

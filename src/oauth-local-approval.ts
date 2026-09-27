@@ -90,6 +90,7 @@ export async function tryHandleLocalChatGptAuthorization(req: Request, res: Resp
   const approved = await requestLocalApproval(approvalRequest);
   if (!approved) {
     await setClientDisabled(clientId, true);
+    console.error("[OAuth] ChatGPT authorization denied: the terminal approval was declined or expired. This new OAuth client is now disabled. Remove the failed ChatGPT connection, run 'pilink gateway connect' to reopen registration, then add it again and approve its separate terminal prompt within 90 seconds.");
     const denied = new URL(redirectUri);
     denied.searchParams.set("error", "access_denied");
     if (state) denied.searchParams.set("state", state);
@@ -190,12 +191,13 @@ async function promptForApproval(request: LocalApprovalRequest): Promise<boolean
     console.error(`  Client   ${terminalText(request.client.client_name, 120)}`);
     console.error(`  Access   ${terminalText(request.scope, 256)}`);
     console.error(`  Callback ${terminalText(request.redirectUri, 300)}`);
+    console.error("  This is the ChatGPT OAuth approval (not the browser wake extension). Reply y within 90 seconds only if you initiated it.");
   } else {
     console.error("\n=== ChatGPT connection request ===");
     console.error(`Client: ${terminalText(request.client.client_name, 120)}`);
     console.error(`Callback: ${terminalText(request.redirectUri, 300)}`);
     console.error(`Access: ${terminalText(request.scope, 256)}`);
-    console.error("Approve only if you just initiated this connection in ChatGPT.");
+    console.error("This is the ChatGPT OAuth approval, not browser wake. Approve within 90 seconds only if you initiated it.");
   }
 
   const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: false });

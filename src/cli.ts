@@ -131,20 +131,23 @@ if (command !== "gateway") {
         if (serverReady) {
           // Once the server is ready, open the short DCR window
           // even when another OAuth client is already stored.
-          const { openGatewayConnectorWindow, printGatewayReady } = await import("./llm-gateway-connect.js");
+          const { openGatewayConnectorWindow, printGatewayReady, waitForGatewayChatGptConnection } =
+            await import("./llm-gateway-connect.js");
           const info = await openGatewayConnectorWindow();
-          printGatewayReady(info);
-          const { gatewayBrowserExtensionNeedsReload, loadedGatewayBrowserExtension, runGatewayBrowserSetup } =
-            await import("./llm-gateway-browser-setup.js");
-          if (process.env.PI_LLM_GATEWAY_AUTO_WAKE !== "true" || gatewayBrowserExtensionNeedsReload()) {
-            // Offer interactive browser approval; in a headless restart only
-            // enable an extension already verified in the default profile.
-            if ((process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") ||
-                loadedGatewayBrowserExtension() || gatewayBrowserExtensionNeedsReload()) {
+          const interactive = process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true";
+          printGatewayReady(info, interactive);
+          // The server separately reads the same terminal for OAuth approval.
+          // Never start another readline prompt until ChatGPT has obtained a token.
+          if (interactive) {
+            if (await waitForGatewayChatGptConnection()) {
+              writeGatewayCompactLine("\nStep 1 complete: ChatGPT connected. Step 2: set up browser auto-wake.");
+              const { runGatewayBrowserSetup } = await import("./llm-gateway-browser-setup.js");
               await runGatewayBrowserSetup(false);
             } else {
-              writeGatewayCompactLine("Browser wake (optional): run 'pilink gateway browser-extension' to prepare the Chrome/Brave/Chromium extension, then approve Developer mode → Load unpacked in your browser. Auto-wake stays off until approval.");
+              writeGatewayCompactLine("ChatGPT did not finish connecting in 5 minutes. Browser wake setup was not started. Complete or retry the ChatGPT connection first ('pilink gateway connect'), then run 'pilink gateway browser-extension'. If ChatGPT showed access_denied, remove that failed connection and create it again; check this terminal for the OAuth approval request.");
             }
+          } else {
+            writeGatewayCompactLine("After ChatGPT connects, run 'pilink gateway browser-extension' to set up browser auto-wake. The browser must approve Load unpacked once; no yes is required when PiLink can detect it.");
           }
         } else {
           process.exitCode = process.exitCode || 1;

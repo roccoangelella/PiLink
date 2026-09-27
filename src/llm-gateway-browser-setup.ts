@@ -195,28 +195,26 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
   if (!enable && !reloadRequired && loadedGatewayBrowserExtension({ destination: location })) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
-    console.error("PiLink Wake is already loaded in the default browser. Auto-wake enabled without another confirmation; the running gateway applies it within a few seconds.");
+    console.error("PiLink Wake is active in the default browser. Auto-wake is on; no terminal confirmation is needed. A running gateway picks up the setting within a few seconds.");
     return;
   }
   if (enable) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
     fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
-    console.error("Browser wake enabled in the private PiLink .env. A running gateway applies it within a few seconds.");
-    console.error("If the extension is missing or disabled, disable wake with PI_LLM_GATEWAY_AUTO_WAKE=false.");
+    console.error("Auto-wake enabled. Use --enable only after checking that PiLink Wake is loaded and enabled in the browser; a running gateway picks up the setting within a few seconds.");
     return;
   }
-  console.error(`Chrome/Brave/Chromium wake extension prepared at: ${location}`);
-  console.error("Browser steps: open brave://extensions (Brave) or chrome://extensions (Chrome/Chromium).");
+  console.error(`Browser extension files: ${location}`);
+  console.error("The browser must approve this extension once. PiLink cannot silently install it; auto-wake turns on by default after PiLink verifies it is loaded.");
+  console.error("Open brave://extensions (Brave) or chrome://extensions (Chrome/Chromium).");
   if (reloadRequired) {
-    console.error("Files changed: find PiLink Wake and click Reload on its extension card so it uses the new connection name. Keep it enabled.");
+    console.error("PiLink Wake changed: click Reload on its card and keep it enabled (otherwise it will use an old wake phrase).");
   } else {
-    console.error("One-time browser approval is required; npm cannot silently install an unpacked extension in an existing browser profile.");
-    console.error("1. Switch on Developer mode (top right). 2. Click Load unpacked (top left). 3. Select the DIRECTORY above, not manifest.json. 4. Keep the extension enabled.");
+    console.error("1. Turn on Developer mode. 2. Click Load unpacked. 3. Select the DIRECTORY above, not manifest.json. 4. Keep PiLink Wake enabled.");
   }
-  console.error("Then return to this terminal. PiLink cannot perform that browser approval for you.");
   if (!process.stdin.isTTY || !process.stderr.isTTY) {
-    console.error("Non-interactive setup: after loading or reloading the extension in your browser, run 'pilink gateway browser-extension --enable'.");
+    console.error("Once installed, run 'pilink gateway browser-extension' again. If PiLink cannot detect a non-default browser profile, verify the extension yourself before using 'pilink gateway browser-extension --enable'.");
     return;
   }
   try {
@@ -231,20 +229,20 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
   try {
     while (true) {
       const answer = (await readline.question(reloadRequired
-        ? "After clicking Reload and confirming it is enabled, type yes to enable auto-wake, or skip: "
-        : "After loading and enabling the extension, type yes to enable auto-wake, or skip: ")).trim().toLowerCase();
-      if (answer === "skip" || answer === "no") {
-        console.error("Browser wake remains disabled; re-run setup whenever you are ready.");
+        ? "After clicking Reload in your browser, press Enter to continue (or type skip): "
+        : "After loading PiLink Wake in your browser, press Enter to check it (or type skip): ")).trim().toLowerCase();
+      if (answer === "skip") {
+        console.error("Auto-wake remains off. Run 'pilink gateway browser-extension' after installing the extension.");
         return;
       }
-      if (answer !== "yes") {
-        console.error("Please type yes only after browser approval, or skip to leave wake disabled.");
+      if (answer || !loadedGatewayBrowserExtension({ destination: location })) {
+        console.error("PiLink cannot verify an enabled PiLink Wake in the default browser profile. Check the Extensions page and press Enter again. For a non-default profile, verify it yourself and use 'pilink gateway browser-extension --enable'.");
         continue;
       }
       enableGatewayBrowserWake();
       rememberGatewayBrowserExtensionSource(location);
       fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
-      console.error("Browser wake enabled. A running gateway applies it within a few seconds.");
+      console.error("Auto-wake is on. A running gateway applies it within a few seconds.");
       return;
     }
   } finally {

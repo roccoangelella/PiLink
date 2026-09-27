@@ -106,7 +106,7 @@ const hostingPromptsScript = String.raw`
   process.stderr.write("Select hosting [1/2/3]: ");
   process.stderr.write("Fixed Cloudflare hostname (for example mcp.example.com): ");
   process.stderr.write("ChatGPT connection name [PiLink Gateway]: ");
-  process.stderr.write("After loading and enabling the extension, type yes to enable auto-wake, or skip: ");
+  process.stderr.write("After loading PiLink Wake in your browser, press Enter to check it (or type skip): ");
   console.error("2026-09-26T19:58:44Z INF Tunnel connection noise");
   process.stderr.write("Cloudflare API token: ");
   process.stderr.write("Allow PiLink to request these temporary router mappings? [y/N]: ");
@@ -123,7 +123,7 @@ test("gateway compact output preserves interactive hosting and network setup pro
   assert.match(result.stderr, /Select hosting \[1\/2\/3\]: /u);
   assert.match(result.stderr, /Fixed Cloudflare hostname \(for example mcp\.example\.com\): /u);
   assert.match(result.stderr, /ChatGPT connection name \[PiLink Gateway\]: /u);
-  assert.match(result.stderr, /After loading and enabling the extension, type yes to enable auto-wake, or skip:/u);
+  assert.match(result.stderr, /After loading PiLink Wake in your browser, press Enter to check it \(or type skip\):/u);
   assert.doesNotMatch(result.stderr, /Tunnel connection noise/u);
   assert.match(result.stderr, /Cloudflare API token: /u);
   assert.match(result.stderr, /Allow PiLink to request these temporary router mappings\? \[y\/N\]: /u);

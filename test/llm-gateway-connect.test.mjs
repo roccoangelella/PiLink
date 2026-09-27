@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { openGatewayConnectorWindow, runGatewayConnect } from "../dist/llm-gateway-connect.js";
+import { openGatewayConnectorWindow, runGatewayConnect, waitForGatewayChatGptConnection } from "../dist/llm-gateway-connect.js";
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -86,6 +86,41 @@ test("gateway connector setup opens the loopback owner DCR window even with an e
     assert.equal(info.apiBaseUrl, "http://127.0.0.1:45678/v1");
     assert.equal(info.verificationCode, "ABCD-EFGH");
     assert.match(info.apiKey, /^plg_[A-Za-z0-9_-]+$/u);
+  } finally {
+    teardown();
+    await close(server);
+  }
+});
+
+test("browser setup waits for a ChatGPT token, not merely DCR registration or OAuth approval", async () => {
+  let activity = { clients: [{ registeredAt: new Date().toISOString() }] };
+  let seenAuthorization = "";
+  const server = http.createServer((req, res) => {
+    seenAuthorization = req.headers.authorization || "";
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ activity }));
+  });
+  const address = await listen(server);
+  const { bootstrap, teardown } = setupTestEnv(address.port);
+  try {
+    assert.equal(await waitForGatewayChatGptConnection(50), false);
+    activity = { clients: [{ authorizedAt: new Date().toISOString() }] };
+    assert.equal(await waitForGatewayChatGptConnection(50), false);
+    activity = { clients: [{ tokenIssuedAt: new Date().toISOString() }] };
+    assert.equal(await waitForGatewayChatGptConnection(50), true);
+    assert.equal(seenAuthorization, `Bearer ${bootstrap}`);
+  } finally {
+    teardown();
+    await close(server);
+  }
+});
+
+test("browser setup does not proceed when the local status endpoint is unavailable", async () => {
+  const server = http.createServer((_req, res) => { res.statusCode = 403; res.end(); });
+  const address = await listen(server);
+  const { teardown } = setupTestEnv(address.port);
+  try {
+    assert.equal(await waitForGatewayChatGptConnection(50), false);
   } finally {
     teardown();
     await close(server);

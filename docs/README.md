@@ -42,6 +42,7 @@ PiLink for VS Code is installed separately with `pilink install-vscode-plugin`; 
 - [Security model](SECURITY_MODEL.md)
 - [Computer Use preview](operations/computer-use.md)
 - [ChatGPT LLM Gateway](operations/llm-gateway.md)
+- [Experimental KDE/Wayland Brave focus restoration](operations/background-wake-experiment.md)
 - [Source CLI workflow and launcher recovery](operations/source-cli.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Usage, models, and costs](USAGE_AND_COSTS.md)

@@ -100,7 +100,7 @@ test("launch mode flags reject invalid and incompatible choices clearly", async 
   assert.match(gatewayHelp.output, /pilink gateway browser-extension/);
 });
 
-test("headless gateway serve tells the user how to approve the Chromium wake extension", async (t) => {
+test("headless gateway serve shows connection first and postpones browser wake", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-gateway-browser-guide-"));
   const configPath = path.join(root, ".env");
   const port = await availablePort();
@@ -121,13 +121,14 @@ test("headless gateway serve tells the user how to approve the Chromium wake ext
   let output = "";
   cliProcess.stdout.on("data", (chunk) => { output += chunk; });
   cliProcess.stderr.on("data", (chunk) => { output += chunk; });
-  await waitFor(() => output.includes("Browser wake (optional):")).catch((error) => {
+  await waitFor(() => output.includes("After ChatGPT connects, run 'pilink gateway browser-extension'")).catch((error) => {
     throw new Error(`${error.message}; gateway ready: ${output.includes("Status        ready")}; received ${output.length} bytes`);
   });
-  assert.match(output, /pilink gateway browser-extension/);
-  assert.match(output, /Wake\s+@My Coding Connector wake up/);
-  assert.match(output, /Developer mode → Load unpacked/);
-  assert.match(output, /Auto-wake stays off until approval/);
+  assert.match(output, /Step 1: connect ChatGPT/);
+  assert.match(output, /Name\s+My Coding Connector/);
+  assert.match(output, /no yes is required when PiLink can detect it/);
+  assert.doesNotMatch(output, /After loading PiLink Wake in your browser/);
+  await assert.rejects(fs.stat(path.join(root, "user-data", "pilink", "browser-extension")), { code: "ENOENT" });
 });
 
 test("install-vscode-plugin installs VSPiLink once without starting PiLink or opening VS Code", async (t) => {
