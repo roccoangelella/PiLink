@@ -30,7 +30,7 @@ Connection details
 ```
 
 ### 2. Connect ChatGPT
-1. At the interactive gateway prompt, enter the exact display name you will give this ChatGPT MCP connection (default: **PiLink Gateway**, distinct from any full-access PiLink Desktop connector). In ChatGPT, add a custom MCP connection with that name and the printed **ChatGPT MCP** URL. PiLink prints `@<your name> wake up` and stages the browser extension for that exact name. Headless setup uses the default unless `PI_LLM_GATEWAY_CONNECTOR_NAME` is set before start.
+1. At the interactive gateway prompt, enter the exact display name you will give this ChatGPT MCP connection (default: **PiLink Gateway**, distinct from any full-access PiLink Desktop connector); on later interactive starts, press Enter to keep it or type a new name. In ChatGPT, add a custom MCP connection with that name and the printed **ChatGPT MCP** URL. PiLink prints `@<your name> wake up` and stages the browser extension for that exact name. Headless setup uses the default unless `PI_LLM_GATEWAY_CONNECTOR_NAME` is set before start.
 2. Select **OAuth** and **Dynamic Client Registration (DCR)**.
 3. Approve the connection in the terminal within the 5-minute DCR window (run `pilink gateway connect` to reopen DCR if expired; a headless service needs the printed one-time owner pairing URL and local verification code).
 

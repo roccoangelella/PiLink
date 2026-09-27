@@ -1000,14 +1000,14 @@ async function configureGatewayConnectorName(): Promise<void> {
   loadEnvironment();
   const existing = process.env.PI_LLM_GATEWAY_CONNECTOR_NAME?.trim();
   let name = existing ? validateGatewayConnectorName(existing) : DEFAULT_GATEWAY_CONNECTOR_NAME;
-  if (!existing && process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") {
-    console.error("\nChoose the exact name you will give this MCP connection in ChatGPT. PiLink uses it for @mentions that wake the worker.");
+  if (process.stdin.isTTY && process.stderr.isTTY && process.env.CI !== "true") {
+    console.error("\nEnter the exact name of this MCP connection in ChatGPT. PiLink uses it for @mentions that wake the worker; press Enter to keep the shown name.");
     const readline = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
     try {
       while (true) {
-        const answer = (await readline.question(`ChatGPT connection name [${DEFAULT_GATEWAY_CONNECTOR_NAME}]: `)).trim();
+        const answer = (await readline.question(`ChatGPT connection name [${name}]: `)).trim();
         try {
-          name = validateGatewayConnectorName(answer || DEFAULT_GATEWAY_CONNECTOR_NAME);
+          name = validateGatewayConnectorName(answer || name);
           break;
         } catch (error) {
           console.error(error instanceof Error ? error.message : String(error));
