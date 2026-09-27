@@ -5,6 +5,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import type { GatewayStatusSnapshot, LlmGatewayJobStore } from "./llm-gateway-store.js";
 import { gatewayWakeText } from "./llm-gateway-wake-name.js";
+import { prepareKwinWakeFocusGuard } from "./llm-gateway-kwin-focus.js";
 
 const AUTO_WAKE_POLL_MS = 750;
 const AUTO_WAKE_GRACE_MS = 500;
@@ -195,8 +196,16 @@ async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv): Promise<Gateway
       // A fresh nonce is used for each attempt, and the extension uses
       // sessionStorage to suppress duplicate sends from refresh/re-navigation.
       const url = buildGatewayWakeUrl(randomBytes(16).toString("hex"), env);
-      if (useBrave && brave) await runExecutable(brave, ["--new-window", url], env, 5_000);
-      else await runExecutable(xdgOpen, [url], env, 5_000);
+      if (useBrave && brave) {
+        const focusGuard = await prepareKwinWakeFocusGuard(env);
+        try {
+          await runExecutable(brave, ["--new-window", url], env, 5_000);
+        } finally {
+          await focusGuard?.close();
+        }
+      } else {
+        await runExecutable(xdgOpen, [url], env, 5_000);
+      }
     },
   };
 }
