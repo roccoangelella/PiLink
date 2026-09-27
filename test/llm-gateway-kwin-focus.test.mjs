@@ -89,10 +89,7 @@ test("KWin guard loads and unloads a temporary script via a fake DBus executable
   const fake = path.join(root, "qdbus6");
   await fs.writeFile(fake, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$QDBUS_LOG"\ncase "$*" in *loadScript*) printf '0\\n';; esac\n`, { mode: 0o700 });
   const env = { ...process.env, PATH: `${root}:/usr/bin:/bin`, QDBUS_LOG: log,
-    XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE", PI_LLM_GATEWAY_RESTORE_FOCUS: "true" };
-  assert.equal(await prepareKwinWakeFocusGuard({ ...env, PI_LLM_GATEWAY_RESTORE_FOCUS: undefined }), undefined,
-    "foreground wake remains the default, even on KDE");
-  assert.equal(await prepareKwinWakeFocusGuard({ ...env, PI_LLM_GATEWAY_RESTORE_FOCUS: "false" }), undefined);
+    XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE" };
   assert.equal(await prepareKwinWakeFocusGuard({ ...env, XDG_CURRENT_DESKTOP: "GNOME" }), undefined);
   const guard = await prepareKwinWakeFocusGuard(env);
   assert.ok(guard);
@@ -115,7 +112,7 @@ test("a failed KWin load cleans up and falls back without touching focus", async
     '#!/bin/sh\nprintf "%s\\n" "$*" >> "$QDBUS_LOG"\ncase "$*" in *loadScript*) echo invalid-id;; esac\n',
     { mode: 0o700 });
   const env = { ...process.env, PATH: `${root}:/usr/bin:/bin`, QDBUS_LOG: log,
-    XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE", PI_LLM_GATEWAY_RESTORE_FOCUS: "true" };
+    XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE" };
   assert.equal(await prepareKwinWakeFocusGuard(env), undefined);
   const calls = await fs.readFile(log, "utf8");
   assert.match(calls, /Scripting\.unloadScript/);
