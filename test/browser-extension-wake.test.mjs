@@ -160,7 +160,7 @@ test("matching URL focuses the exact composer and clicks its unique send button 
   assert.equal(button.clickCount, 1);
 });
 
-test("a port-tagged wake registers its nonce and acknowledges close only for the same sent wake page", () => {
+test("a port-tagged wake acknowledges close after ChatGPT's same-document conversation transition", () => {
   const { button, composer } = readyFixture();
   let registered;
   let closeListener;
@@ -173,14 +173,15 @@ test("a port-tagged wake registers its nonce and acknowledges close only for the
   assert.deepEqual({ ...registered }, { type: "pilink-register-wake", nonce: NONCE, port: 8765 });
   assert.equal(button.clickCount, 1);
 
+  context.location.href = "https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef";
   let reply;
   closeListener({ type: "pilink-confirm-close", nonce: NONCE }, {}, (value) => { reply = value; });
   assert.deepEqual({ ...reply }, { ok: true });
 
   reply = undefined;
-  context.location.href = "https://chatgpt.com/";
+  context.location.href = "https://example.com/";
   closeListener({ type: "pilink-confirm-close", nonce: NONCE }, {}, (value) => { reply = value; });
-  assert.equal(reply, undefined, "navigating away must leave the tab open");
+  assert.equal(reply, undefined, "a non-ChatGPT document must never acknowledge close");
 });
 
 test("background closes exactly the registering sender tab after gateway confirmation", async () => {
@@ -190,7 +191,7 @@ test("background closes exactly the registering sender tab after gateway confirm
   const chrome = {
     runtime: { lastError: null, onMessage: { addListener: (listener) => { registerListener = listener; } } },
     tabs: {
-      sendMessage: (tabId, message, callback) => { sent.push({ tabId, message }); callback({ ok: true }); },
+      sendMessage: (tabId, message, options, callback) => { sent.push({ tabId, message, options }); callback({ ok: true }); },
       remove: (tabId, callback) => { removed.push(tabId); callback(); },
     },
   };
@@ -201,11 +202,11 @@ test("background closes exactly the registering sender tab after gateway confirm
     setTimeout,
   });
   vm.runInContext(backgroundSource, context, { timeout: 1000 });
-  registerListener({ type: "pilink-register-wake", nonce: NONCE, port: 8765 }, { tab: { id: 42 } });
+  registerListener({ type: "pilink-register-wake", nonce: NONCE, port: 8765 }, { tab: { id: 42 }, documentId: "doc-wake-1" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(fetchCalls, [`http://127.0.0.1:8765/v1/gateway/wake/${NONCE}`]);
-  assert.deepEqual(sent.map(({ tabId, message }) => ({ tabId, message: { ...message } })),
-    [{ tabId: 42, message: { type: "pilink-confirm-close", nonce: NONCE } }]);
+  assert.deepEqual(sent.map(({ tabId, message, options }) => ({ tabId, message: { ...message }, options: { ...options } })),
+    [{ tabId: 42, message: { type: "pilink-confirm-close", nonce: NONCE }, options: { documentId: "doc-wake-1" } }]);
   assert.deepEqual(removed, [42]);
 });
 

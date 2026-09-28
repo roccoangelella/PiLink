@@ -7,11 +7,12 @@ const MAX_WAIT_MS = 30_000;
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== "pilink-register-wake" || !NONCE.test(message.nonce ?? "") ||
-      !PORT.test(String(message.port ?? "")) || !Number.isInteger(sender.tab?.id)) return;
-  void waitForConfirmation(sender.tab.id, message.nonce, Number(message.port));
+      !PORT.test(String(message.port ?? "")) || !Number.isInteger(sender.tab?.id) ||
+      typeof sender.documentId !== "string" || sender.documentId.length === 0) return;
+  void waitForConfirmation(sender.tab.id, sender.documentId, message.nonce, Number(message.port));
 });
 
-async function waitForConfirmation(tabId, nonce, port) {
+async function waitForConfirmation(tabId, documentId, nonce, port) {
   const deadline = Date.now() + MAX_WAIT_MS;
   while (Date.now() < deadline) {
     try {
@@ -19,7 +20,7 @@ async function waitForConfirmation(tabId, nonce, port) {
       if (response.ok) {
         const body = await response.json();
         if (body?.confirmed === true) {
-          requestVerifiedClose(tabId, nonce);
+          requestVerifiedClose(tabId, documentId, nonce);
           return;
         }
       } else if (response.status === 404) {
@@ -32,8 +33,11 @@ async function waitForConfirmation(tabId, nonce, port) {
   }
 }
 
-function requestVerifiedClose(tabId, nonce) {
-  chrome.tabs.sendMessage(tabId, { type: "pilink-confirm-close", nonce }, (reply) => {
+function requestVerifiedClose(tabId, documentId, nonce) {
+  // Bind the close handshake to the exact content-script document that
+  // registered the nonce. ChatGPT may change the SPA route after sending;
+  // a real document navigation replaces this documentId and therefore fails closed.
+  chrome.tabs.sendMessage(tabId, { type: "pilink-confirm-close", nonce }, { documentId }, (reply) => {
     if (chrome.runtime.lastError || reply?.ok !== true) return;
     chrome.tabs.remove(tabId, () => void chrome.runtime.lastError);
   });

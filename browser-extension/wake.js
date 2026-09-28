@@ -94,8 +94,14 @@
   let sent = false;
   if (wakePort !== null && typeof chrome !== "undefined" && chrome.runtime?.onMessage && chrome.runtime?.sendMessage) {
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (message?.type === "pilink-confirm-close" && message.nonce === nonceValues[0] && sent && stillOnWakePage()) {
-        sendResponse({ ok: true });
+      if (message?.type !== "pilink-confirm-close" || message.nonce !== nonceValues[0] || !sent) return;
+      try {
+        // The background targets this exact documentId. A hard navigation
+        // replaces the content-script document, while ChatGPT's expected SPA
+        // transition to the new conversation keeps it alive.
+        if (new URL(location.href).origin === "https://chatgpt.com") sendResponse({ ok: true });
+      } catch (_) {
+        // Leave the tab open if the current document cannot be verified.
       }
     });
     chrome.runtime.sendMessage({ type: "pilink-register-wake", nonce: nonceValues[0], port: wakePort });
