@@ -24,8 +24,11 @@ console.error("[PiLink] Chrome/Brave wake extension built in dist/browser-extens
 // Once the operator has explicitly enabled this checkout's browser setup,
 // subsequent builds of the *same checkout* refresh the stable unpacked files.
 // Never let a disposable test clone silently replace a different install.
-const dataHome = process.env.XDG_DATA_HOME?.trim() || path.join(process.env.HOME || "", ".local", "share");
-const installed = path.join(dataHome, "pilink", "browser-extension");
+const installed = process.env.XDG_DATA_HOME?.trim()
+  ? path.join(process.env.XDG_DATA_HOME.trim(), "pilink", "browser-extension")
+  : process.platform === "win32"
+    ? path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local"), "PiLink", "browser-extension")
+    : path.join(process.env.HOME || "", ".local", "share", "pilink", "browser-extension");
 const marker = path.join(installed, ".pilink-source.json");
 if (fs.existsSync(marker)) {
   if (!fs.existsSync(installed) || fs.lstatSync(installed).isSymbolicLink() ||

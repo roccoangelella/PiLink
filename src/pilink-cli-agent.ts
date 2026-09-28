@@ -133,7 +133,7 @@ export function recoverStaleGatewayLock(lock: string): boolean {
 }
 
 function shouldOfferGatewayBrowserSetup(wakeSetting: string | undefined, injectedStage?: () => string): boolean {
-  if (injectedStage || process.platform !== "linux" || wakeSetting === "true") return false;
+  if (injectedStage || (process.platform !== "linux" && process.platform !== "win32") || wakeSetting === "true") return false;
   // An interactive launch offers the one-time install. In a headless launch,
   // auto-enable only an extension already loaded in the default browser.
   return (process.stdin.isTTY === true && process.stderr.isTTY === true && process.env.CI !== "true") ||

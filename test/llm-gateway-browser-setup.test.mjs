@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { enableGatewayBrowserWake, gatewayBrowserExtensionNeedsReload, gatewayBrowserWakeEnabledMessage, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension, waitForLoadedGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
+import { enableGatewayBrowserWake, gatewayBrowserExtensionDirectory, gatewayBrowserExtensionNeedsReload, gatewayBrowserWakeEnabledMessage, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension, waitForLoadedGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
 
 const source = fileURLToPath(new URL("../browser-extension/", import.meta.url));
 
@@ -28,7 +28,7 @@ test("setup stages only the narrowly scoped Chrome/Brave extension and is idempo
   await fs.writeFile(path.join(destination, ".pilink-source.json"), JSON.stringify({ source_root: root }));
   assert.throws(() => stageGatewayBrowserExtension({ source, destination }), /another PiLink checkout/);
   const stat = await fs.stat(destination);
-  assert.equal(stat.mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(stat.mode & 0o777, 0o700);
 });
 
 test("staged extension pins the configured connection name rather than accepting other wake phrases", async (t) => {
@@ -68,8 +68,7 @@ test("rebuilding an approved extension preserves its configured wake name", asyn
   assert.match(await fs.readFile(path.join(destination, "wake.js"), "utf8"), /const WAKE_TEXT = "@My Coding Connector wake up";/);
 });
 
-test("an unpacked extension already loaded by Brave enables wake without a second yes", async (t) => {
-  if (process.platform !== "linux") return;
+test("an unpacked extension already loaded by Brave is detected on Linux and Windows", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-already-loaded-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const destination = path.join(root, "staged");
@@ -92,7 +91,6 @@ test("an unpacked extension already loaded by Brave enables wake without a secon
 });
 
 test("first Enter can wait for Brave to persist a newly loaded extension", async (t) => {
-  if (process.platform !== "linux") return;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-late-preferences-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const destination = path.join(root, "staged");
@@ -115,6 +113,13 @@ test("first Enter can wait for Brave to persist a newly loaded extension", async
   assert.equal(detected, true);
   await fs.writeFile(preferences, "{", "utf8");
   assert.equal(await waitForLoadedGatewayBrowserExtension(options, 25, 5), false);
+});
+
+test("Windows stages the approved extension under LocalAppData", () => {
+  assert.equal(
+    gatewayBrowserExtensionDirectory({ LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }, "win32"),
+    path.join("C:\\Users\\test\\AppData\\Local", "PiLink", "browser-extension"),
+  );
 });
 
 test("wake confirmation copy distinguishes the running setup from a standalone extension command", () => {
@@ -148,7 +153,7 @@ test("opt-in writes only to the selected private PiLink config after setup", asy
   assert.match(await fs.readFile(config, "utf8"), /JWT_SECRET=placeholder/);
   assert.equal((await fs.readFile(config, "utf8")).match(/PI_LLM_GATEWAY_AUTO_WAKE=/g).length, 1);
   assert.match(await fs.readFile(config, "utf8"), /PI_LLM_GATEWAY_AUTO_WAKE=true/);
-  assert.equal((await fs.stat(config)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal((await fs.stat(config)).mode & 0o777, 0o600);
   const link = path.join(root, "symlink");
   await fs.symlink(config, link);
   assert.throws(() => enableGatewayBrowserWake(link), /regular private file/);

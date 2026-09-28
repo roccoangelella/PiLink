@@ -11,16 +11,31 @@ import { gatewayVisiblePromptOutput } from "./llm-gateway-output.js";
 
 const BUILT_EXTENSION = path.join(path.dirname(fileURLToPath(import.meta.url)), "browser-extension");
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+type ChromiumBrowser = "brave" | "chrome" | "chromium";
+
+export function gatewayBrowserExtensionDirectory(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const configuredDataHome = env.XDG_DATA_HOME?.trim();
+  if (configuredDataHome) return path.join(configuredDataHome, "pilink", "browser-extension");
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim() || path.join(os.homedir(), "AppData", "Local");
+    return path.join(localAppData, "PiLink", "browser-extension");
+  }
+  const dataHome = path.join(os.homedir(), ".local", "share");
+  return path.join(dataHome, "pilink", "browser-extension");
+}
 
 export function stageGatewayBrowserExtension(options: {
   source?: string;
   destination?: string;
   env?: NodeJS.ProcessEnv;
   connectorName?: string;
+  platform?: NodeJS.Platform;
 } = {}): string {
   const env = options.env ?? process.env;
-  const dataHome = env.XDG_DATA_HOME?.trim() || path.join(os.homedir(), ".local", "share");
-  const destination = path.resolve(options.destination ?? path.join(dataHome, "pilink", "browser-extension"));
+  const destination = path.resolve(options.destination ?? gatewayBrowserExtensionDirectory(env, options.platform));
   const source = path.resolve(options.source ?? BUILT_EXTENSION);
   if (fs.existsSync(destination) && (fs.lstatSync(destination).isSymbolicLink() || !fs.lstatSync(destination).isDirectory())) {
     throw new Error("Browser extension destination must be a normal directory, not a symlink");
@@ -128,10 +143,14 @@ export function configuredGatewayConnectorName(): string {
 export function loadedGatewayBrowserExtension(options: {
   destination?: string;
   profileRoot?: string;
-  browser?: "brave" | "chrome" | "chromium";
+  browser?: ChromiumBrowser;
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
 } = {}): boolean {
-  if (process.platform !== "linux") return false;
-  const destination = path.resolve(options.destination ?? path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "pilink", "browser-extension"));
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  if (platform !== "linux" && platform !== "win32") return false;
+  const destination = path.resolve(options.destination ?? gatewayBrowserExtensionDirectory(env, platform));
   const manifestFile = path.join(destination, "manifest.json");
   try {
     if (!fs.statSync(destination).isDirectory() || fs.lstatSync(destination).isSymbolicLink() ||
@@ -145,16 +164,8 @@ export function loadedGatewayBrowserExtension(options: {
         manifest.background?.service_worker !== "background.js" || Object.keys(manifest.background).length !== 1 ||
         manifest.content_scripts?.length !== 1 || manifest.content_scripts[0].matches?.join() !== "https://chatgpt.com/*" ||
         manifest.content_scripts[0].js?.join() !== "wake.js") return false;
-    let browser = options.browser;
-    if (!browser && !options.profileRoot) {
-      const desktop = execFileSync("xdg-settings", ["get", "default-web-browser"], { encoding: "utf8", timeout: 1500 }).trim();
-      browser = desktop === "brave-browser.desktop" ? "brave" : desktop === "google-chrome.desktop" ? "chrome" :
-        desktop === "chromium.desktop" ? "chromium" : undefined;
-    }
-    const root = options.profileRoot ?? (browser === "brave"
-      ? path.join(os.homedir(), ".config", "BraveSoftware", "Brave-Browser")
-      : browser === "chrome" ? path.join(os.homedir(), ".config", "google-chrome")
-        : browser === "chromium" ? path.join(os.homedir(), ".config", "chromium") : undefined);
+    const browser = options.browser ?? (options.profileRoot ? undefined : defaultChromiumBrowser(platform, env));
+    const root = options.profileRoot ?? (browser ? browserProfileRoot(browser, platform, env) : undefined);
     if (!root || !fs.statSync(root).isDirectory()) return false;
     const installedPath = fs.realpathSync(destination);
     for (const profile of fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).slice(0, 32)) {
@@ -171,7 +182,7 @@ export function loadedGatewayBrowserExtension(options: {
           active_permissions?: { scriptable_host?: unknown };
         };
         if (entry.location !== 4 || typeof entry.path !== "string" || !path.isAbsolute(entry.path) ||
-            !fs.existsSync(entry.path) || fs.realpathSync(entry.path) !== installedPath ||
+            !fs.existsSync(entry.path) || !samePath(fs.realpathSync(entry.path), installedPath, platform) ||
             (entry.state !== undefined && entry.state !== 1) ||
             (entry.disable_reasons !== undefined && entry.disable_reasons !== 0) ||
             entry.withholding_permissions === true ||
@@ -211,7 +222,7 @@ export function gatewayBrowserWakeEnabledMessage(startedForSetup = false): strin
 }
 
 export function gatewayBrowserExtensionNeedsReload(destination = path.resolve(
-  process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "pilink", "browser-extension",
+  gatewayBrowserExtensionDirectory(),
 )): boolean {
   const marker = path.join(destination, ".pilink-reload-required");
   return fs.existsSync(marker) && fs.lstatSync(marker).isFile() && !fs.lstatSync(marker).isSymbolicLink();
@@ -256,10 +267,7 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
     return;
   }
   try {
-    const browser = execFileSync("xdg-settings", ["get", "default-web-browser"], { encoding: "utf8", timeout: 1500 }).trim();
-    if (browser === "brave-browser.desktop") execFileSync("brave", ["--new-tab", "brave://extensions"], { timeout: 3000, stdio: "ignore" });
-    else if (browser === "google-chrome.desktop") execFileSync("google-chrome", ["--new-tab", "chrome://extensions"], { timeout: 3000, stdio: "ignore" });
-    else if (browser === "chromium.desktop") execFileSync("chromium", ["--new-tab", "chrome://extensions"], { timeout: 3000, stdio: "ignore" });
+    openGatewayBrowserExtensionsPage();
   } catch {
     console.error("Open brave://extensions or chrome://extensions in your browser if its Extensions page did not open.");
   }
@@ -291,4 +299,93 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
   } finally {
     readline.close();
   }
+}
+
+function defaultChromiumBrowser(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): ChromiumBrowser | undefined {
+  if (platform === "linux") {
+    const desktop = execFileSync("xdg-settings", ["get", "default-web-browser"], {
+      encoding: "utf8", timeout: 1500, env,
+    }).trim();
+    return desktop === "brave-browser.desktop" ? "brave" : desktop === "google-chrome.desktop" ? "chrome" :
+      desktop === "chromium.desktop" ? "chromium" : undefined;
+  }
+  if (platform === "win32") {
+    const key = "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice";
+    const output = execFileSync("reg.exe", ["query", key, "/v", "ProgId"], {
+      encoding: "utf8", timeout: 1500, env, windowsHide: true,
+    });
+    const match = output.match(/ProgId\s+REG_\w+\s+([^\r\n]+)/iu)?.[1]?.trim() ?? "";
+    if (/brave/i.test(match)) return "brave";
+    if (/chromium/i.test(match)) return "chromium";
+    if (/chrome/i.test(match)) return "chrome";
+  }
+  return undefined;
+}
+
+function browserProfileRoot(
+  browser: ChromiumBrowser,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim() || path.join(os.homedir(), "AppData", "Local");
+    return browser === "brave"
+      ? path.join(localAppData, "BraveSoftware", "Brave-Browser", "User Data")
+      : browser === "chrome"
+        ? path.join(localAppData, "Google", "Chrome", "User Data")
+        : path.join(localAppData, "Chromium", "User Data");
+  }
+  if (platform === "linux") {
+    return browser === "brave"
+      ? path.join(os.homedir(), ".config", "BraveSoftware", "Brave-Browser")
+      : browser === "chrome" ? path.join(os.homedir(), ".config", "google-chrome")
+        : path.join(os.homedir(), ".config", "chromium");
+  }
+  return undefined;
+}
+
+function samePath(left: string, right: string, platform: NodeJS.Platform): boolean {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function openGatewayBrowserExtensionsPage(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const browser = defaultChromiumBrowser(platform, env);
+  if (!browser) return;
+  const page = browser === "brave" ? "brave://extensions" : "chrome://extensions";
+  if (platform === "linux") {
+    const command = browser === "brave" ? "brave" : browser === "chrome" ? "google-chrome" : "chromium";
+    execFileSync(command, ["--new-tab", page], { timeout: 3000, stdio: "ignore", env });
+    return;
+  }
+  if (platform === "win32") {
+    const executable = windowsBrowserExecutable(browser, env);
+    if (executable) execFileSync(executable, ["--new-tab", page], { timeout: 3000, stdio: "ignore", env, windowsHide: true });
+  }
+}
+
+function windowsBrowserExecutable(browser: ChromiumBrowser, env: NodeJS.ProcessEnv): string | undefined {
+  const executable = browser === "brave" ? "brave.exe" : browser === "chrome" ? "chrome.exe" : "chromium.exe";
+  try {
+    const located = execFileSync("where.exe", [executable], { encoding: "utf8", timeout: 1500, env, windowsHide: true })
+      .split(/\r?\n/u).find(Boolean)?.trim();
+    if (located && fs.existsSync(located)) return located;
+  } catch {
+    // Check the standard per-user and machine installation directories.
+  }
+  const roots = [env.LOCALAPPDATA, env.PROGRAMFILES, env["PROGRAMFILES(X86)"]].filter((value): value is string => Boolean(value));
+  const relative = browser === "brave"
+    ? path.join("BraveSoftware", "Brave-Browser", "Application", executable)
+    : browser === "chrome" ? path.join("Google", "Chrome", "Application", executable)
+      : path.join("Chromium", "Application", executable);
+  return roots.map((root) => path.join(root, relative)).find((candidate) => fs.existsSync(candidate));
 }

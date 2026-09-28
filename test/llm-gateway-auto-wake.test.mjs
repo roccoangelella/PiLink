@@ -28,15 +28,33 @@ async function eventually(predicate, timeoutMs = 1_000) {
   assert.fail("auto-wake condition was not met before the deadline");
 }
 
-test("auto-wake is opt-in and restricted to graphical Linux CLI endpoint launches", () => {
+test("auto-wake is opt-in for graphical Linux and Windows CLI endpoint launches", () => {
   const base = { PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" };
   assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: "wayland-0" }, "linux"), true);
   assert.equal(gatewayAutoWakeEnabled({ ...base, DISPLAY: ":0" }, "linux"), true);
+  assert.equal(gatewayAutoWakeEnabled(base, "win32"), true);
   assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: "wayland-0" }, "darwin"), false);
   assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_AUTO_WAKE: undefined }, "linux"), false);
   assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_AUTO_WAKE: "false" }, "linux"), false);
   assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: undefined, DISPLAY: undefined }, "linux"), false);
+  assert.equal(gatewayAutoWakeEnabled({ ...base, PI_LLM_GATEWAY_AUTO_WAKE: "false" }, "win32"), false);
   assert.equal(gatewayAutoWakeEnabled({ WAYLAND_DISPLAY: "wayland-0", PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" }, "linux"), false);
+});
+
+test("Windows auto-wake supervisor runs without X11 or Wayland variables", async () => {
+  let opens = 0;
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => status() },
+    env: { PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "win32", driver: { wake: async () => { opens++; } },
+    pollIntervalMs: 5, wakeGraceMs: 0, confirmationMs: 20, log: () => {},
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => opens === 1);
+  } finally {
+    supervisor.close();
+  }
 });
 
 test("wake URLs require one random nonce and the exact prefill phrase", () => {
@@ -89,6 +107,7 @@ test("queued work can wake before the 120s contact staleness deadline when the w
 });
 
 test("browser driver opens a nonce-tagged URL in Brave or the default browser, never a keyboard daemon", async () => {
+  if (process.platform === "win32") return;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-wake-driver-"));
   const log = path.join(root, "opened");
   const writeCommand = async (name, body) => fs.writeFile(path.join(root, name), `#!/bin/sh\n${body}\n`, { mode: 0o700 });
