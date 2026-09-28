@@ -27,6 +27,7 @@ export interface GatewayApiOptions {
   profile?: GatewayApiProfile;
   log?: (message: string) => void;
   allowInactiveQueueForAutoWake?: boolean | (() => boolean);
+  wakeConfirmations?: { status(nonce: string): "pending" | "confirmed" | undefined };
 }
 
 export interface StartedGatewayApi {
@@ -160,6 +161,23 @@ export function startGatewayApi(options: GatewayApiOptions): StartedGatewayApi {
 
   const app = express();
   app.disable("x-powered-by");
+  if (options.wakeConfirmations) {
+    app.get("/v1/gateway/wake/:nonce", (req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      const nonce = req.params.nonce;
+      if (!/^[0-9a-f]{32}$/u.test(nonce)) {
+        res.status(404).json({ confirmed: false });
+        return;
+      }
+      const state = options.wakeConfirmations?.status(nonce);
+      if (!state) {
+        res.status(404).json({ confirmed: false });
+        return;
+      }
+      res.json({ confirmed: state === "confirmed" });
+    });
+  }
   app.use((req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");

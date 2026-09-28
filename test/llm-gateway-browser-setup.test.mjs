@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { enableGatewayBrowserWake, gatewayBrowserExtensionNeedsReload, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
+import { enableGatewayBrowserWake, gatewayBrowserExtensionNeedsReload, gatewayBrowserWakeEnabledMessage, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension, waitForLoadedGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
 
 const source = fileURLToPath(new URL("../browser-extension/", import.meta.url));
 
@@ -18,6 +18,8 @@ test("setup stages only the narrowly scoped Chrome/Brave extension and is idempo
   assert.deepEqual(manifest.content_scripts[0].matches, ["https://chatgpt.com/*"]);
   assert.equal(await fs.readFile(path.join(destination, "wake.js"), "utf8"),
     await fs.readFile(path.join(source, "wake.js"), "utf8"));
+  assert.equal(await fs.readFile(path.join(destination, "background.js"), "utf8"),
+    await fs.readFile(path.join(source, "background.js"), "utf8"));
   assert.equal(stageGatewayBrowserExtension({ source, destination }), destination);
   rememberGatewayBrowserExtensionSource(destination, fileURLToPath(new URL("../", import.meta.url)));
   const saved = JSON.parse(await fs.readFile(path.join(destination, ".pilink-source.json"), "utf8"));
@@ -87,6 +89,43 @@ test("an unpacked extension already loaded by Brave enables wake without a secon
   assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
   await save({ ...entry, active_permissions: { scriptable_host: ["https://example.com/*"] } });
   assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
+});
+
+test("first Enter can wait for Brave to persist a newly loaded extension", async (t) => {
+  if (process.platform !== "linux") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-late-preferences-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, "staged");
+  const profileRoot = path.join(root, "Brave-Browser");
+  const profile = path.join(profileRoot, "Default");
+  await fs.mkdir(profile, { recursive: true });
+  stageGatewayBrowserExtension({ source, destination });
+  const preferences = path.join(profile, "Preferences");
+  await fs.writeFile(preferences, "{", "utf8"); // Brave is still saving the profile.
+  const options = { destination, profileRoot };
+  assert.equal(loadedGatewayBrowserExtension(options), false);
+  const save = new Promise((resolve) => setTimeout(resolve, 30)).then(() => fs.writeFile(preferences,
+    JSON.stringify({ extensions: { settings: { pilink: {
+      location: 4, path: destination, state: 1, disable_reasons: 0,
+      active_permissions: { scriptable_host: ["https://chatgpt.com/*"] },
+    } } } }), "utf8"));
+  const [detected] = await Promise.all([
+    waitForLoadedGatewayBrowserExtension(options, 500, 10), save,
+  ]);
+  assert.equal(detected, true);
+  await fs.writeFile(preferences, "{", "utf8");
+  assert.equal(await waitForLoadedGatewayBrowserExtension(options, 25, 5), false);
+});
+
+test("wake confirmation copy distinguishes the running setup from a standalone extension command", () => {
+  const startup = gatewayBrowserWakeEnabledMessage(true);
+  const standalone = gatewayBrowserWakeEnabledMessage();
+  assert.match(startup, /gateway started for this setup/);
+  assert.match(startup, /pilink gateway start/);
+  assert.match(startup, /pilink gateway status/);
+  assert.match(standalone, /If the gateway is running/);
+  assert.match(standalone, /pilink gateway start/);
+  assert.doesNotMatch(standalone, /gateway started for this setup/);
 });
 
 test("setup refuses to overwrite a symlink destination", async (t) => {

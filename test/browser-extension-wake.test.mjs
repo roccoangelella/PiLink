@@ -107,7 +107,7 @@ function makeStore() {
   };
 }
 
-function runExtension({ href = URL_OK, composers = [], documentButtons = [], store = makeStore(), clock = new FakeClock(), bodyReady = true, source = extensionSource } = {}) {
+function runExtension({ href = URL_OK, composers = [], documentButtons = [], store = makeStore(), clock = new FakeClock(), bodyReady = true, source = extensionSource, chrome } = {}) {
   const banners = [];
   const body = { appendChild: (element) => banners.push(element) };
   const document = {
@@ -125,6 +125,7 @@ function runExtension({ href = URL_OK, composers = [], documentButtons = [], sto
     sessionStorage: store,
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
+    ...(chrome ? { chrome } : {}),
   });
   vm.runInContext(source, context, { timeout: 1000 });
   return { clock, document, body, store, context, banners };
@@ -132,6 +133,7 @@ function runExtension({ href = URL_OK, composers = [], documentButtons = [], sto
 
 const COMPOSER_SELECTOR_FOR_TEST = '#prompt-textarea, textarea, [contenteditable="true"], [contenteditable=""]';
 const extensionSource = await readFile(new URL("../browser-extension/wake.js", import.meta.url), "utf8");
+const backgroundSource = await readFile(new URL("../browser-extension/background.js", import.meta.url), "utf8");
 
 function readyFixture() {
   const button = new FakeButton();
@@ -140,15 +142,15 @@ function readyFixture() {
   return { button, form, composer };
 }
 
-test("manifest is MV3 with only the ChatGPT content-script match and no permissions/background", async () => {
+test("manifest is MV3 with only ChatGPT content access and loopback confirmation access", async () => {
   const manifest = JSON.parse(await readFile(new URL("../browser-extension/manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.content_scripts[0].matches, ["https://chatgpt.com/*"]);
   assert.deepEqual(manifest.content_scripts[0].js, ["wake.js"]);
   assert.equal(manifest.content_scripts[0].run_at, "document_start");
   assert.equal("permissions" in manifest, false);
-  assert.equal("host_permissions" in manifest, false);
-  assert.equal("background" in manifest, false);
+  assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
+  assert.deepEqual(manifest.background, { service_worker: "background.js" });
 });
 
 test("matching URL focuses the exact composer and clicks its unique send button once", () => {
@@ -156,6 +158,55 @@ test("matching URL focuses the exact composer and clicks its unique send button 
   runExtension({ composers: [composer] });
   assert.equal(composer.focusCount, 1);
   assert.equal(button.clickCount, 1);
+});
+
+test("a port-tagged wake registers its nonce and acknowledges close only for the same sent wake page", () => {
+  const { button, composer } = readyFixture();
+  let registered;
+  let closeListener;
+  const chrome = { runtime: {
+    sendMessage: (message) => { registered = message; },
+    onMessage: { addListener: (listener) => { closeListener = listener; } },
+  } };
+  const href = `${URL_OK}&pilink_port=8765`;
+  const { context } = runExtension({ href, composers: [composer], chrome });
+  assert.deepEqual({ ...registered }, { type: "pilink-register-wake", nonce: NONCE, port: 8765 });
+  assert.equal(button.clickCount, 1);
+
+  let reply;
+  closeListener({ type: "pilink-confirm-close", nonce: NONCE }, {}, (value) => { reply = value; });
+  assert.deepEqual({ ...reply }, { ok: true });
+
+  reply = undefined;
+  context.location.href = "https://chatgpt.com/";
+  closeListener({ type: "pilink-confirm-close", nonce: NONCE }, {}, (value) => { reply = value; });
+  assert.equal(reply, undefined, "navigating away must leave the tab open");
+});
+
+test("background closes exactly the registering sender tab after gateway confirmation", async () => {
+  let registerListener;
+  const sent = [];
+  const removed = [];
+  const chrome = {
+    runtime: { lastError: null, onMessage: { addListener: (listener) => { registerListener = listener; } } },
+    tabs: {
+      sendMessage: (tabId, message, callback) => { sent.push({ tabId, message }); callback({ ok: true }); },
+      remove: (tabId, callback) => { removed.push(tabId); callback(); },
+    },
+  };
+  const fetchCalls = [];
+  const context = vm.createContext({
+    chrome,
+    fetch: async (url) => { fetchCalls.push(url); return { ok: true, status: 200, json: async () => ({ confirmed: true }) }; },
+    setTimeout,
+  });
+  vm.runInContext(backgroundSource, context, { timeout: 1000 });
+  registerListener({ type: "pilink-register-wake", nonce: NONCE, port: 8765 }, { tab: { id: 42 } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fetchCalls, [`http://127.0.0.1:8765/v1/gateway/wake/${NONCE}`]);
+  assert.deepEqual(sent.map(({ tabId, message }) => ({ tabId, message: { ...message } })),
+    [{ tabId: 42, message: { type: "pilink-confirm-close", nonce: NONCE } }]);
+  assert.deepEqual(removed, [42]);
 });
 
 test("a custom-name staged extension sends only its pinned wake phrase", async (t) => {

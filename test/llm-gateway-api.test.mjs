@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { startGatewayApi } from "../dist/llm-gateway-api.js";
+import { GatewayWakeConfirmations } from "../dist/llm-gateway-auto-wake.js";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
 
 async function fixture(t, apiOptions = {}) {
@@ -50,6 +51,30 @@ function headers(apiKey) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("wake confirmation endpoint is nonce-scoped while normal gateway routes remain authenticated", async (t) => {
+  const confirmations = new GatewayWakeConfirmations();
+  const nonce = "0123456789abcdef0123456789abcdef";
+  confirmations.register(nonce);
+  const { baseUrl } = await fixture(t, { wakeConfirmations: confirmations });
+  const origin = new URL(baseUrl).origin;
+
+  let response = await fetch(`${origin}/v1/gateway/wake/${nonce}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("access-control-allow-origin"), null);
+  assert.deepEqual(await response.json(), { confirmed: false });
+
+  confirmations.confirm(nonce);
+  response = await fetch(`${origin}/v1/gateway/wake/${nonce}`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { confirmed: true });
+
+  response = await fetch(`${origin}/v1/gateway/wake/fedcba9876543210fedcba9876543210`);
+  assert.equal(response.status, 404);
+  response = await fetch(`${baseUrl}/status`);
+  assert.equal(response.status, 401);
+});
 
 test("OpenAI chat completions round-trips function tools without executing them in PiLink", async (t) => {
   const { store, apiKey, baseUrl } = await fixture(t);

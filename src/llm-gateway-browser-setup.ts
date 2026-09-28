@@ -38,10 +38,13 @@ export function stageGatewayBrowserExtension(options: {
   const manifest = JSON.parse(fs.readFileSync(path.join(source, "manifest.json"), "utf8")) as {
     manifest_version?: number;
     permissions?: unknown;
-    host_permissions?: unknown;
+    host_permissions?: string[];
+    background?: { service_worker?: string };
     content_scripts?: Array<{ matches?: string[]; js?: string[] }>;
   };
-  if (manifest.manifest_version !== 3 || manifest.permissions || manifest.host_permissions ||
+  if (manifest.manifest_version !== 3 || manifest.permissions ||
+      manifest.host_permissions?.join() !== "http://127.0.0.1/*" ||
+      manifest.background?.service_worker !== "background.js" || Object.keys(manifest.background).length !== 1 ||
       manifest.content_scripts?.length !== 1 || manifest.content_scripts[0].matches?.join() !== "https://chatgpt.com/*" ||
       manifest.content_scripts[0].js?.join() !== "wake.js") {
     throw new Error("Refusing an unexpected Chrome/Brave wake extension manifest");
@@ -51,23 +54,31 @@ export function stageGatewayBrowserExtension(options: {
   if (template.split(defaultPhrase).length !== 2) throw new Error("Unexpected PiLink wake extension template");
   const script = template.replace(defaultPhrase,
     `const WAKE_TEXT = ${JSON.stringify(gatewayWakeText({ PI_LLM_GATEWAY_CONNECTOR_NAME: options.connectorName }))};`);
+  const background = fs.readFileSync(path.join(source, "background.js"), "utf8");
   fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
-  for (const name of ["manifest.json", "wake.js"]) {
+  for (const name of ["manifest.json", "wake.js", "background.js"]) {
     const file = path.join(destination, name);
     if (fs.existsSync(file) && (fs.lstatSync(file).isSymbolicLink() || !fs.lstatSync(file).isFile())) {
       throw new Error(`Browser extension destination ${name} is not a normal file`);
     }
   }
+  const manifestFile = path.join(destination, "manifest.json");
   const scriptFile = path.join(destination, "wake.js");
+  const backgroundFile = path.join(destination, "background.js");
   const reloadMarker = path.join(destination, ".pilink-reload-required");
   if (fs.existsSync(reloadMarker) && (!fs.lstatSync(reloadMarker).isFile() || fs.lstatSync(reloadMarker).isSymbolicLink())) {
     throw new Error("Refusing an unsafe browser extension reload marker");
   }
-  const approvedScriptChanged = fs.existsSync(sourceMarker) && fs.existsSync(scriptFile) &&
-    fs.readFileSync(scriptFile, "utf8") !== script;
-  fs.writeFileSync(path.join(destination, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
+  const manifestText = JSON.stringify(manifest, null, 2) + "\n";
+  const approvedExtensionChanged = fs.existsSync(sourceMarker) && (
+    !fs.existsSync(manifestFile) || fs.readFileSync(manifestFile, "utf8") !== manifestText ||
+    !fs.existsSync(scriptFile) || fs.readFileSync(scriptFile, "utf8") !== script ||
+    !fs.existsSync(backgroundFile) || fs.readFileSync(backgroundFile, "utf8") !== background
+  );
+  fs.writeFileSync(manifestFile, manifestText, { mode: 0o600 });
   fs.writeFileSync(scriptFile, script, { mode: 0o600 });
-  if (approvedScriptChanged && !fs.existsSync(reloadMarker)) fs.writeFileSync(reloadMarker, "reload required\n", { flag: "wx", mode: 0o600 });
+  fs.writeFileSync(backgroundFile, background, { mode: 0o600 });
+  if (approvedExtensionChanged && !fs.existsSync(reloadMarker)) fs.writeFileSync(reloadMarker, "reload required\n", { flag: "wx", mode: 0o600 });
   return destination;
 }
 
@@ -126,10 +137,12 @@ export function loadedGatewayBrowserExtension(options: {
     if (!fs.statSync(destination).isDirectory() || fs.lstatSync(destination).isSymbolicLink() ||
         !fs.statSync(manifestFile).isFile() || fs.lstatSync(manifestFile).isSymbolicLink()) return false;
     const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as {
-      name?: string; manifest_version?: number; permissions?: unknown; host_permissions?: unknown;
-      content_scripts?: Array<{ matches?: string[]; js?: string[] }>;
+      name?: string; manifest_version?: number; permissions?: unknown; host_permissions?: string[];
+      background?: { service_worker?: string }; content_scripts?: Array<{ matches?: string[]; js?: string[] }>;
     };
-    if (manifest.name !== "Pilink Wake" || manifest.manifest_version !== 3 || manifest.permissions || manifest.host_permissions ||
+    if (manifest.name !== "Pilink Wake" || manifest.manifest_version !== 3 || manifest.permissions ||
+        manifest.host_permissions?.join() !== "http://127.0.0.1/*" ||
+        manifest.background?.service_worker !== "background.js" || Object.keys(manifest.background).length !== 1 ||
         manifest.content_scripts?.length !== 1 || manifest.content_scripts[0].matches?.join() !== "https://chatgpt.com/*" ||
         manifest.content_scripts[0].js?.join() !== "wake.js") return false;
     let browser = options.browser;
@@ -174,6 +187,29 @@ export function loadedGatewayBrowserExtension(options: {
   return false;
 }
 
+// Brave/Chrome can finish loading an unpacked extension before writing its
+// enabled state to Preferences. Give that write a short, bounded window rather
+// than reporting a failed installation on the first Enter.
+export async function waitForLoadedGatewayBrowserExtension(
+  options: Parameters<typeof loadedGatewayBrowserExtension>[0] = {},
+  timeoutMs = 5_000,
+  pollMs = 250,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (loadedGatewayBrowserExtension(options)) return true;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(pollMs, remaining)));
+  }
+}
+
+export function gatewayBrowserWakeEnabledMessage(startedForSetup = false): string {
+  return startedForSetup
+    ? "Auto-wake enabled. The gateway started for this setup and will apply the setting within a few seconds while running. To start it again later: pilink gateway start. Check it with: pilink gateway status."
+    : "Auto-wake enabled. If the gateway is running, it will apply the setting within a few seconds; otherwise start it with 'pilink gateway start'. Check it with 'pilink gateway status'.";
+}
+
 export function gatewayBrowserExtensionNeedsReload(destination = path.resolve(
   process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "pilink", "browser-extension",
 )): boolean {
@@ -181,7 +217,7 @@ export function gatewayBrowserExtensionNeedsReload(destination = path.resolve(
   return fs.existsSync(marker) && fs.lstatSync(marker).isFile() && !fs.lstatSync(marker).isSymbolicLink();
 }
 
-export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
+export async function runGatewayBrowserSetup(enable: boolean, options: { startedForSetup?: boolean } = {}): Promise<void> {
   const location = stageGatewayBrowserExtension({ connectorName: configuredGatewayConnectorName() });
   const reloadRequired = gatewayBrowserExtensionNeedsReload(location);
   if (reloadRequired) {
@@ -195,14 +231,16 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
   if (!enable && !reloadRequired && loadedGatewayBrowserExtension({ destination: location })) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
-    console.error("PiLink Wake is active in the default browser. Auto-wake is on; no terminal confirmation is needed. A running gateway picks up the setting within a few seconds.");
+    console.error("PiLink Wake is active in the default browser; no terminal confirmation is needed.");
+    console.error(gatewayBrowserWakeEnabledMessage(options.startedForSetup));
     return;
   }
   if (enable) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
     fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
-    console.error("Auto-wake enabled. Use --enable only after checking that PiLink Wake is loaded and enabled in the browser; a running gateway picks up the setting within a few seconds.");
+    console.error(gatewayBrowserWakeEnabledMessage(options.startedForSetup));
+    console.error("Use --enable only after checking that PiLink Wake is loaded and enabled in the browser.");
     return;
   }
   console.error(`Browser extension files: ${location}`);
@@ -235,14 +273,19 @@ export async function runGatewayBrowserSetup(enable: boolean): Promise<void> {
         console.error("Auto-wake remains off. Run 'pilink gateway browser-extension' after installing the extension.");
         return;
       }
-      if (answer || !loadedGatewayBrowserExtension({ destination: location })) {
-        console.error("PiLink cannot verify an enabled PiLink Wake in the default browser profile. Check the Extensions page and press Enter again. For a non-default profile, verify it yourself and use 'pilink gateway browser-extension --enable'.");
+      if (answer) {
+        console.error("Press Enter without text to check, or type skip to leave auto-wake off.");
+        continue;
+      }
+      console.error("Checking browser extension status (up to 5 seconds)...");
+      if (!await waitForLoadedGatewayBrowserExtension({ destination: location })) {
+        console.error("PiLink still cannot verify an enabled PiLink Wake in the default browser profile. Brave/Chrome may still be saving its extension state; check the Extensions page and press Enter to retry. For a non-default profile, verify it yourself before using 'pilink gateway browser-extension --enable'.");
         continue;
       }
       enableGatewayBrowserWake();
       rememberGatewayBrowserExtensionSource(location);
       fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
-      console.error("Auto-wake is on. A running gateway applies it within a few seconds.");
+      console.error(gatewayBrowserWakeEnabledMessage(options.startedForSetup));
       return;
     }
   } finally {

@@ -21,12 +21,16 @@
   const entries = Array.from(url.searchParams.entries());
   const nonceValues = url.searchParams.getAll("pilink_wake");
   const wakeValues = url.searchParams.getAll("q");
+  const portValues = url.searchParams.getAll("pilink_port");
+  const wakePort = portValues.length === 1 && /^\d{1,5}$/.test(portValues[0]) ? Number(portValues[0]) : null;
   if (
-    entries.length !== 2 ||
+    (entries.length !== 2 && entries.length !== 3) ||
     nonceValues.length !== 1 ||
     wakeValues.length !== 1 ||
     wakeValues[0] !== WAKE_TEXT ||
-    !/^[0-9a-f]{32}$/.test(nonceValues[0])
+    !/^[0-9a-f]{32}$/.test(nonceValues[0]) ||
+    (entries.length === 3 && (portValues.length !== 1 || !Number.isInteger(wakePort) || wakePort < 1 || wakePort > 65535)) ||
+    (entries.length === 2 && portValues.length !== 0)
   ) {
     return;
   }
@@ -38,12 +42,17 @@
           current.searchParams.getAll("pilink_wake").length !== 1 ||
           current.searchParams.get("pilink_wake") !== nonceValues[0]) return false;
       const query = current.searchParams.getAll("q");
+      const ports = current.searchParams.getAll("pilink_port");
+      const expectedPortCount = wakePort === null ? 0 : 1;
+      if (ports.length !== expectedPortCount || (wakePort !== null && ports[0] !== String(wakePort))) return false;
       const count = Array.from(current.searchParams).length;
+      const withQuery = wakePort === null ? 2 : 3;
+      const withoutQuery = wakePort === null ? 1 : 2;
       // ChatGPT consumes ?q to pre-fill the editor, then removes only ?q
-      // with a same-tab history change. Keep the nonce and strict editor
+      // with a same-tab history change. Keep the nonce/port and strict editor
       // check; never send after another route or extra query parameter.
-      return (query.length === 1 && query[0] === WAKE_TEXT && count === 2) ||
-        (query.length === 0 && count === 1);
+      return (query.length === 1 && query[0] === WAKE_TEXT && count === withQuery) ||
+        (query.length === 0 && count === withoutQuery);
     } catch (_) {
       return false;
     }
@@ -80,6 +89,16 @@
   } catch (_) {
     status("browser storage unavailable; nothing sent");
     return;
+  }
+
+  let sent = false;
+  if (wakePort !== null && typeof chrome !== "undefined" && chrome.runtime?.onMessage && chrome.runtime?.sendMessage) {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type === "pilink-confirm-close" && message.nonce === nonceValues[0] && sent && stillOnWakePage()) {
+        sendResponse({ ok: true });
+      }
+    });
+    chrome.runtime.sendMessage({ type: "pilink-register-wake", nonce: nonceValues[0], port: wakePort });
   }
 
   const startedAt = Date.now();
@@ -207,6 +226,7 @@
       // Seal the attempt before dispatching the single click; never retry a click.
       finish("clicked the send button once");
       button.click();
+      sent = true;
     } catch (_) {
       finish("browser UI error; send unconfirmed");
     }

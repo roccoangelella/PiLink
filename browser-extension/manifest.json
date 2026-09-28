@@ -3,10 +3,20 @@
   "name": "Pilink Wake",
   "version": "1.0.0",
   "description": "Send the exact Pilink wake phrase on an explicitly authorized ChatGPT tab.",
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*"],
-      "js": ["wake.js"],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "wake.js"
+      ],
       "run_at": "document_start"
     }
   ]

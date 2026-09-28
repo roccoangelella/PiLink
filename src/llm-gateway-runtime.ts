@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import dotenv from "dotenv";
 import { defaultConfigPath, loadRuntimeConfig } from "./config.js";
-import { gatewayAutoWakeEnabled, startGatewayAutoWakeSupervisor, type GatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
+import { GatewayWakeConfirmations, gatewayAutoWakeEnabled, startGatewayAutoWakeSupervisor, type GatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
 import { deriveGatewayApiKey, startGatewayApi, type StartedGatewayApi } from "./llm-gateway-api.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import {
@@ -65,6 +65,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
   });
   const activation = store.activate();
   const autoWakeAdmission = { enabled: gatewayAutoWakeEnabled() };
+  const wakeConfirmations = new GatewayWakeConfirmations();
   let api: StartedGatewayApi;
   try {
     api = startGatewayApi({
@@ -75,6 +76,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
       queueTimeoutSeconds,
       profile,
       allowInactiveQueueForAutoWake: () => autoWakeAdmission.enabled,
+      wakeConfirmations,
     });
   } catch (error) {
     // Activation starts before synchronous API validation/bind setup. Consume
@@ -95,6 +97,8 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
   void ready.then(() => {
     watchGatewayBrowserApproval({
       store,
+      apiPort: gatewayPort,
+      wakeConfirmations,
       onChange(enabled) { autoWakeAdmission.enabled = enabled; },
     });
   }).catch(() => undefined);
@@ -107,6 +111,8 @@ export function watchGatewayBrowserApproval(options: {
   configPath?: string;
   env?: NodeJS.ProcessEnv;
   intervalMs?: number;
+  apiPort?: number;
+  wakeConfirmations?: GatewayWakeConfirmations;
   onChange?: (enabled: boolean) => void;
 }): { isActive(): boolean; close(): void } {
   const configPath = options.configPath ?? process.env.PILINK_CONFIG ?? defaultConfigPath();
@@ -129,7 +135,12 @@ export function watchGatewayBrowserApproval(options: {
     const desired = gatewayAutoWakeEnabled(effectiveEnv);
     if (desired === active) { options.onChange?.(active); return; }
     if (desired) {
-      supervisor = startGatewayAutoWakeSupervisor({ store: options.store, env: effectiveEnv });
+      supervisor = startGatewayAutoWakeSupervisor({
+        store: options.store,
+        env: effectiveEnv,
+        apiPort: options.apiPort,
+        wakeConfirmations: options.wakeConfirmations,
+      });
       active = Boolean(supervisor);
       if (active) console.error("[Gateway] Browser wake enabled after Chrome/Brave extension approval.");
     } else {

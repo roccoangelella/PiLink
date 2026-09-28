@@ -7,14 +7,18 @@ const source = path.join(root, "browser-extension");
 const destination = path.join(root, "dist", "browser-extension");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const manifest = JSON.parse(fs.readFileSync(path.join(source, "manifest.json"), "utf8"));
-if (manifest.manifest_version !== 3 || manifest.permissions || manifest.host_permissions || manifest.background ||
-    manifest.content_scripts?.length !== 1 || manifest.content_scripts[0].matches?.join() !== "https://chatgpt.com/*") {
-  throw new Error("Browser wake extension must remain a minimal ChatGPT-only MV3 content script");
+if (manifest.manifest_version !== 3 || manifest.permissions ||
+    manifest.host_permissions?.join() !== "http://127.0.0.1/*" ||
+    manifest.background?.service_worker !== "background.js" || Object.keys(manifest.background).length !== 1 ||
+    manifest.content_scripts?.length !== 1 || manifest.content_scripts[0].matches?.join() !== "https://chatgpt.com/*" ||
+    manifest.content_scripts[0].js?.join() !== "wake.js") {
+  throw new Error("Browser wake extension must remain a narrowly scoped ChatGPT/loopback MV3 extension");
 }
 manifest.version = pkg.version;
 fs.mkdirSync(destination, { recursive: true });
 fs.writeFileSync(path.join(destination, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 fs.copyFileSync(path.join(source, "wake.js"), path.join(destination, "wake.js"));
+fs.copyFileSync(path.join(source, "background.js"), path.join(destination, "background.js"));
 console.error("[PiLink] Chrome/Brave wake extension built in dist/browser-extension");
 
 // Once the operator has explicitly enabled this checkout's browser setup,

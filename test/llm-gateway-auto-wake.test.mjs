@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   buildGatewayWakeUrl,
+  GatewayWakeConfirmations,
   gatewayAutoWakeEnabled,
   shouldAutoWakeGateway,
   startGatewayAutoWakeSupervisor,
@@ -42,8 +43,27 @@ test("wake URLs require one random nonce and the exact prefill phrase", () => {
   const nonce = "0123456789abcdef0123456789abcdef";
   assert.equal(buildGatewayWakeUrl(nonce),
     `https://chatgpt.com/?q=%40PiLink%20Gateway%20wake%20up&pilink_wake=${nonce}`);
+  assert.equal(buildGatewayWakeUrl(nonce, {}, 8765),
+    `https://chatgpt.com/?q=%40PiLink%20Gateway%20wake%20up&pilink_wake=${nonce}&pilink_port=8765`);
+  assert.throws(() => buildGatewayWakeUrl(nonce, {}, 0));
+  assert.throws(() => buildGatewayWakeUrl(nonce, {}, 65536));
   assert.throws(() => buildGatewayWakeUrl("not-a-nonce"));
   assert.throws(() => buildGatewayWakeUrl("../123456789abcdef0123456789abcdef"));
+});
+
+test("wake confirmation state is scoped to an exact nonce", () => {
+  const confirmations = new GatewayWakeConfirmations();
+  const nonce = "0123456789abcdef0123456789abcdef";
+  const other = "fedcba9876543210fedcba9876543210";
+  confirmations.register(nonce);
+  assert.equal(confirmations.status(nonce), "pending");
+  assert.equal(confirmations.status(other), undefined);
+  confirmations.confirm(other);
+  assert.equal(confirmations.status(nonce), "pending");
+  confirmations.confirm(nonce);
+  assert.equal(confirmations.status(nonce), "confirmed");
+  confirmations.clear(nonce);
+  assert.equal(confirmations.status(nonce), undefined);
 });
 
 test("wake needs queued work or a previously active worker and explicit wake_worker status", () => {

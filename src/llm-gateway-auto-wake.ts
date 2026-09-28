@@ -23,7 +23,7 @@ export interface GatewayAutoWakeSupervisor {
 }
 
 export interface GatewayWakeDriver {
-  wake(): Promise<void>;
+  wake(nonce?: string): Promise<void>;
 }
 
 export interface GatewayAutoWakeSupervisorOptions {
@@ -36,6 +36,8 @@ export interface GatewayAutoWakeSupervisorOptions {
   wakeGraceMs?: number;
   confirmationMs?: number;
   maxFailedCycles?: number;
+  apiPort?: number;
+  wakeConfirmations?: GatewayWakeConfirmations;
   log?: (message: string) => void;
 }
 
@@ -43,6 +45,41 @@ class GatewayAutoWakeUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GatewayAutoWakeUnavailableError";
+  }
+}
+
+export class GatewayWakeConfirmations {
+  private readonly attempts = new Map<string, { confirmed: boolean; expiresAt: number }>();
+
+  constructor(private readonly ttlMs = 60_000) {}
+
+  register(nonce: string): void {
+    if (!/^[0-9a-f]{32}$/u.test(nonce)) throw new Error("Invalid gateway wake nonce");
+    this.attempts.set(nonce, { confirmed: false, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  confirm(nonce: string): void {
+    const attempt = this.current(nonce);
+    if (attempt) attempt.confirmed = true;
+  }
+
+  status(nonce: string): "pending" | "confirmed" | undefined {
+    const attempt = this.current(nonce);
+    return attempt ? (attempt.confirmed ? "confirmed" : "pending") : undefined;
+  }
+
+  clear(nonce: string): void {
+    this.attempts.delete(nonce);
+  }
+
+  private current(nonce: string): { confirmed: boolean; expiresAt: number } | undefined {
+    const attempt = this.attempts.get(nonce);
+    if (!attempt) return undefined;
+    if (attempt.expiresAt <= Date.now()) {
+      this.attempts.delete(nonce);
+      return undefined;
+    }
+    return attempt;
   }
 }
 
@@ -58,9 +95,13 @@ export function gatewayAutoWakeEnabled(
   return env.PI_LLM_GATEWAY_AUTO_WAKE?.trim().toLowerCase() === "true";
 }
 
-export function buildGatewayWakeUrl(nonce: string, env: NodeJS.ProcessEnv = process.env): string {
+export function buildGatewayWakeUrl(nonce: string, env: NodeJS.ProcessEnv = process.env, apiPort?: number): string {
   if (!/^[0-9a-f]{32}$/u.test(nonce)) throw new Error("Wake nonce must be 16 random bytes encoded as lowercase hex");
-  return `https://chatgpt.com/?q=${encodeURIComponent(gatewayWakeText(env))}&pilink_wake=${nonce}`;
+  if (apiPort !== undefined && (!Number.isSafeInteger(apiPort) || apiPort < 1 || apiPort > 65535)) {
+    throw new Error("Gateway wake API port must be from 1 through 65535");
+  }
+  const port = apiPort === undefined ? "" : `&pilink_port=${apiPort}`;
+  return `https://chatgpt.com/?q=${encodeURIComponent(gatewayWakeText(env))}&pilink_wake=${nonce}${port}`;
 }
 
 export function shouldAutoWakeGateway(status: GatewayStatusSnapshot, previouslyActive = false): boolean {
@@ -103,7 +144,7 @@ export function startGatewayAutoWakeSupervisor(
     : undefined;
 
   const getDriver = (): Promise<GatewayWakeDriver> => {
-    driverPromise ??= prepareBrowserWakeDriver(env);
+    driverPromise ??= prepareBrowserWakeDriver(env, options.apiPort);
     return driverPromise;
   };
 
@@ -149,15 +190,20 @@ export function startGatewayAutoWakeSupervisor(
         ? "the previous ChatGPT worker disconnected; opening a new wake tab in the default browser."
         : "queued work needs a ChatGPT worker; opening a new wake tab in the default browser.");
       const driver = await getDriver();
-      await driver.wake();
+      const nonce = randomBytes(16).toString("hex");
+      options.wakeConfirmations?.register(nonce);
+      await driver.wake(nonce);
       log("wake URL opened; waiting for the installed Chrome/Brave extension and gateway worker contact.");
       const outcome = await waitForWakeOutcome(options.store, confirmationMs, reconnectOnly, rechecked.last_exchange_at);
       if (outcome === "confirmed") {
+        options.wakeConfirmations?.confirm(nonce);
         failedCycles = 0;
         log("worker contact confirmed by the gateway.");
       } else if (outcome === "not_needed") {
+        options.wakeConfirmations?.clear(nonce);
         failedCycles = 0;
       } else {
+        options.wakeConfirmations?.clear(nonce);
         failedCycles += 1;
         log("no worker contact after one bounded attempt; check the browser extension and wake manually if needed.");
       }
@@ -201,7 +247,7 @@ async function waitForWakeOutcome(
   }
 }
 
-async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv): Promise<GatewayWakeDriver> {
+async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv, apiPort?: number): Promise<GatewayWakeDriver> {
   const [xdgOpen, xdgSettings, brave] = await Promise.all([
     resolveExecutable("xdg-open", env),
     resolveExecutable("xdg-settings", env),
@@ -219,10 +265,11 @@ async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv): Promise<Gateway
   }
 
   return {
-    async wake(): Promise<void> {
+    async wake(nonce?: string): Promise<void> {
       // A fresh nonce is used for each attempt, and the extension uses
       // sessionStorage to suppress duplicate sends from refresh/re-navigation.
-      const url = buildGatewayWakeUrl(randomBytes(16).toString("hex"), env);
+      const wakeNonce = nonce ?? randomBytes(16).toString("hex");
+      const url = buildGatewayWakeUrl(wakeNonce, env, apiPort);
       if (useBrave && brave) {
         const focusGuard = await prepareKwinWakeFocusGuard(env);
         try {

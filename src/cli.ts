@@ -142,7 +142,7 @@ if (command !== "gateway") {
             if (await waitForGatewayChatGptConnection()) {
               writeGatewayCompactLine("\nStep 1 complete: ChatGPT connected. Step 2: set up browser auto-wake.");
               const { runGatewayBrowserSetup } = await import("./llm-gateway-browser-setup.js");
-              await runGatewayBrowserSetup(false);
+              await runGatewayBrowserSetup(false, { startedForSetup: true });
             } else {
               writeGatewayCompactLine("ChatGPT did not finish connecting in 5 minutes. Browser wake setup was not started. Complete or retry the ChatGPT connection first ('pilink gateway connect'), then run 'pilink gateway browser-extension'. If ChatGPT showed access_denied, remove that failed connection and create it again; check this terminal for the OAuth approval request.");
             }
