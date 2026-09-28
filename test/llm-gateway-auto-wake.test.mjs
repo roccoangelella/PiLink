@@ -18,6 +18,15 @@ function status(overrides = {}) {
   };
 }
 
+async function eventually(predicate, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail("auto-wake condition was not met before the deadline");
+}
+
 test("auto-wake is opt-in and restricted to graphical Linux CLI endpoint launches", () => {
   const base = { PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" };
   assert.equal(gatewayAutoWakeEnabled({ ...base, WAYLAND_DISPLAY: "wayland-0" }, "linux"), true);
@@ -45,6 +54,18 @@ test("wake needs queued work or a previously active worker and explicit wake_wor
   assert.equal(shouldAutoWakeGateway(status({ worker_polling: true })), false);
   assert.equal(shouldAutoWakeGateway(status({ processing_claim: true })), false);
   assert.equal(shouldAutoWakeGateway(status({ state: "released", next_action: "none" })), false);
+});
+
+test("queued work can wake before the 120s contact staleness deadline when the worker stopped polling", () => {
+  const lastExchange = new Date(Date.now() - 10_000).toISOString();
+  const idle = status({ state: "active", worker_contact: "recent", next_action: "poll",
+    last_exchange_at: lastExchange, oldest_queue_age_ms: 6_000 });
+  assert.equal(shouldAutoWakeGateway(idle), true);
+  assert.equal(shouldAutoWakeGateway({ ...idle, oldest_queue_age_ms: 1_000 }), false);
+  assert.equal(shouldAutoWakeGateway({ ...idle, last_exchange_at: new Date().toISOString() }), false);
+  assert.equal(shouldAutoWakeGateway({ ...idle, worker_polling: true, next_action: "wait_for_worker" }), false);
+  assert.equal(shouldAutoWakeGateway({ ...idle, processing_claim: true, next_action: "wait_for_worker" }), false);
+  assert.equal(shouldAutoWakeGateway({ ...idle, queued: 0 }), false);
 });
 
 test("browser driver opens a nonce-tagged URL in Brave or the default browser, never a keyboard daemon", async () => {
@@ -90,6 +111,91 @@ test("browser driver opens a nonce-tagged URL in Brave or the default browser, n
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed idle wake cannot suppress a later queued request after ChatGPT sleeps", async () => {
+  const lastExchange = new Date(Date.now() - 10_000).toISOString();
+  let state = status({ queued: 0, state: "active", next_action: "poll",
+    worker_contact: "recent", last_exchange_at: lastExchange });
+  let opens = 0;
+  let polls = 0;
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => { polls++; return state; } },
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "linux", driver: { wake: async () => { opens++; } }, pollIntervalMs: 5,
+    suspendedPollMs: 5, wakeGraceMs: 0, confirmationMs: 30, log: () => {},
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => polls > 0); // observe the initial active worker
+    assert.equal(opens, 0);
+    state = status({ queued: 0, worker_contact: "stale", last_exchange_at: lastExchange });
+    await eventually(() => opens === 1);
+    await new Promise((resolve) => setTimeout(resolve, 70)); // first wake failed and is paused
+    assert.equal(opens, 1);
+    state = { ...state, queued: 1, oldest_queue_age_ms: 10_000 };
+    await eventually(() => opens === 2);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    assert.equal(opens, 2); // no tab storm for the same queued condition
+  } finally {
+    supervisor.close();
+  }
+});
+
+test("a temporary suppression does not retry a failed wake for the same stranded queue", async () => {
+  let state = status();
+  let opens = 0;
+  let polls = 0;
+  const logs = [];
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => { polls++; return state; } },
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true",
+      PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "linux", driver: { wake: async () => { opens++; } },
+    pollIntervalMs: 5, suspendedPollMs: 5, wakeGraceMs: 0, confirmationMs: 30,
+    log: (line) => logs.push(line),
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => logs.some((line) => /no worker contact/.test(line)));
+    assert.equal(opens, 1);
+    state = status({ worker_polling: true, next_action: "wait_for_worker" });
+    const before = polls;
+    await eventually(() => polls > before + 1);
+    state = status(); // Same queue, no new exchange; do not grant another attempt.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(opens, 1);
+    state = status({ state: "active", worker_contact: "recent", next_action: "poll",
+      last_exchange_at: new Date(Date.now() - 10_000).toISOString(), oldest_queue_age_ms: 10_000 });
+    await eventually(() => opens === 2); // A genuinely new exchange is eligible.
+  } finally {
+    supervisor.close();
+  }
+});
+
+test("recent-but-idle worker wakes a waiting request and confirms only new contact", async () => {
+  let state = status({ state: "active", worker_contact: "recent", next_action: "poll",
+    last_exchange_at: new Date(Date.now() - 10_000).toISOString(), oldest_queue_age_ms: 6_000 });
+  let opens = 0;
+  const logs = [];
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => state },
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "linux", driver: { wake: async () => { opens++; } }, pollIntervalMs: 5,
+    wakeGraceMs: 0, confirmationMs: 100, log: (line) => logs.push(line),
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => opens === 1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(logs.some((line) => /worker contact confirmed/.test(line)), false);
+    state = { ...state, last_exchange_at: new Date().toISOString(),
+      worker_polling: true, next_action: "wait_for_worker" };
+    await eventually(() => logs.some((line) => /worker contact confirmed/.test(line)));
+    assert.equal(opens, 1);
+  } finally {
+    supervisor.close();
   }
 });
 

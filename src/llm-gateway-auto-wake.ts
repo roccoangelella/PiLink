@@ -11,6 +11,9 @@ const AUTO_WAKE_POLL_MS = 750;
 const AUTO_WAKE_GRACE_MS = 500;
 const AUTO_WAKE_CONFIRM_MS = 30_000;
 const AUTO_WAKE_SUSPENDED_POLL_MS = 5_000;
+// A queue normally expires after 60s, but worker contact remains "recent" for
+// 120s. Do not wait for that stale threshold when no worker is polling.
+const AUTO_WAKE_QUEUED_IDLE_MS = 5_000;
 const AUTO_WAKE_MAX_FAILED_CYCLES = 1;
 
 type WakeOutcome = "confirmed" | "not_needed" | "pending";
@@ -29,6 +32,7 @@ export interface GatewayAutoWakeSupervisorOptions {
   platform?: NodeJS.Platform;
   driver?: GatewayWakeDriver;
   pollIntervalMs?: number;
+  suspendedPollMs?: number;
   wakeGraceMs?: number;
   confirmationMs?: number;
   maxFailedCycles?: number;
@@ -60,11 +64,17 @@ export function buildGatewayWakeUrl(nonce: string, env: NodeJS.ProcessEnv = proc
 }
 
 export function shouldAutoWakeGateway(status: GatewayStatusSnapshot, previouslyActive = false): boolean {
-  return status.state !== "released" &&
-    (status.queued > 0 || previouslyActive) &&
-    status.next_action === "wake_worker" &&
-    !status.worker_polling &&
-    !status.processing_claim;
+  if (status.state === "released" || (status.queued === 0 && !previouslyActive) ||
+    status.worker_polling || status.processing_claim) return false;
+  if (status.next_action === "wake_worker") return true;
+  // "recent" contact alone does not mean a conversation is still polling.
+  // Give an active worker a short window to pick up new work before opening a
+  // browser tab; never interrupt a live poll or a claimed request.
+  const lastExchangeMs = Date.parse(status.last_exchange_at ?? "");
+  return status.queued > 0 && status.next_action === "poll" &&
+    status.worker_contact === "recent" &&
+    status.oldest_queue_age_ms >= AUTO_WAKE_QUEUED_IDLE_MS &&
+    Number.isFinite(lastExchangeMs) && Date.now() - lastExchangeMs >= AUTO_WAKE_QUEUED_IDLE_MS;
 }
 
 export function startGatewayAutoWakeSupervisor(
@@ -75,6 +85,7 @@ export function startGatewayAutoWakeSupervisor(
   if (!gatewayAutoWakeEnabled(env, platform)) return undefined;
 
   const pollIntervalMs = positiveDelay(options.pollIntervalMs, AUTO_WAKE_POLL_MS);
+  const suspendedPollMs = positiveDelay(options.suspendedPollMs, AUTO_WAKE_SUSPENDED_POLL_MS);
   const wakeGraceMs = nonNegativeDelay(options.wakeGraceMs, AUTO_WAKE_GRACE_MS);
   const confirmationMs = positiveDelay(options.confirmationMs, AUTO_WAKE_CONFIRM_MS);
   const maxFailedCycles = positiveInteger(options.maxFailedCycles, AUTO_WAKE_MAX_FAILED_CYCLES);
@@ -85,6 +96,8 @@ export function startGatewayAutoWakeSupervisor(
   let running = false;
   let failedCycles = 0;
   let hasSeenWorker = false;
+  let lastObservedExchange: string | undefined;
+  let hadQueuedWork = false;
   let driverPromise: Promise<GatewayWakeDriver> | undefined = options.driver
     ? Promise.resolve(options.driver)
     : undefined;
@@ -94,9 +107,23 @@ export function startGatewayAutoWakeSupervisor(
     return driverPromise;
   };
 
+  const observe = (status: GatewayStatusSnapshot): void => {
+    if (status.state === "active" || status.worker_polling || status.worker_contact === "recent") hasSeenWorker = true;
+    // A fresh exchange or a new queue episode is a new reason to try. A failed
+    // idle reconnect must not suppress the next user's request, but the same
+    // stranded request must not open an unbounded stream of browser tabs.
+    if (status.last_exchange_at && status.last_exchange_at !== lastObservedExchange) {
+      lastObservedExchange = status.last_exchange_at;
+      failedCycles = 0;
+    }
+    const hasQueuedWork = status.queued > 0;
+    if (hasQueuedWork && !hadQueuedWork) failedCycles = 0;
+    hadQueuedWork = hasQueuedWork;
+  };
+
   const schedule = (): void => {
     if (stopped) return;
-    const delay = failedCycles >= maxFailedCycles ? AUTO_WAKE_SUSPENDED_POLL_MS : pollIntervalMs;
+    const delay = failedCycles >= maxFailedCycles ? suspendedPollMs : pollIntervalMs;
     timer = setTimeout(() => { void tick(); }, delay);
     timer.unref();
   };
@@ -107,19 +134,15 @@ export function startGatewayAutoWakeSupervisor(
     running = true;
     try {
       const status = await options.store.status();
-      if (status.state === "active" || status.worker_polling || status.worker_contact === "recent") hasSeenWorker = true;
-      if (!shouldAutoWakeGateway(status, hasSeenWorker)) {
-        failedCycles = 0;
-        return;
-      }
+      observe(status);
+      // A temporary non-wakeable snapshot is not a new attempt budget. Only a
+      // fresh exchange or a new queue episode (observe) can lift a failed wake.
+      if (!shouldAutoWakeGateway(status, hasSeenWorker)) return;
       if (failedCycles >= maxFailedCycles) return;
       if (wakeGraceMs > 0) await sleep(wakeGraceMs);
       const rechecked = await options.store.status();
-      if (rechecked.state === "active" || rechecked.worker_polling || rechecked.worker_contact === "recent") hasSeenWorker = true;
-      if (!shouldAutoWakeGateway(rechecked, hasSeenWorker)) {
-        failedCycles = 0;
-        return;
-      }
+      observe(rechecked);
+      if (!shouldAutoWakeGateway(rechecked, hasSeenWorker)) return;
 
       const reconnectOnly = rechecked.queued === 0 && hasSeenWorker;
       log(reconnectOnly
@@ -128,7 +151,7 @@ export function startGatewayAutoWakeSupervisor(
       const driver = await getDriver();
       await driver.wake();
       log("wake URL opened; waiting for the installed Chrome/Brave extension and gateway worker contact.");
-      const outcome = await waitForWakeOutcome(options.store, confirmationMs, reconnectOnly);
+      const outcome = await waitForWakeOutcome(options.store, confirmationMs, reconnectOnly, rechecked.last_exchange_at);
       if (outcome === "confirmed") {
         failedCycles = 0;
         log("worker contact confirmed by the gateway.");
@@ -162,13 +185,17 @@ async function waitForWakeOutcome(
   store: Pick<LlmGatewayJobStore, "status">,
   timeoutMs: number,
   reconnectOnly: boolean,
+  previousExchangeAt: string | undefined,
 ): Promise<WakeOutcome> {
   const deadline = Date.now() + timeoutMs;
   while (true) {
     const status = await store.status();
     if (status.state === "released") return "not_needed";
+    // A change in next_action alone is not proof that the browser wake
+    // reached ChatGPT. Confirm only a new gateway exchange from the worker.
+    if (status.last_exchange_at && status.last_exchange_at !== previousExchangeAt &&
+      status.worker_contact === "recent") return "confirmed";
     if (!reconnectOnly && status.queued === 0) return "not_needed";
-    if (!shouldAutoWakeGateway(status, reconnectOnly)) return "confirmed";
     if (Date.now() >= deadline) return "pending";
     await sleep(Math.min(250, Math.max(1, deadline - Date.now())));
   }

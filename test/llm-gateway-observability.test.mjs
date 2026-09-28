@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
+import { shouldAutoWakeGateway, startGatewayAutoWakeSupervisor } from "../dist/llm-gateway-auto-wake.js";
 
 async function fixture(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-llm-gateway-observability-"));
@@ -81,6 +82,42 @@ test("status separates an active wait, an unconfirmed claim, and the idle gap", 
   assert.equal((await completion).state, "idle");
   await eventuallyStatus(store, (status) => status.pending_worker_polls === 0);
   await store.release("test cleanup");
+});
+
+test("a real queued store wakes before recent contact expires when the worker stopped polling", async (t) => {
+  const initial = Date.now() - 10_000;
+  let clock = initial;
+  const store = await fixture(t, { now: () => new Date(clock), staleAfterSeconds: 120 });
+  // A real exchange establishes an active session, then the worker stops.
+  assert.equal((await store.exchange("sleeping-worker", undefined, 1)).state, "idle");
+  clock = initial + 4_000;
+  await store.enqueueRequest(request("wake again"));
+  clock = initial + 10_000;
+  const snapshot = await store.status();
+  assert.equal(snapshot.state, "active");
+  assert.equal(snapshot.worker_contact, "recent");
+  assert.equal(snapshot.next_action, "poll");
+  assert.equal(snapshot.worker_polling, false);
+  assert.equal(snapshot.oldest_queue_age_ms, 6_000);
+  assert.equal(shouldAutoWakeGateway(snapshot), true);
+
+  let opens = 0;
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store,
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true",
+      PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "linux", driver: { wake: async () => { opens++; } },
+    pollIntervalMs: 5, wakeGraceMs: 0, confirmationMs: 40, log: () => {},
+  });
+  assert.ok(supervisor);
+  try {
+    const deadline = Date.now() + 500;
+    while (!opens && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(opens, 1);
+  } finally {
+    supervisor.close();
+    await store.release("test cleanup");
+  }
 });
 
 test("concurrent polls are counted independently and leave no poller behind", async (t) => {

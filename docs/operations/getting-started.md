@@ -6,7 +6,7 @@ PiLink lets one or more independently authorized remote MCP agents use coding to
 
 You need:
 
-- Node.js **22.19 or newer** (`node --version`) on Linux, macOS, or Windows
+- Node.js **24.18.0 exactly** (`node --version`) on Linux, macOS, or Windows
 - a ChatGPT plan/UI that supports remote MCP servers and custom OAuth settings
 - this repository cloned locally
 
