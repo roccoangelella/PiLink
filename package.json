@@ -86,8 +86,8 @@
   },
   "dependencies": {
     "@achingbrain/nat-port-mapper": "^4.0.5",
-    "@earendil-works/pi-coding-agent": "^0.80.3",
-    "@modelcontextprotocol/sdk": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "bcryptjs": "^2.4.3",
     "default-gateway": "^7.2.2",
     "dotenv": "^16.4.7",
@@ -103,11 +103,11 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^24.0.0",
     "@types/uuid": "^10.0.0",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "^1.138.0",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "sharp": "^0.35.3",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "yauzl": "3.4.0"
   }
