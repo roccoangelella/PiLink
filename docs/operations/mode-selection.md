@@ -28,17 +28,18 @@ PiLink for VS Code is installed or updated separately with `pilink install-vscod
 
 ## VS Code control-surface behavior
 
-A fresh VSPiLink installation uses **Single agent**. More strongly, the current
-graphical setup and endpoint-reconfiguration paths always write
+A fresh PiLink for VS Code installation uses **Single agent**. More strongly, the
+current graphical setup and endpoint-reconfiguration paths always write
 `PI_RUNTIME_MODE=single` and Project-folder access.
 
 The user therefore does not choose a runtime mode in the normal VS Code product.
-The first-run choices are endpoint choices only:
+The first-run actions are endpoint choices only:
 
-- stable Cloudflare fixed domain;
-- existing HTTPS domain;
-- temporary Quick Tunnel;
-- local only.
+- **Set up stable endpoint** — choose a Cloudflare fixed domain you control with
+  the required scoped token, or an existing HTTPS origin/reverse proxy you
+  operate;
+- **Temporary quick start** — a temporary Quick Tunnel for evaluation;
+- **Local only** — same-machine clients only.
 
 The launcher does not offer an **Enable collaboration** action. If it detects an
 existing configuration already set to `collaboration`, it labels that as an

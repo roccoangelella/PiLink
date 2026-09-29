@@ -20,11 +20,10 @@ valid, and an OAuth client does not prove an MCP transport is active.
 That is intentional. The current PiLink VS Code extension is a bridge launcher
 and status panel, not a second chat/agent product.
 
-The ordinary first-run UI contains **Quick start for ChatGPT**, **Local only**,
-and a secondary **Advanced setup...** compatibility entry. Local provider chat,
-native VS Code MCP controls, manual OAuth registration, collaboration
-management, and Full-access launch are no longer promoted as parallel dashboard
-features.
+The ordinary first-run UI contains **Set up stable endpoint**, **Temporary quick
+start**, and **Local only**. Local provider chat, native VS Code MCP controls,
+manual OAuth registration, collaboration management, and Full-access launch are
+not parallel dashboard features.
 
 Older screenshots or documentation may show those controls. Use the current
 button names and [VS Code extension guide](VSCODE_EXTENSION.md).
@@ -91,8 +90,9 @@ Validate instead:
 
 Temporary `trycloudflare.com` or `nip.io` addresses shown by old setup/test
 flows may already be dead. Use the endpoint currently shown by the active
-configuration. Quick start is intentionally temporary; use **Advanced setup...**
-for a durable Named Tunnel/fixed domain or existing HTTPS origin.
+configuration. **Temporary quick start** is intentionally temporary; use **Set
+up stable endpoint** for a durable fixed domain or existing HTTPS origin you
+control.
 
 ## VS Code warns before opening several external links
 
@@ -146,16 +146,13 @@ create a transport only when it actually invokes a PiLink tool.
 Do not register another OAuth client just to turn the status from OAuth ready
 to Connected.
 
-## ChatGPT is working but Recent activity is empty
+## ChatGPT is working but I cannot see tool-by-tool activity
 
-The launcher is deliberately not a transcript viewer. The activity section is
-shown only when the current administrative projection supplies bounded MCP audit
-metadata.
-
-In Single-agent mode the collaboration-specific admin projection is disabled,
-so the activity section may legitimately be absent even while ordinary MCP
-operations work. Use the server/endpoint/ChatGPT state as the primary health
-signals and verify a simple read-only MCP call from the client.
+That is expected. The launcher is a status surface, not a transcript, task, or
+tool-activity viewer. Use the **Server**, **Endpoint**, and **ChatGPT** states as
+the primary health signals and verify a simple read-only MCP call from the
+client. Use operator logs or administrative diagnostics only when deeper
+troubleshooting is needed.
 
 ## Collaboration tools are missing
 
@@ -176,7 +173,7 @@ Use the CLI explicitly:
 pilink start --mode collaboration
 ```
 
-or choose option 3 (**Agents chat**) from the interactive launcher. A mode
+or choose option 2 (**Agents chat**) from the interactive launcher. A mode
 change takes effect after restart and
 existing MCP sessions must reconnect to obtain the new tool catalog. Do not
 enable Full access to repair a mode mismatch. See
@@ -228,10 +225,10 @@ showing the ordinary Start PiLink action.
 - Prefer **Reconfigure safely...** to return to Project-folder access.
 - If Full access is currently running, **Stop PiLink** is the primary action.
 - Deliberate unrestricted operation should use the PiLink CLI and its explicit
-  Full-access controls, or the retained Advanced setup compatibility flow after
-  reviewing its warning.
+  Full-access controls or other documented operator compatibility paths after
+  reviewing their warnings.
 
-Quick start and Local only never request Full access.
+**Temporary quick start** and **Local only** never request Full access.
 
 ## Node version mismatch
 

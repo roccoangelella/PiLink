@@ -147,7 +147,7 @@ if (command !== "gateway") {
               writeGatewayCompactLine("ChatGPT did not finish connecting in 5 minutes. Browser wake setup was not started. Complete or retry the ChatGPT connection first ('pilink gateway connect'), then run 'pilink gateway browser-extension'. If ChatGPT showed access_denied, remove that failed connection and create it again; check this terminal for the OAuth approval request.");
             }
           } else {
-            writeGatewayCompactLine("After ChatGPT connects, run 'pilink gateway browser-extension' to set up browser auto-wake. The browser must approve Load unpacked once; no yes is required when PiLink can detect it.");
+            writeGatewayCompactLine("After ChatGPT connects, run 'pilink gateway browser-extension' to set up browser auto-wake. Approve Load unpacked once. Linux may enable wake after detecting the approved extension; Windows requires explicit confirmation in the browser profile opened by normal default-HTTPS links.");
           }
         } else {
           process.exitCode = process.exitCode || 1;

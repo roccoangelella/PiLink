@@ -172,14 +172,14 @@ function printUsage(): void {
   console.error("  pilink start --mode single                Single agent: project-scoped MCP tools");
   console.error("  pilink start --mode collaboration         Agents chat: shared coordination and supervised agents");
   console.error("  pilink start --mode cli                   ChatGPT model gateway: local OpenAI-compatible provider");
-  console.error("  pilink agents                             Agents chat in full unsafe mode (shortcut for --mode collaboration --allow-unsafe-full-access)");
-  console.error("  pilink single-agents                      Single agent in full unsafe mode (shortcut for --mode single --allow-unsafe-full-access)");
+  console.error("  pilink agents                             Compatibility shortcut: Agents chat + Full machine access");
+  console.error("  pilink single-agents                      Compatibility shortcut: Single agent + Full machine access");
   console.error("");
   console.error("Start only the configured local server (no managed public-hosting wizard):");
   console.error("  pilink serve --mode <single|collaboration|cli>");
   console.error("");
   console.error("Launch options:");
-  console.error("  --allow-unsafe-full-access                Allow unrestricted machine access only for selected OAuth clients");
+  console.error("  --allow-unsafe-full-access                Allow unrestricted machine access; review PI_FULL_ACCESS_CLIENT_IDS");
   console.error("  --setup                                   Re-run setup before 'start'");
   console.error("");
   console.error("Other commands:");

@@ -126,7 +126,7 @@ test("headless gateway serve shows connection first and postpones browser wake",
   });
   assert.match(output, /Step 1: connect ChatGPT/);
   assert.match(output, /Name\s+My Coding Connector/);
-  assert.match(output, /no yes is required when PiLink can detect it/);
+  assert.match(output, /Windows requires explicit confirmation/);
   assert.doesNotMatch(output, /After loading PiLink Wake in your browser/);
   await assert.rejects(fs.stat(path.join(root, "user-data", "pilink", "browser-extension")), { code: "ENOENT" });
 });

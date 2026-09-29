@@ -63,6 +63,8 @@ For ordinary use, prefer `pilink start` or `npm run cli -- start`.
 
 ## Install PiLink for VS Code from the CLI
 
+This path requires a working `code` command for the VS Code profile you want to update. If a matching local release VSIX is not available, it also needs access to the matching GitHub release VSIX and `SHA256SUMS`.
+
 Run:
 
 ```bash
@@ -77,10 +79,10 @@ release, verifies the SHA-256, installs the extension, and verifies the installe
 version. It then exits without starting PiLink or opening a workspace.
 
 After installation, open or reload VS Code and use the PiLink Activity Bar view
-or the **PiLink: Start PiLink**, **PiLink: Stop PiLink**, and **PiLink: Restart
-PiLink** commands for normal session lifecycle control. The CLI is not required
-for each VS Code session. For an offline/reviewed local build,
-`PI_VSCODE_VSIX_PATH` may point to a trusted local VSIX.
+for normal session lifecycle control. **Start PiLink** and restart are dashboard
+operations rather than Command Palette entries. The CLI is not required for each
+VS Code session. For an offline/reviewed local build, `PI_VSCODE_VSIX_PATH` may
+point to a trusted local VSIX.
 
 ## Recommended VS Code release install
 
@@ -167,8 +169,9 @@ should be reached.
 2. Review VS Code Workspace Trust.
 3. Open **PiLink**.
 4. Choose one endpoint path:
-   - **Set up stable endpoint** — recommended for ChatGPT; choose a Cloudflare
-     fixed domain or an existing HTTPS domain/reverse proxy;
+   - **Set up stable endpoint** — recommended for ChatGPT; use a Cloudflare
+     fixed domain you control with the required scoped token, or an existing
+     HTTPS domain/reverse proxy you operate;
    - **Temporary quick start** — Cloudflare Quick Tunnel for evaluation;
    - **Local only** — no public endpoint.
 5. Every graphical setup writes **Single agent** and **Project-folder** access.
