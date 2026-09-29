@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
+  <title id="title">Read-only first task through PiLink</title>
+  <desc id="desc">A conceptual flow where a read-only request from ChatGPT Work passes through PiLink to the selected project boundary and returns project identity and inspection results without modifying files.</desc>
+  <rect width="1200" height="540" rx="28" fill="#0B1F33"/>
+  <text x="64" y="70" fill="#F5F7FB" font-family="system-ui,sans-serif" font-size="30" font-weight="700">4 · Verify the project before allowing writes</text>
+  <g font-family="system-ui,sans-serif">
+    <rect x="64" y="142" width="300" height="230" rx="24" fill="#132C46" stroke="#9AA7FF" stroke-width="3"/>
+    <text x="214" y="200" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">ChatGPT Work</text>
+    <text x="214" y="246" text-anchor="middle" fill="#F5F7FB" font-size="23" font-weight="700">Read-only request</text>
+    <text x="214" y="286" text-anchor="middle" fill="#C7D2E1" font-size="17">Project root · Git status</text>
+    <text x="214" y="318" text-anchor="middle" fill="#C7D2E1" font-size="17">Scripts · proposed tests</text>
+
+    <path d="M390 257 H478" stroke="#2BC7B8" stroke-width="8" stroke-linecap="round"/>
+    <path d="M462 239 L486 257 L462 275" fill="none" stroke="#2BC7B8" stroke-width="8" stroke-linejoin="round"/>
+
+    <rect x="510" y="142" width="200" height="230" rx="24" fill="#132C46" stroke="#2BC7B8" stroke-width="3"/>
+    <text x="610" y="214" text-anchor="middle" fill="#2BC7B8" font-size="20" font-weight="700">PiLink</text>
+    <text x="610" y="256" text-anchor="middle" fill="#F5F7FB" font-size="22" font-weight="700">Project boundary</text>
+    <text x="610" y="296" text-anchor="middle" fill="#C7D2E1" font-size="17">No write requested</text>
+
+    <path d="M736 257 H824" stroke="#9AA7FF" stroke-width="8" stroke-linecap="round"/>
+    <path d="M808 239 L832 257 L808 275" fill="none" stroke="#9AA7FF" stroke-width="8" stroke-linejoin="round"/>
+
+    <rect x="856" y="142" width="280" height="230" rx="24" fill="#132C46" stroke="#9AA7FF" stroke-width="3"/>
+    <text x="996" y="202" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">Selected project</text>
+    <text x="996" y="246" text-anchor="middle" fill="#F5F7FB" font-size="23" font-weight="700">Inspect only</text>
+    <text x="996" y="288" text-anchor="middle" fill="#C7D2E1" font-size="17">Confirm identity and state</text>
+    <text x="996" y="320" text-anchor="middle" fill="#C7D2E1" font-size="17">before broader authorization</text>
+  </g>
+  <path d="M856 412 H364" stroke="#2BC7B8" stroke-width="4" stroke-dasharray="10 10"/>
+  <path d="M380 396 L356 412 L380 428" fill="none" stroke="#2BC7B8" stroke-width="5" stroke-linejoin="round"/>
+  <text x="610" y="456" text-anchor="middle" fill="#C7D2E1" font-family="system-ui,sans-serif" font-size="18">Return inspection results; keep writes out of the first task.</text>
+</svg>

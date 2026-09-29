@@ -1,45 +1,37 @@
 # PiLink for VS Code
 
-The PiLink VS Code extension is a graphical launcher and status panel for the
-PiLink MCP bridge. The server, CLI, OAuth implementation, and MCP tools remain
-in the core PiLink project.
+The VS Code extension is the launcher/status surface for the core PiLink MCP bridge. The server, CLI, OAuth implementation, and MCP tools remain in the core project.
 
-Its job is intentionally narrow:
+For user onboarding, use [Getting started](../../docs/GETTING_STARTED.md). This README is the package-level reference.
 
-> choose the project, start PiLink safely, expose the MCP endpoint, connect
-> ChatGPT, and show whether the bridge is working.
+## Normal flow
 
-It is not a second chat application, agent dashboard, or alternative PiLink
-runtime.
+1. Install a supported VS Code build and the supported PiLink sidecar/runtime.
+2. Open and trust the project PiLink may access.
+3. Open **PiLink** from the Activity Bar.
+4. Choose:
+   - **Set up stable endpoint** for a durable remote HTTPS origin;
+   - **Temporary quick start** for a temporary Quick Tunnel evaluation;
+   - **Local only** for same-machine clients.
+5. For a public endpoint, use **Connect ChatGPT**.
+6. Complete local owner verification, then OAuth for the private PiLink plugin.
+7. Start with a read-only task in ChatGPT Work.
 
-```text
-ChatGPT Work -> PiLink plugin -> HTTPS OAuth/MCP -> PiLink -> project folder
-                                            ^
-                                            |
-                                  VS Code manages this side
-```
+A stable remote endpoint requires either a Cloudflare fixed domain you control with the required scoped token, or an existing HTTPS domain/reverse proxy you operate. A Quick Tunnel can change URL when recreated. **Local only** is not reachable by remote ChatGPT Work.
 
-## First run
+The ChatGPT account/workspace must permit creation, import, or installation of the private PiLink plugin. PiLink cannot grant that entitlement.
 
-1. Open the project folder in VS Code and trust it.
-2. Open **PiLink** from the Activity Bar.
-3. Choose the endpoint you actually want:
-   - **Set up stable endpoint** — recommended for ChatGPT; use a Cloudflare
-     fixed domain or an existing HTTPS reverse proxy;
-   - **Temporary quick start** — use a Cloudflare Quick Tunnel for evaluation;
-   - **Local only** — keep the bridge on this machine.
-4. Every graphical setup forces **Single agent** and **Project-folder** access.
-5. When a public endpoint is ready, select **Connect ChatGPT**.
-6. Complete OAuth once, then do the actual work in ChatGPT Work.
+## Graphical safety policy
 
-The stable endpoint is primary because a Quick Tunnel receives a new URL when it
-is recreated. Reconfiguration uses the same safe graphical policy; it does not
-surface collaboration or Full-access choices.
+Every normal graphical setup/reconfiguration uses:
 
-## What the screen shows
+- `PI_RUNTIME_MODE=single`;
+- Project-folder access / `PI_UNSAFE_FULL_ACCESS=false`;
+- paired OAuth consent.
 
-The large card is state-driven and presents the next ordinary action rather
-than every capability PiLink supports.
+The launcher does not expose Full-access launch, collaboration enablement, provider/model setup, native VS Code MCP setup, or manual OAuth-client registration as ordinary graphical paths.
+
+## Main launcher states
 
 | State | Main action |
 | --- | --- |
@@ -49,85 +41,31 @@ than every capability PiLink supports.
 | Local bridge only | **Configure remote endpoint** |
 | Public endpoint ready | **Connect ChatGPT** |
 | OAuth unfinished | **Continue connection** |
-| OAuth ready | **Open ChatGPT Work** |
+| OAuth stored | **Open ChatGPT Work** |
 | Active MCP session | **Open ChatGPT Work** |
 
-Three compact facts remain visible: **Server**, **Endpoint**, and **ChatGPT**.
-This separates “the process is running,” “the endpoint is reachable,” and
-“ChatGPT is authorized/connected.”
+The status area keeps **Server**, **Endpoint**, and **ChatGPT** separate.
 
-`OAuth ready` does not mean a network connection must remain open. ChatGPT can
-create an MCP session when it actually invokes PiLink tools.
+**OAuth ready** means authorization is stored. It does not mean a live MCP session exists. A session becomes active when ChatGPT Work invokes PiLink.
 
-There is deliberately no transcript, task board, activity feed, agent list, or
-provider console in this extension. Those surfaces made the launcher look like a
-second product and obscured the only question the UI needs to answer: **is the
-MCP bridge ready, and what should I do next?**
-
-## Details & recovery
-
-The collapsed **Details & recovery** section contains bridge operations useful
-for inspection or repair:
-
-- restart or stop PiLink;
-- **Reconfigure endpoint...**;
-- copy the MCP URL;
-- open the private PiLink configuration;
-- show the PiLink terminal;
-- open the guide.
-
-The reconfiguration flow supports the safe graphical hosting options — stable
-Cloudflare fixed domain, existing HTTPS domain, Quick Tunnel, or local-only —
-and always writes the Single-agent/Project-folder policy.
-
-Local model-provider chat, native VS Code MCP, manual OAuth clients,
-collaboration enablement, legacy managed Named-Tunnel services, and Full-access
-launch are intentionally outside the ordinary graphical product. Use the core
-PiLink CLI/operator paths when those specialist capabilities are actually
-needed.
-
-## Existing advanced configurations
-
-The extension does not silently reinterpret an old configuration.
-
-If a project is already configured for **Collaboration**, the dashboard labels
-that advanced state and offers **Switch to single-agent**.
-
-If **Full access** is already configured, the dashboard shows a safety state
-instead of an ordinary Start button. It will not start or restart that saved
-configuration from the normal graphical workflow. **Reconfigure safely...**
-returns it to Single-agent, Project-folder access. Deliberate unrestricted
-operation belongs to the PiLink CLI/operator workflow.
-
-Legacy managed Named-Tunnel services are also not started by the simplified
-launcher; reconfigure them into one of the supported graphical endpoint types or
-manage them from the CLI/service manager.
+The dashboard has no transcript, task board, agent list, or activity feed.
 
 ## Install
 
-If PiLink's CLI is already installed, install or update the extension with:
+If the PiLink CLI is installed:
 
 ```bash
 pilink install-vscode-plugin
 ```
 
-The command verifies the matching release VSIX before installation and does not
-start PiLink or open a workspace. Then reload or open VS Code and select
-**PiLink** in the Activity Bar.
-
-The release-bundle installers remain useful when you also need the supported
-sidecar Node.js runtime provisioned automatically.
-
-For source builds, Remote SSH, and upgrade details, see
-[Installation](../../docs/INSTALLATION.md).
+The release-bundle installers can additionally provision the supported sidecar Node.js runtime.
 
 ## More documentation
 
-- [VS Code extension guide](../../docs/VSCODE_EXTENSION.md)
+- [Getting started](../../docs/GETTING_STARTED.md)
 - [Connect ChatGPT Work](../../docs/CONNECT_CHATGPT.md)
-- [Architecture](../../docs/ARCHITECTURE.md)
+- [Illustrated setup](../../docs/ILLUSTRATED_GUIDE.md)
+- [VS Code extension reference](../../docs/VSCODE_EXTENSION.md)
+- [Installation](../../docs/INSTALLATION.md)
 - [Security model](../../docs/SECURITY_MODEL.md)
 - [Troubleshooting](../../docs/TROUBLESHOOTING.md)
-
-PiLink is an independent project and is not affiliated with, endorsed by, or
-distributed by OpenAI, Microsoft, or Cloudflare.

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
+  <title id="title">Owner verification, OAuth, and active session sequence</title>
+  <desc id="desc">A conceptual sequence showing Connect ChatGPT, local owner verification, OAuth ready, and then a separate on-demand active MCP session when ChatGPT Work invokes PiLink.</desc>
+  <rect width="1200" height="540" rx="28" fill="#0B1F33"/>
+  <text x="64" y="70" fill="#F5F7FB" font-family="system-ui,sans-serif" font-size="30" font-weight="700">3 · Authorization and live transport are different states</text>
+  <g font-family="system-ui,sans-serif">
+    <rect x="56" y="154" width="220" height="170" rx="22" fill="#132C46" stroke="#2BC7B8" stroke-width="3"/>
+    <text x="166" y="213" text-anchor="middle" fill="#2BC7B8" font-size="20" font-weight="700">1</text>
+    <text x="166" y="252" text-anchor="middle" fill="#F5F7FB" font-size="22" font-weight="700">Connect ChatGPT</text>
+
+    <path d="M300 239 H370" stroke="#2BC7B8" stroke-width="7" stroke-linecap="round"/>
+    <path d="M354 223 L378 239 L354 255" fill="none" stroke="#2BC7B8" stroke-width="7" stroke-linejoin="round"/>
+
+    <rect x="402" y="154" width="220" height="170" rx="22" fill="#132C46" stroke="#9AA7FF" stroke-width="3"/>
+    <text x="512" y="213" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">2</text>
+    <text x="512" y="250" text-anchor="middle" fill="#F5F7FB" font-size="22" font-weight="700">Local owner</text>
+    <text x="512" y="280" text-anchor="middle" fill="#F5F7FB" font-size="22" font-weight="700">verification</text>
+
+    <path d="M646 239 H716" stroke="#9AA7FF" stroke-width="7" stroke-linecap="round"/>
+    <path d="M700 223 L724 239 L700 255" fill="none" stroke="#9AA7FF" stroke-width="7" stroke-linejoin="round"/>
+
+    <rect x="748" y="154" width="190" height="170" rx="22" fill="#132C46" stroke="#2BC7B8" stroke-width="3"/>
+    <text x="843" y="213" text-anchor="middle" fill="#2BC7B8" font-size="20" font-weight="700">3</text>
+    <text x="843" y="252" text-anchor="middle" fill="#F5F7FB" font-size="24" font-weight="700">OAuth ready</text>
+    <text x="843" y="284" text-anchor="middle" fill="#C7D2E1" font-size="16">Authorization stored</text>
+
+    <path d="M962 239 H1022" stroke="#9AA7FF" stroke-width="7" stroke-linecap="round" stroke-dasharray="12 12"/>
+    <path d="M1006 223 L1030 239 L1006 255" fill="none" stroke="#9AA7FF" stroke-width="7" stroke-linejoin="round"/>
+
+    <rect x="1054" y="154" width="100" height="170" rx="22" fill="#132C46" stroke="#9AA7FF" stroke-width="3"/>
+    <text x="1104" y="213" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">4</text>
+    <text x="1104" y="249" text-anchor="middle" fill="#F5F7FB" font-size="17" font-weight="700">Active</text>
+    <text x="1104" y="276" text-anchor="middle" fill="#F5F7FB" font-size="17" font-weight="700">session</text>
+  </g>
+  <text x="64" y="392" fill="#F5F7FB" font-family="system-ui,sans-serif" font-size="20" font-weight="700">The dashed step is on demand:</text>
+  <text x="64" y="430" fill="#C7D2E1" font-family="system-ui,sans-serif" font-size="18">OAuth ready does not mean a transport is continuously open. An MCP session appears when ChatGPT Work invokes PiLink tools.</text>
+  <text x="64" y="474" fill="#C7D2E1" font-family="system-ui,sans-serif" font-size="18">Private-plugin availability is a prerequisite of the ChatGPT account/workspace, not something PiLink can grant.</text>
+</svg>

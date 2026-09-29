@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">Trusted project to PiLink launcher flow</title>
+  <desc id="desc">A conceptual three-step flow: open a trusted project in VS Code, open PiLink from the Activity Bar, then start the PiLink sidecar with project-folder access.</desc>
+  <rect width="1200" height="520" rx="28" fill="#0B1F33"/>
+  <text x="64" y="72" fill="#F5F7FB" font-family="system-ui,sans-serif" font-size="30" font-weight="700">1 · Start from the exact project boundary</text>
+  <g font-family="system-ui,sans-serif">
+    <rect x="64" y="142" width="290" height="220" rx="24" fill="#132C46" stroke="#9AA7FF" stroke-width="3"/>
+    <text x="209" y="204" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">VS Code</text>
+    <text x="209" y="246" text-anchor="middle" fill="#F5F7FB" font-size="26" font-weight="700">Trusted project</text>
+    <text x="209" y="286" text-anchor="middle" fill="#C7D2E1" font-size="18">Choose the exact project folder</text>
+
+    <path d="M380 252 H474" stroke="#2BC7B8" stroke-width="8" stroke-linecap="round"/>
+    <path d="M458 234 L482 252 L458 270" fill="none" stroke="#2BC7B8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="506" y="142" width="290" height="220" rx="24" fill="#132C46" stroke="#2BC7B8" stroke-width="3"/>
+    <text x="651" y="204" text-anchor="middle" fill="#2BC7B8" font-size="20" font-weight="700">Activity Bar</text>
+    <text x="651" y="246" text-anchor="middle" fill="#F5F7FB" font-size="26" font-weight="700">Open PiLink</text>
+    <text x="651" y="286" text-anchor="middle" fill="#C7D2E1" font-size="18">Launcher and status only</text>
+
+    <path d="M822 252 H916" stroke="#9AA7FF" stroke-width="8" stroke-linecap="round"/>
+    <path d="M900 234 L924 252 L900 270" fill="none" stroke="#9AA7FF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="948" y="142" width="188" height="220" rx="24" fill="#132C46" stroke="#9AA7FF" stroke-width="3"/>
+    <text x="1042" y="206" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">Sidecar</text>
+    <text x="1042" y="248" text-anchor="middle" fill="#F5F7FB" font-size="25" font-weight="700">PiLink</text>
+    <text x="1042" y="288" text-anchor="middle" fill="#C7D2E1" font-size="17">Single agent</text>
+    <text x="1042" y="318" text-anchor="middle" fill="#C7D2E1" font-size="17">Project-scoped</text>
+  </g>
+  <text x="64" y="438" fill="#C7D2E1" font-family="system-ui,sans-serif" font-size="18">Conceptual diagram · no real project paths or credentials shown</text>
+</svg>

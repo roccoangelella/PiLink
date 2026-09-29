@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="590" viewBox="0 0 1200 590" role="img" aria-labelledby="title desc">
+  <title id="title">PiLink endpoint choice</title>
+  <desc id="desc">A conceptual comparison of three endpoint choices: stable HTTPS for regular remote use, temporary Quick Tunnel for evaluation, and local only for same-machine clients.</desc>
+  <rect width="1200" height="590" rx="28" fill="#0B1F33"/>
+  <text x="64" y="70" fill="#F5F7FB" font-family="system-ui,sans-serif" font-size="30" font-weight="700">2 · Choose how PiLink is reachable</text>
+  <g font-family="system-ui,sans-serif">
+    <rect x="64" y="128" width="330" height="360" rx="24" fill="#132C46" stroke="#2BC7B8" stroke-width="4"/>
+    <text x="229" y="184" text-anchor="middle" fill="#2BC7B8" font-size="20" font-weight="700">REGULAR REMOTE USE</text>
+    <text x="229" y="228" text-anchor="middle" fill="#F5F7FB" font-size="26" font-weight="700">Set up stable endpoint</text>
+    <text x="100" y="282" fill="#C7D2E1" font-size="18">• Your domain + scoped token</text>
+    <text x="100" y="320" fill="#C7D2E1" font-size="18">• Existing HTTPS proxy</text>
+    <text x="100" y="376" fill="#F5F7FB" font-size="18" font-weight="700">Durable public origin</text>
+    <text x="100" y="412" fill="#C7D2E1" font-size="17">Reusable plugin/OAuth origin</text>
+
+    <rect x="435" y="128" width="330" height="360" rx="24" fill="#132C46" stroke="#9AA7FF" stroke-width="4"/>
+    <text x="600" y="184" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">EVALUATION</text>
+    <text x="600" y="228" text-anchor="middle" fill="#F5F7FB" font-size="26" font-weight="700">Temporary quick start</text>
+    <text x="471" y="282" fill="#C7D2E1" font-size="18">• Public Quick Tunnel</text>
+    <text x="471" y="320" fill="#C7D2E1" font-size="18">• URL may change on restart</text>
+    <text x="471" y="376" fill="#F5F7FB" font-size="18" font-weight="700">URL may change on recreation</text>
+    <text x="471" y="412" fill="#C7D2E1" font-size="17">Connection may need updating</text>
+
+    <rect x="806" y="128" width="330" height="360" rx="24" fill="#132C46" stroke="#9AA7FF" stroke-width="4"/>
+    <text x="971" y="184" text-anchor="middle" fill="#9AA7FF" font-size="20" font-weight="700">SAME MACHINE</text>
+    <text x="971" y="228" text-anchor="middle" fill="#F5F7FB" font-size="26" font-weight="700">Local only</text>
+    <text x="842" y="282" fill="#C7D2E1" font-size="18">• No public HTTPS endpoint</text>
+    <text x="842" y="320" fill="#C7D2E1" font-size="18">• Local clients only</text>
+    <text x="842" y="376" fill="#F5F7FB" font-size="18" font-weight="700">No remote ChatGPT access</text>
+  </g>
+  <text x="64" y="548" fill="#C7D2E1" font-family="system-ui,sans-serif" font-size="18">All three launcher paths retain Single-agent and Project-folder access.</text>
+</svg>
