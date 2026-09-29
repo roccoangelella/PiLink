@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { startGatewayApi } from "../dist/llm-gateway-api.js";
-import { probeGatewayReadiness, watchGatewayBrowserApproval } from "../dist/llm-gateway-runtime.js";
+import { gatewayBrowserAutoWakeAdmissionEnabled, probeGatewayReadiness, watchGatewayBrowserApproval } from "../dist/llm-gateway-runtime.js";
 import { LlmGatewayJobStore } from "../dist/llm-gateway-store.js";
 
 const FIXTURE_API_KEY = "fixture-api-key";
@@ -28,6 +28,27 @@ function listen(server, port = 0) {
     server.listen({ host: "127.0.0.1", port }, () => resolve(server.address().port));
   });
 }
+
+test("initial auto-wake admission synchronously follows approval and reload-marker policy", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-wake-initial-policy-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const configPath = path.join(root, ".env");
+  const browserExtensionDirectory = path.join(root, "browser-extension");
+  const reloadMarker = path.join(browserExtensionDirectory, ".pilink-reload-required");
+  const env = { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true" };
+  await fs.mkdir(browserExtensionDirectory);
+  await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=true\n", { mode: 0o600 });
+
+  assert.equal(gatewayBrowserAutoWakeAdmissionEnabled({ configPath, browserExtensionDirectory, env }), true,
+    "approved unmarked auto-wake must be admitted before any watcher starts");
+  await fs.writeFile(reloadMarker, "reload required\n", { mode: 0o600 });
+  assert.equal(gatewayBrowserAutoWakeAdmissionEnabled({ configPath, browserExtensionDirectory, env }), false,
+    "reload marker must suppress initial admission");
+  await fs.rm(reloadMarker);
+  assert.equal(gatewayBrowserAutoWakeAdmissionEnabled({ configPath, browserExtensionDirectory, env }), true);
+  await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=false\n", { mode: 0o600 });
+  assert.equal(gatewayBrowserAutoWakeAdmissionEnabled({ configPath, browserExtensionDirectory, env }), false);
+});
 
 test("browser approval enables and disables a running gateway without a restart", async (t) => {
   if (process.platform !== "linux") return;

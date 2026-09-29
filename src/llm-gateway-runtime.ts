@@ -66,7 +66,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     claimLeaseSeconds,
   });
   const activation = store.activate();
-  const autoWakeAdmission = { enabled: false };
+  const autoWakeAdmission = { enabled: gatewayBrowserAutoWakeAdmissionEnabled() };
   const wakeConfirmations = new GatewayWakeConfirmations();
   let api: StartedGatewayApi;
   try {
@@ -108,36 +108,56 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
   return sharedRuntime;
 }
 
-export function watchGatewayBrowserApproval(options: {
-  store: Pick<LlmGatewayJobStore, "status">;
+interface GatewayBrowserApprovalOptions {
   configPath?: string;
   browserExtensionDirectory?: string;
   env?: NodeJS.ProcessEnv;
+}
+
+interface GatewayBrowserApprovalPolicy {
+  enabled: boolean;
+  effectiveEnv: NodeJS.ProcessEnv;
+}
+
+function gatewayBrowserApprovalPolicy(options: GatewayBrowserApprovalOptions = {}): GatewayBrowserApprovalPolicy | undefined {
+  const configPath = options.configPath ?? process.env.PILINK_CONFIG ?? defaultConfigPath();
+  const env = options.env ?? process.env;
+  const browserExtensionDirectory = options.browserExtensionDirectory ?? gatewayBrowserExtensionDirectory(env);
+  const reloadRequired = fs.existsSync(path.join(browserExtensionDirectory, ".pilink-reload-required"));
+  let approval = env.PI_LLM_GATEWAY_AUTO_WAKE;
+  try {
+    if (fs.existsSync(configPath) && fs.statSync(configPath).isFile() && !fs.lstatSync(configPath).isSymbolicLink()) {
+      const configured = dotenv.parse(fs.readFileSync(configPath));
+      if (configured.PI_LLM_GATEWAY_AUTO_WAKE !== undefined) approval = configured.PI_LLM_GATEWAY_AUTO_WAKE;
+    }
+  } catch {
+    // A reload marker always suspends wake even when the config is being
+    // replaced or temporarily unreadable; otherwise preserve prior policy.
+    return reloadRequired ? { enabled: false, effectiveEnv: env } : undefined;
+  }
+  const effectiveEnv = { ...env, PI_LLM_GATEWAY_AUTO_WAKE: approval };
+  return { enabled: !reloadRequired && gatewayAutoWakeEnabled(effectiveEnv), effectiveEnv };
+}
+
+export function gatewayBrowserAutoWakeAdmissionEnabled(options: GatewayBrowserApprovalOptions = {}): boolean {
+  return gatewayBrowserApprovalPolicy(options)?.enabled ?? false;
+}
+
+export function watchGatewayBrowserApproval(options: GatewayBrowserApprovalOptions & {
+  store: Pick<LlmGatewayJobStore, "status">;
   intervalMs?: number;
   apiPort?: number;
   wakeConfirmations?: GatewayWakeConfirmations;
   onChange?: (enabled: boolean) => void;
 }): { isActive(): boolean; close(): void } {
-  const configPath = options.configPath ?? process.env.PILINK_CONFIG ?? defaultConfigPath();
-  const env = options.env ?? process.env;
-  const browserExtensionDirectory = options.browserExtensionDirectory ?? gatewayBrowserExtensionDirectory(env);
   let supervisor: GatewayAutoWakeSupervisor | undefined;
   let active = false;
   let closed = false;
   const refresh = (): void => {
     if (closed) return;
-    let approval = env.PI_LLM_GATEWAY_AUTO_WAKE;
-    try {
-      if (fs.existsSync(configPath) && fs.statSync(configPath).isFile() && !fs.lstatSync(configPath).isSymbolicLink()) {
-        const configured = dotenv.parse(fs.readFileSync(configPath));
-        if (configured.PI_LLM_GATEWAY_AUTO_WAKE !== undefined) approval = configured.PI_LLM_GATEWAY_AUTO_WAKE;
-      }
-    } catch {
-      return; // Keep the previous policy if a config update is temporarily unreadable.
-    }
-    const effectiveEnv = { ...env, PI_LLM_GATEWAY_AUTO_WAKE: approval };
-    const reloadRequired = fs.existsSync(path.join(browserExtensionDirectory, ".pilink-reload-required"));
-    const desired = !reloadRequired && gatewayAutoWakeEnabled(effectiveEnv);
+    const policy = gatewayBrowserApprovalPolicy(options);
+    if (!policy) return; // Keep the previous policy if a config update is temporarily unreadable.
+    const { enabled: desired, effectiveEnv } = policy;
     if (desired === active) { options.onChange?.(active); return; }
     if (desired) {
       supervisor = startGatewayAutoWakeSupervisor({
