@@ -107,7 +107,7 @@ test("current onboarding surfaces do not revive retired launcher labels", async 
     "docs/VSCODE_EXTENSION.md",
     "packages/vscode/README.md",
     "install/INSTALL.md",
-    "release/INSTALL.md",
+    // release/INSTALL.md is a checksum-pinned snapshot of the already-shipped 2.2.0 bundle.
   ];
   const retiredUserVisibleLabels = /\bVSPiLink\b|Collaborative monitor|watch remote ChatGPT conversations/iu;
 
