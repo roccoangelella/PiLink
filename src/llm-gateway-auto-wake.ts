@@ -51,11 +51,13 @@ class GatewayAutoWakeUnavailableError extends Error {
 export class GatewayWakeConfirmations {
   private readonly attempts = new Map<string, { confirmed: boolean; expiresAt: number }>();
 
-  constructor(private readonly ttlMs = 60_000) {}
+  constructor(private readonly ttlMs = 60_000, private readonly now = () => Date.now()) {}
 
   register(nonce: string): void {
     if (!/^[0-9a-f]{32}$/u.test(nonce)) throw new Error("Invalid gateway wake nonce");
-    this.attempts.set(nonce, { confirmed: false, expiresAt: Date.now() + this.ttlMs });
+    const now = this.now();
+    this.pruneExpired(now);
+    this.attempts.set(nonce, { confirmed: false, expiresAt: now + this.ttlMs });
   }
 
   confirm(nonce: string): void {
@@ -75,11 +77,17 @@ export class GatewayWakeConfirmations {
   private current(nonce: string): { confirmed: boolean; expiresAt: number } | undefined {
     const attempt = this.attempts.get(nonce);
     if (!attempt) return undefined;
-    if (attempt.expiresAt <= Date.now()) {
+    if (attempt.expiresAt <= this.now()) {
       this.attempts.delete(nonce);
       return undefined;
     }
     return attempt;
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [nonce, attempt] of this.attempts) {
+      if (attempt.expiresAt <= now) this.attempts.delete(nonce);
+    }
   }
 }
 
@@ -145,7 +153,16 @@ export function startGatewayAutoWakeSupervisor(
     : undefined;
 
   const getDriver = (): Promise<GatewayWakeDriver> => {
-    driverPromise ??= prepareBrowserWakeDriver(env, options.apiPort, platform);
+    if (!driverPromise) {
+      const pending = prepareBrowserWakeDriver(env, options.apiPort, platform);
+      driverPromise = pending;
+      void pending.catch(() => {
+        // A transient resolver failure must not poison every future queue head.
+        // Existing failed-cycle suppression still decides when another prepare
+        // attempt is allowed.
+        if (driverPromise === pending) driverPromise = undefined;
+      });
+    }
     return driverPromise;
   };
 
@@ -204,7 +221,12 @@ export function startGatewayAutoWakeSupervisor(
       const driver = await getDriver();
       const nonce = randomBytes(16).toString("hex");
       options.wakeConfirmations?.register(nonce);
-      await driver.wake(nonce);
+      try {
+        await driver.wake(nonce);
+      } catch (error) {
+        options.wakeConfirmations?.clear(nonce);
+        throw error;
+      }
       log("wake URL opened; waiting for the installed Chrome/Brave extension and gateway worker contact.");
       const outcome = await waitForWakeOutcome(options.store, confirmationMs, reconnectOnly, rechecked.last_exchange_at);
       if (outcome === "confirmed") {

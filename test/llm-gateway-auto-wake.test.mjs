@@ -84,6 +84,46 @@ test("wake confirmation state is scoped to an exact nonce", () => {
   assert.equal(confirmations.status(nonce), undefined);
 });
 
+test("register prunes expired wake confirmations without exposing their backing map", () => {
+  let now = 1_000;
+  const confirmations = new GatewayWakeConfirmations(10, () => now);
+  const expired = "11111111111111111111111111111111";
+  const current = "22222222222222222222222222222222";
+  confirmations.register(expired);
+  now = 1_011;
+  confirmations.register(current);
+
+  // Move the injected clock backwards. The expired nonce can stay absent only
+  // if register() already pruned it at 1011; current() alone would revive it.
+  now = 1_005;
+  assert.equal(confirmations.status(expired), undefined);
+  assert.equal(confirmations.status(current), "pending");
+});
+
+test("a throwing wake driver clears its registered confirmation nonce", async () => {
+  const confirmations = new GatewayWakeConfirmations();
+  let attemptedNonce;
+  const logs = [];
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => status() },
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true",
+      PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "linux",
+    driver: { wake: async (nonce) => { attemptedNonce = nonce; throw new Error("synthetic launch failure"); } },
+    wakeConfirmations: confirmations,
+    pollIntervalMs: 5, suspendedPollMs: 5, wakeGraceMs: 0, confirmationMs: 20,
+    log: (line) => logs.push(line),
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => logs.some((line) => /synthetic launch failure/.test(line)));
+    assert.match(attemptedNonce, /^[0-9a-f]{32}$/);
+    assert.equal(confirmations.status(attemptedNonce), undefined);
+  } finally {
+    supervisor.close();
+  }
+});
+
 test("wake needs queued work or a previously active worker and explicit wake_worker status", () => {
   assert.equal(shouldAutoWakeGateway(status()), true);
   assert.equal(shouldAutoWakeGateway(status({ queued: 0 })), false);
@@ -104,6 +144,91 @@ test("queued work can wake before the 120s contact staleness deadline when the w
   assert.equal(shouldAutoWakeGateway({ ...idle, worker_polling: true, next_action: "wait_for_worker" }), false);
   assert.equal(shouldAutoWakeGateway({ ...idle, processing_claim: true, next_action: "wait_for_worker" }), false);
   assert.equal(shouldAutoWakeGateway({ ...idle, queued: 0 }), false);
+});
+
+test("Windows driver uses SystemRoot rundll32 with exact non-shell-interpolated argv", async (t) => {
+  if (process.platform === "win32") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-win-wake-driver-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const systemRoot = path.join(root, "Windows Root");
+  const system32 = path.join(systemRoot, "System32");
+  const handler = path.join(system32, "rundll32.exe");
+  const logFile = path.join(root, "argv.log");
+  await fs.mkdir(system32, { recursive: true });
+  await fs.writeFile(handler, `#!/bin/sh\nprintf '%s\\n' "$@" > '${logFile}'\n`, { mode: 0o700 });
+
+  const logs = [];
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => status({ oldest_queue_request_id: "req_windows-driver" }) },
+    env: { SystemRoot: systemRoot, PATH: "", PI_LLM_GATEWAY_ENABLED: "true",
+      PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true",
+      PI_LLM_GATEWAY_CONNECTOR_NAME: "Windows Connector" },
+    platform: "win32", apiPort: 8765, pollIntervalMs: 5, suspendedPollMs: 5,
+    wakeGraceMs: 0, confirmationMs: 25, log: (line) => logs.push(line),
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => logs.some((line) => /wake URL opened/.test(line)));
+    const args = (await fs.readFile(logFile, "utf8")).trim().split("\n");
+    assert.equal(args.length, 2);
+    assert.equal(args[0], "url.dll,FileProtocolHandler");
+    const url = new URL(args[1]);
+    assert.equal(url.origin, "https://chatgpt.com");
+    assert.equal(url.pathname, "/");
+    assert.equal(url.searchParams.get("q"), "@Windows Connector wake up");
+    assert.match(url.searchParams.get("pilink_wake"), /^[0-9a-f]{32}$/);
+    assert.equal(url.searchParams.get("pilink_port"), "8765");
+    assert.equal(url.searchParams.size, 3);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal((await fs.readFile(logFile, "utf8")).trim().split("\n").length, 2,
+      "one queue head must launch rundll32 only once");
+  } finally {
+    supervisor.close();
+  }
+});
+
+test("Windows driver preparation can recover on a new queued head after a transient missing handler", async (t) => {
+  if (process.platform === "win32") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-win-wake-retry-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const systemRoot = path.join(root, "Windows");
+  const system32 = path.join(systemRoot, "System32");
+  const handler = path.join(system32, "rundll32.exe");
+  const logFile = path.join(root, "argv.log");
+  await fs.mkdir(system32, { recursive: true });
+
+  const requestA = "req_windows_a";
+  const requestB = "req_windows_b";
+  let state = status({ oldest_queue_request_id: requestA });
+  const logs = [];
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => state },
+    env: { SystemRoot: systemRoot, PATH: "", PI_LLM_GATEWAY_ENABLED: "true",
+      PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "win32", apiPort: 8765, pollIntervalMs: 5, suspendedPollMs: 5,
+    wakeGraceMs: 0, confirmationMs: 25, log: (line) => logs.push(line),
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => logs.some((line) => /rundll32\.exe was not found/.test(line)));
+    await fs.writeFile(handler, `#!/bin/sh\nprintf '%s\\n' "$@" > '${logFile}'\n`, { mode: 0o700 });
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(logs.filter((line) => /rundll32\.exe was not found|wake URL opened/.test(line)).length, 1,
+      "unchanged A must not retry even after rundll32 becomes available");
+
+    // The first preparation failure consumed A's bounded attempt. Only a new
+    // oldest queue head may re-arm and force driver preparation to run again.
+    state = status({ oldest_queue_request_id: requestB });
+    await eventually(() => logs.some((line) => /wake URL opened/.test(line)));
+    const args = (await fs.readFile(logFile, "utf8")).trim().split("\n");
+    assert.equal(args[0], "url.dll,FileProtocolHandler");
+    assert.match(args[1], /pilink_port=8765/);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal((await fs.readFile(logFile, "utf8")).trim().split("\n").length, 2,
+      "recovered driver must still make only one bounded launch for B");
+  } finally {
+    supervisor.close();
+  }
 });
 
 test("browser driver opens a nonce-tagged URL in Brave or the default browser, never a keyboard daemon", async () => {

@@ -173,13 +173,23 @@ export function loadedGatewayBrowserExtension(options: {
     const root = options.profileRoot ?? (browser ? browserProfileRoot(browser, platform, env) : undefined);
     if (!root || !fs.statSync(root).isDirectory()) return false;
     const installedPath = fs.realpathSync(destination);
-    for (const profile of fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).slice(0, 32)) {
+    let scannedProfiles = 0;
+    for (const profile of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!profile.isDirectory()) continue;
       const preferences = path.join(root, profile.name, "Preferences");
       if (!fs.existsSync(preferences) || fs.lstatSync(preferences).isSymbolicLink() ||
           !fs.statSync(preferences).isFile() || fs.statSync(preferences).size > 8 * 1024 * 1024) continue;
-      const settings = (JSON.parse(fs.readFileSync(preferences, "utf8")) as {
-        extensions?: { settings?: Record<string, unknown> };
-      }).extensions?.settings ?? {};
+      // Bound actual browser profiles, not unrelated directories in the root.
+      if (++scannedProfiles > 32) break;
+      let settings: Record<string, unknown>;
+      try {
+        settings = (JSON.parse(fs.readFileSync(preferences, "utf8")) as {
+          extensions?: { settings?: Record<string, unknown> };
+        }).extensions?.settings ?? {};
+      } catch {
+        // One profile being saved/corrupted must not hide another valid one.
+        continue;
+      }
       for (const candidate of Object.values(settings)) {
         if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
         const entry = candidate as {

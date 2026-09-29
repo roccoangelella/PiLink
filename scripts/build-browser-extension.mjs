@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,8 +28,8 @@ console.error("[PiLink] Chrome/Brave wake extension built in dist/browser-extens
 const installed = process.env.XDG_DATA_HOME?.trim()
   ? path.join(process.env.XDG_DATA_HOME.trim(), "pilink", "browser-extension")
   : process.platform === "win32"
-    ? path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local"), "PiLink", "browser-extension")
-    : path.join(process.env.HOME || "", ".local", "share", "pilink", "browser-extension");
+    ? path.join(process.env.LOCALAPPDATA?.trim() || path.join(os.homedir(), "AppData", "Local"), "PiLink", "browser-extension")
+    : path.join(os.homedir(), ".local", "share", "pilink", "browser-extension");
 const marker = path.join(installed, ".pilink-source.json");
 if (fs.existsSync(marker)) {
   if (!fs.existsSync(installed) || fs.lstatSync(installed).isSymbolicLink() ||

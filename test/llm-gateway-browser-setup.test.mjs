@@ -105,6 +105,28 @@ test("an unpacked extension already loaded by Brave is detected on Linux and Win
   assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), false);
 });
 
+test("unrelated directories and a partially saved profile do not hide an installed extension", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-profile-scan-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, "staged");
+  const profileRoot = path.join(root, "profiles");
+  await fs.mkdir(profileRoot);
+  stageGatewayBrowserExtension({ source, destination });
+  for (let index = 0; index < 32; index++) {
+    await fs.mkdir(path.join(profileRoot, `a-decoy-${String(index).padStart(2, "0")}`));
+  }
+  const broken = path.join(profileRoot, "b-saving");
+  await fs.mkdir(broken);
+  await fs.writeFile(path.join(broken, "Preferences"), "{");
+  const profile = path.join(profileRoot, "z-Profile 1");
+  await fs.mkdir(profile);
+  await fs.writeFile(path.join(profile, "Preferences"), JSON.stringify({ extensions: { settings: {
+    pilink: { location: 4, path: destination, state: 1, disable_reasons: 0,
+      active_permissions: { scriptable_host: ["https://chatgpt.com/*"] } },
+  } } }));
+  assert.equal(loadedGatewayBrowserExtension({ destination, profileRoot }), true);
+});
+
 test("first Enter can wait for Brave to persist a newly loaded extension", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-late-preferences-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
