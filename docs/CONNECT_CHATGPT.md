@@ -10,27 +10,35 @@ ChatGPT Work -> private PiLink plugin -> HTTPS + OAuth/MCP -> PiLink -> selected
 
 Before connecting, verify all of these:
 
-- VS Code and the PiLink sidecar/runtime are installed through a supported path.
+- PiLink for VS Code and its supported sidecar/runtime are installed on the workspace host through a [supported installation path](INSTALLATION.md). In Remote SSH, that means the remote SSH host.
 - The intended project is open and trusted in VS Code.
-- A public HTTPS endpoint exists for remote ChatGPT Work use.
-- Your ChatGPT account/workspace is entitled to create, import, or install the private PiLink plugin. PiLink cannot enable that ChatGPT capability for you.
+- You can configure a public HTTPS endpoint for PiLink.
+- Your ChatGPT account/workspace either already provides the intended private PiLink plugin or gives you permitted controls to create/import it. PiLink cannot grant those ChatGPT workspace controls.
 
-The generic PiLink release does not include a plugin identity for your ChatGPT account. Your deployment owner must make the private PiLink plugin available through the workspace's permitted source, or configure it with the MCP URL PiLink displays. If the plugin or creation controls are missing, ask your workspace administrator or plugin publisher. Do not install an unrelated public result just because its description says “MCP.” The repository's `plugins/pilink` directory is a separate local Codex integration, not the private ChatGPT plugin.
-
-For a durable endpoint, choose **Set up stable endpoint** in the PiLink Activity Bar view. Use either a Cloudflare fixed domain you control with the required scoped token, or an existing HTTPS domain/reverse proxy you operate.
+For a durable endpoint, choose **Set up stable endpoint**. Use either a Cloudflare fixed domain you control or an existing HTTPS domain/reverse proxy you operate. Cloudflare provisioning requires a scoped API token with **Account -> Cloudflare Tunnel -> Edit**, **Zone -> DNS -> Edit**, and **Zone -> Zone -> Read**; see [Cloudflare fixed-domain token permissions](INSTALLATION.md#cloudflare-fixed-domain-token-permissions).
 
 For evaluation, **Temporary quick start** creates a Quick Tunnel. Its public hostname is temporary and normally changes when the tunnel is recreated.
 
-**Local only** is intentionally not public. It can serve same-machine clients, but remote ChatGPT Work cannot reach it.
+**Local only is not part of this remote connection flow.** It serves same-machine MCP clients and cannot be reached by remote ChatGPT Work.
+
+## Prepare the private plugin before OAuth
+
+The generic PiLink release does not contain a private ChatGPT plugin identity for your account/workspace. Use the branch that matches your ChatGPT permissions:
+
+- **Private plugin already provisioned:** use the approved private PiLink plugin supplied by your workspace owner or publisher.
+- **You can create/import private plugins:** after PiLink has a public HTTPS endpoint, create or import your private PiLink plugin using the MCP URL displayed by PiLink. Use OAuth and Dynamic Client Registration when the ChatGPT plugin workflow supports them.
+- **You cannot create/import and no private plugin is provisioned:** stop here and ask the workspace administrator or plugin publisher to make the private plugin available. PiLink cannot enable those ChatGPT controls.
+
+Do not install an unrelated public result just because its description says “MCP.” The repository's `plugins/pilink` directory is a separate local Codex integration, not the private ChatGPT plugin.
 
 ## Connect
 
-1. Open the trusted project in VS Code.
-2. Open **PiLink** from the Activity Bar.
-3. Configure the endpoint with **Set up stable endpoint**, **Temporary quick start**, or **Local only** as appropriate.
-4. Confirm the launcher reports the local server and endpoint as ready.
-5. For a public endpoint, select **Connect ChatGPT**.
-6. Complete the local owner-verification step. This proves that the browser flow was initiated by someone with access to the PiLink host/session.
+1. Open the trusted project in VS Code and open **PiLink** from the Activity Bar.
+2. Configure a public endpoint with **Set up stable endpoint** or **Temporary quick start**.
+3. Confirm the launcher reports the local server and public HTTPS endpoint as ready.
+4. If you must create/import the private plugin yourself, use the MCP URL PiLink displays and finish that ChatGPT-side setup before OAuth.
+5. Select **Connect ChatGPT**.
+6. Complete the local owner-verification step. This proves that the authorization flow was initiated by someone with access to the PiLink host/session.
 7. Continue into OAuth and authorize the intended private PiLink plugin.
 8. Return to ChatGPT Work and use that plugin connection.
 

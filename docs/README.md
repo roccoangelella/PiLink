@@ -11,12 +11,14 @@ PiLink documentation is organized by task. Start with the shortest user path and
 | See the onboarding flow visually | [Illustrated setup](ILLUSTRATED_GUIDE.md) |
 | Connect a private PiLink plugin in ChatGPT Work | [Connect ChatGPT Work](CONNECT_CHATGPT.md) |
 | Understand launcher states and recovery | [PiLink for VS Code](VSCODE_EXTENSION.md) |
-| Use ChatGPT as a local model provider | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
+| Expose a ChatGPT-backed local OpenAI-compatible API | [ChatGPT LLM Gateway](operations/llm-gateway.md) |
 | Diagnose a failure | [Troubleshooting](TROUBLESHOOTING.md) |
 
-Remote ChatGPT Work use requires a reachable HTTPS origin and a ChatGPT account/workspace where the private PiLink plugin can be created, imported, or installed. PiLink cannot grant that SaaS entitlement.
+Remote ChatGPT Work use requires a reachable public HTTPS origin and a private PiLink plugin that is already provisioned for the ChatGPT workspace or can be created/imported through controls that account is permitted to use. PiLink cannot grant those ChatGPT workspace controls.
 
-The normal VS Code path uses one trusted selected project, **Single agent**, and **Project-folder** access. A stable endpoint uses a domain/HTTPS origin you control; **Temporary quick start** is for Quick Tunnel evaluation; **Local only** is not reachable by remote ChatGPT Work.
+The normal VS Code path uses one trusted selected project, **Single agent**, and **Project-folder** access. A stable endpoint uses a domain/HTTPS origin you control; Cloudflare fixed-domain provisioning requires the [documented scoped token permissions](INSTALLATION.md#cloudflare-fixed-domain-token-permissions). **Temporary quick start** is for Quick Tunnel evaluation; **Local only** is a same-machine MCP endpoint and is not reachable by remote ChatGPT Work.
+
+The **ChatGPT LLM Gateway** is a separate workflow from the VS Code **Local only** endpoint. Its OpenAI-compatible API binds on loopback, but model responses still depend on a compatible ChatGPT MCP connection and active worker conversation.
 
 ## User guides
 

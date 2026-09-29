@@ -15,13 +15,15 @@ It is not a chat client or monitoring console. The dashboard has no transcript, 
 
 ## Installation and runtime
 
-Install or update with:
+For a first installation, use the [recommended GitHub release-bundle installer](INSTALLATION.md#recommended-vs-code-release-install). It installs the VS Code extension and provisions the supported private sidecar Node.js runtime when necessary.
+
+If the PiLink CLI is **already installed**, you can instead install or update the extension with:
 
 ```bash
 pilink install-vscode-plugin
 ```
 
-The release installers can also provision the supported sidecar Node.js runtime. See [Installation](INSTALLATION.md) for supported VS Code/runtime combinations and Remote SSH details.
+In Remote SSH, the extension, sidecar, project, and hosting process belong on the remote workspace host; run the release installer or existing-CLI install there. See [Remote SSH](INSTALLATION.md#remote-ssh).
 
 After installation, open or reload VS Code and select **PiLink** in the Activity Bar.
 
@@ -36,10 +38,10 @@ In a multi-root workspace, select the exact project PiLink may access. Project c
 For a new project, the launcher offers:
 
 - **Set up stable endpoint**
-  - **Cloudflare fixed domain** — requires a domain you control and the required scoped token for provisioning.
+  - **Cloudflare fixed domain** — requires a domain you control and a scoped token with **Account -> Cloudflare Tunnel -> Edit**, **Zone -> DNS -> Edit**, and **Zone -> Zone -> Read**. See [Cloudflare fixed-domain token permissions](INSTALLATION.md#cloudflare-fixed-domain-token-permissions).
   - **Existing HTTPS domain** — uses an HTTPS origin/reverse proxy you already operate.
 - **Temporary quick start** — creates a Quick Tunnel for evaluation. The public URL can change when recreated.
-- **Local only** — same-machine access only; remote ChatGPT Work cannot reach it.
+- **Local only** — same-machine MCP access only; remote ChatGPT Work cannot reach it.
 
 Reconfiguration uses **Details & recovery -> Reconfigure endpoint...** or **PiLink: Reconfigure PiLink** and keeps the same Single-agent / Project-folder policy.
 
@@ -62,9 +64,9 @@ Reconfiguration uses **Details & recovery -> Reconfigure endpoint...** or **PiLi
 
 For a public endpoint, **Connect ChatGPT** creates a short-lived local owner-verification request before OAuth handoff.
 
-The ChatGPT account/workspace must already permit the private PiLink plugin to be created, imported, or installed. PiLink does not grant that entitlement.
+The intended private PiLink plugin must already be provisioned for the ChatGPT workspace or created/imported through controls your ChatGPT account is permitted to use. PiLink does not grant those controls.
 
-See [Connect ChatGPT Work](CONNECT_CHATGPT.md) for the full sequence and first read-only task.
+See [Connect ChatGPT Work](CONNECT_CHATGPT.md) for the private-plugin branches, full sequence, and first read-only task.
 
 ## Status fields
 

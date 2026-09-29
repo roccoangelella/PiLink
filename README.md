@@ -22,24 +22,17 @@ the model and tools to run.
 Use this when you want a small graphical launcher for a selected project and a
 remote ChatGPT client.
 
-**Prerequisites**
+**First install**
 
-- VS Code 1.106 or newer and a trusted project folder.
-- The PiLink sidecar runtime. Release installers can provision the required
-  Node.js runtime; source builds require Node.js **24.18.0 exactly** and npm
-  **11.16.0 exactly**.
-- A reachable HTTPS origin for remote use. A temporary Quick Tunnel is available
-  for evaluation; stable use needs a Cloudflare fixed domain or an HTTPS reverse
-  proxy you operate.
-- A ChatGPT account/workspace where the intended private PiLink plugin is already
-  available, or where permitted plugin creation/import controls exist. PiLink
-  cannot grant that account/workspace capability.
+- Use VS Code 1.106 or newer and choose the project folder PiLink may access.
+- Download the matching bundle from [PiLink GitHub Releases](https://github.com/roccoangelella/PiLink/releases), keep the installer, VSIX, and `SHA256SUMS` together, then run `./install.sh` on Linux/macOS or `.\install.ps1` in Windows PowerShell. The release installer provisions the supported private sidecar Node.js runtime when necessary.
+- In Remote SSH, run that release installer in the **remote** VS Code integrated terminal because the extension, sidecar, project, and hosting process belong on the remote workspace host.
+- For remote ChatGPT Work use, configure a public HTTPS endpoint. A temporary Quick Tunnel is available for evaluation; stable use needs an HTTPS origin you control. Cloudflare fixed-domain provisioning requires **Account -> Cloudflare Tunnel -> Edit**, **Zone -> DNS -> Edit**, and **Zone -> Zone -> Read**; see [Installation](docs/INSTALLATION.md#cloudflare-fixed-domain-token-permissions).
+- The intended private PiLink plugin must already be provisioned for your ChatGPT workspace or created/imported through controls your account is permitted to use. PiLink cannot grant those ChatGPT workspace controls.
 
-Install or update the extension, then open **PiLink** from the Activity Bar:
+If the PiLink CLI is **already installed** on the workspace host, `pilink install-vscode-plugin` is an alternate extension install/update path.
 
-```bash
-pilink install-vscode-plugin
-```
+After installation, reload VS Code and open **PiLink** from the Activity Bar.
 
 The graphical setup always uses **Single agent + Project-folder access**. When
 the endpoint is healthy, select **Connect ChatGPT**, complete local owner
@@ -76,10 +69,12 @@ See [Installation](docs/INSTALLATION.md),
 [Runtime mode selection](docs/operations/mode-selection.md), and the
 [Security model](docs/SECURITY_MODEL.md).
 
-### 3. Local ChatGPT LLM Gateway
+### 3. ChatGPT-backed loopback LLM Gateway
 
 Use this when a local coding agent should receive model responses from a
-connected ChatGPT conversation through a loopback OpenAI-compatible API.
+connected ChatGPT conversation through a loopback OpenAI-compatible API. This
+is separate from the VS Code **Local only** endpoint: the API is local, but the
+gateway still requires a compatible ChatGPT MCP connection and active worker.
 
 ```bash
 pilink gateway start
@@ -169,7 +164,11 @@ they are not synonyms for ordinary project-scoped mode selection.
 | Cloudflare fixed domain | Regular remote use | Stable |
 | Existing HTTPS domain | Operator-managed reverse proxy | Stable |
 | Cloudflare Quick Tunnel | Evaluation | Changes when recreated |
-| Local only | Same-machine clients | Not reachable by ChatGPT web |
+| Local only | Same-machine MCP clients | Not reachable by ChatGPT web |
+
+**Local only** describes the VS Code/MCP endpoint reachability. It is not the
+ChatGPT-backed LLM Gateway, whose OpenAI-compatible API is loopback-only while
+its model responses still depend on ChatGPT connectivity.
 
 A public URL is not authorization. Remote access still requires the configured
 OAuth flow and the relevant client/plugin capability.
