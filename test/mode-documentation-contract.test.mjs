@@ -22,7 +22,7 @@ test("mode guide distinguishes runtime modes, CLI launch experiences, and separa
   assert.match(guide, /pilink install-vscode-plugin/);
   assert.match(guide, /pilink start --mode vscode.*no longer accepted.*pilink install-vscode-plugin/s);
   assert.match(guide, /1\. \*\*Single agent\*\*[\s\S]*2\. \*\*Agents chat\*\*[\s\S]*3\. \*\*CLI pilink-endpoint\*\*/);
-  assert.match(guide, /fresh VSPiLink installation.*Single agent/s);
+  assert.match(guide, /fresh PiLink for VS Code installation.*Single agent/s);
   assert.match(guide, /optional local Pi provider\/runtime.*separate/s);
   assert.match(guide, /PI_CHAT_CLI=off/);
   assert.match(guide, /## Migration/);

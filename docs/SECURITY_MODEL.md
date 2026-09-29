@@ -96,6 +96,13 @@ Enable it only when all of these statements are true:
 Do not enable Full access merely to fix OAuth, hosting, workspace selection, or
 an empty collaboration monitor. Those are separate problems.
 
+The compatibility CLI flag `--allow-unsafe-full-access` starts with
+`PI_FULL_ACCESS_CLIENT_IDS=*`, so newly authorized clients inherit Full access
+until the operator narrows the allowlist. Before treating a deployment as
+client-specific, replace the wildcard with the exact reviewed `pi_...` client
+ID and restart. The normal VS Code graphical path does not enable this unsafe
+mode.
+
 ## OAuth boundaries
 
 PiLink validates bearer tokens for every protected request. Authorization
@@ -146,6 +153,36 @@ The VS Code webview never receives raw server secrets, Cloudflare credentials,
 provider API keys, client-secret hashes, or complete private configuration.
 Privileged copy operations are performed by the extension host and should
 return the minimum value required for the user's immediate action.
+
+## Optional PiLink Wake browser extension
+
+PiLink Wake is an optional convenience for the ChatGPT-backed LLM Gateway. It
+is **not** part of the MCP authorization boundary and is not required for the
+core reverse-RPC model path.
+
+Its browser-side trust boundary is separate:
+
+- a content script runs only on the ChatGPT web host pages allowed by the
+  extension manifest and interacts with that page's DOM to submit the wake
+  message;
+- the extension's background side checks loopback worker-contact confirmation
+  before closing a wake tab; this is not an OAuth or MCP authorization step;
+- wake submission is gated by the expected nonce/context and the exact
+  `@<connection name> wake up` phrase PiLink prints for that gateway;
+- the operator must explicitly approve/load the extension in the browser
+  profile. A different default-browser profile can therefore leave wake
+  unavailable even when another profile has the extension;
+- connection-name changes or extension updates require the unpacked extension
+  to be reloaded/reconfirmed before auto-wake is trusted again;
+- if browser wake is unavailable or uncertain, the safe fallback is to send the
+  exact printed wake phrase manually in the already connected ChatGPT
+  conversation.
+
+The DOM interaction is best-effort automation, not a security control. ChatGPT
+markup, browser behavior, or extension code can change, so selectors and click
+behavior must be re-tested after updates. Do not describe the browser extension
+as incapable of changing or as a substitute for OAuth, loopback API
+authentication, or operator review.
 
 ## Secret storage
 

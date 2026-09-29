@@ -118,7 +118,56 @@ Agent chat uses the same configured `PI_WORK_DIR` as the project scope. It is st
 
 Use full mode only with a private, trusted client. Anyone able to obtain an authorized OAuth token can execute commands as your local user. With `--allow-unsafe-full-access`, PiLink allows all newly authorized OAuth clients by default (`PI_FULL_ACCESS_CLIENT_IDS=*`). After registering a connector, set `PI_FULL_ACCESS_CLIENT_IDS` to its exact `pi_...` client ID and restart if you want to restrict full access to only that connector.
 
-**Full-access MCP is not the ChatGPT model gateway.** To connect ChatGPT to one full-access single-agent server at a fixed Cloudflare domain, run `pilink start --mode single --allow-unsafe-full-access` in a terminal and keep that terminal open (or run it under a private user service). Add its printed `https://<your-host>/sse` as a **new** ChatGPT MCP connection with OAuth and Dynamic Client Registration. A new instance/reset requires a new OAuth registration. If the initial pairing window expires, keep the server running and use `pilink connect` in another terminal to reopen owner pairing; verify ownership in the browser when the server has no interactive terminal. This mode has no `/v1` model API or browser auto-wake; those belong to `pilink gateway start` and cannot be enabled by adding `--allow-unsafe-full-access` to it. If you run both modes, keep their `PILINK_CONFIG` files, data directories, local ports and Cloudflare hostnames separate. The generated **`pilink-cli` launches Pi Agent with the gateway as its model from your current directory**. If a previously configured fixed-domain gateway has stopped, the launcher starts it once in the background, verifies the authenticated MCP and model API, and refuses to move an occupied Cloudflare origin. It maintains only Pi's own `pilink` model entry and passes its API key in the Pi child process environment instead of saving that key in `models.json`. Browser wake is staged automatically at setup. On Linux, PiLink may enable wake after it detects the approved unpacked extension in the default Chromium profile. On Windows, passive Preferences detection is diagnostic only: verify PiLink Wake in the browser profile reached by a normal default-HTTPS link, then confirm interactively or run `pilink gateway browser-extension --enable` after that manual verification. PiLink cannot install browser code into the profile silently. Pi Agent's usual local tools have the permissions of your local user; the gateway's remote ChatGPT MCP still exposes no machine tools. Explicit gateway-management commands remain `pilink gateway connect`, `pilink gateway status`, and `pilink gateway browser-extension` (the corresponding `pilink-cli` subcommands remain compatibility aliases).
+### Full-access MCP connection
+
+Full-access MCP and the ChatGPT-backed LLM Gateway are separate capabilities.
+
+For a Full-access single-agent MCP server:
+
+- run `pilink start --mode single --allow-unsafe-full-access` and keep that
+  process alive in a private terminal or user service;
+- add its printed `https://<your-host>/sse` as a **new** ChatGPT MCP
+  connection using OAuth and Dynamic Client Registration;
+- a new instance or reset requires a new OAuth registration; if owner pairing
+  expires while the server is still running, use `pilink connect` in another
+  terminal and complete local owner verification;
+- this server has no `/v1` model API or browser auto-wake.
+
+The unsafe flag keeps the wildcard default described above
+(`PI_FULL_ACCESS_CLIENT_IDS=*`) until you replace it with the exact reviewed
+client ID and restart.
+
+### ChatGPT-backed LLM Gateway
+
+See [ChatGPT LLM Gateway](llm-gateway.md) for the complete gateway setup and
+recovery flow.
+
+- `pilink gateway start` provides the loopback OpenAI-compatible `/v1` API.
+  Its remote ChatGPT MCP exposes gateway protocol tools only—no workspace,
+  filesystem, shell, or machine-execution tools—and
+  `--allow-unsafe-full-access` is not applicable.
+- The generated `pilink-cli` launches Pi Agent from your current directory
+  with the gateway as its model. Pi Agent's file and shell tools execute in the
+  **local caller harness** with the permissions of your local user; PiLink's
+  gateway and the remote ChatGPT MCP do not execute those caller-advertised
+  tools.
+- Browser wake is optional. It requires explicit browser-extension approval;
+  Windows additionally requires confirmation in the profile reached by normal
+  default-HTTPS browsing. If wake automation is unavailable, send the exact
+  printed wake phrase manually.
+- Gateway management commands are `pilink gateway connect`,
+  `pilink gateway status`, and `pilink gateway browser-extension`; the
+  corresponding `pilink-cli` subcommands remain compatibility aliases.
+
+### Running both modes
+
+If Full-access MCP and the LLM Gateway run on the same machine, keep their
+`PILINK_CONFIG` files, data directories, local ports, and Cloudflare hostnames
+separate. A configured fixed-domain gateway may be started once in the
+background by `pilink-cli`; it verifies the authenticated MCP/model API and
+refuses to move an occupied Cloudflare origin. The launcher maintains only Pi's
+own `pilink` model entry and passes the gateway API key in the Pi child process
+environment rather than saving that key in `models.json`.
 
 For an additional interactive gate, set `PI_REQUIRE_EXECUTION_APPROVAL=true`. PiLink then requires a fresh MCP form-elicitation approval for every unrestricted `bash` call and every `npm_build` or `npm_test` profile. Clients without form elicitation fail closed, as do decline, cancel, or unchecked responses. Read-only Git inspection and normal file edits are not prompted. This reduces accidental execution but is not a sandbox and does not make an untrusted OAuth client safe.
 

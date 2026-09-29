@@ -1,6 +1,6 @@
 # ChatGPT LLM Gateway
 
-PiLink bridges an interactive ChatGPT web conversation as a local, private OpenAI-compatible model provider (`http://127.0.0.1:3210/v1`) via reverse-RPC over an OAuth/SSE MCP transport, requiring no browser automation or scraping.
+PiLink bridges an interactive ChatGPT web conversation as a local, private OpenAI-compatible model provider (`http://127.0.0.1:3210/v1`) via reverse-RPC over an OAuth/SSE MCP transport. The **core gateway path** requires no browser scraping or DOM automation. The optional **PiLink Wake** extension is a separate convenience that, after browser approval, interacts with the ChatGPT page DOM to submit the exact wake message; see the [browser-extension security boundary](../SECURITY_MODEL.md#optional-pilink-wake-browser-extension).
 
 ## Launcher modes
 
@@ -32,7 +32,7 @@ Connection details
 ```
 
 ### 2. Connect ChatGPT
-1. At the interactive gateway prompt, enter the exact display name you will give this ChatGPT MCP connection (default: **PiLink Gateway**, distinct from any full-access PiLink Desktop connector). In ChatGPT, add a custom MCP connection with that name and the printed **ChatGPT MCP** URL. Headless setup uses the default unless `PI_LLM_GATEWAY_CONNECTOR_NAME` is set before start.
+1. At the interactive gateway prompt, enter the exact display name you will give this ChatGPT MCP connection (default: **PiLink Gateway**, distinct from any Full-access PiLink MCP connection). In ChatGPT, add a custom MCP connection with that name and the printed **ChatGPT MCP** URL. Headless setup uses the default unless `PI_LLM_GATEWAY_CONNECTOR_NAME` is set before start.
 2. Select **OAuth** and **Dynamic Client Registration (DCR)**.
 3. Watch the gateway terminal for the **ChatGPT OAuth approval** prompt and reply `y` within **90 seconds**, only if you initiated the connection. The registration window lasts 5 minutes; run `pilink gateway connect` to reopen it if expired. A headless service instead needs the printed one-time owner pairing URL and verification code. Browser extension setup does not prompt until ChatGPT has received an OAuth token.
 4. If ChatGPT shows `access_denied`, the new OAuth client may have been disabled after a declined/expired approval. Remove that failed connection in ChatGPT, run `pilink gateway connect`, and add the connection again. Browser auto-wake has a separate approval flow; on Windows it also requires explicit confirmation in the browser profile reached through normal default-HTTPS browsing.

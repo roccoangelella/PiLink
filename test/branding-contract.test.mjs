@@ -64,6 +64,7 @@ test("PiLink remains the project brand and compatibility names stay stable", asy
   assert.equal(pluginManifest.name, "pilink");
   assert.doesNotMatch(serverSource, /watch remote ChatGPT conversations|Collaborative monitor/u);
   assert.doesNotMatch(serverSource, /VSPiLink/u);
+  assert.match(serverSource, /Not affiliated with or endorsed by OpenAI, Microsoft, or Cloudflare\./u);
 });
 
 test("brand assets intentionally use the new original PiLink mark", async () => {

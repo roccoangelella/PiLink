@@ -55,10 +55,10 @@ Launch experiences are the CLI entry workflows available to operators:
 PiLink for VS Code is a separately installed control surface (`pilink install-vscode-plugin`), not a launch mode. Its graphical setup writes and uses `single` runtime mode. `cli` is not a third server capability mode and must not be stored as `PI_RUNTIME_MODE`. The core server accepts only `single` and `collaboration`.
 
 Fresh ordinary graphical setups use **Single agent**. The main launcher does not
-advertise collaboration as a peer choice. Existing collaboration configurations
-are detected rather than silently rewritten, and the retained Advanced setup
-compatibility flow may expose a workflow selector to an operator who enters it
-deliberately.
+advertise collaboration as a peer choice or expose a workflow selector. Existing
+collaboration configurations are detected rather than silently rewritten and
+shown as migration/advanced state. Enabling collaboration remains an explicit
+CLI/operator action.
 
 Changing the runtime mode requires a server restart so existing and new MCP transports
 cannot observe different capability catalogs from the same process.
@@ -73,20 +73,19 @@ security policy.
 Its ordinary lifecycle is:
 
 ```text
-choose project -> safe Quick start or Local only -> connect OAuth client
-      -> use PiLink from ChatGPT Work -> stop/recover when needed
+choose project -> Set up stable endpoint / Temporary quick start / Local only
+      -> connect ChatGPT only for a public endpoint
+      -> use PiLink -> stop/recover when needed
 ```
 
 The main dashboard intentionally exposes only the next useful action and three
 high-value facts: server state, endpoint state, and ChatGPT OAuth/session state.
-
-**Advanced setup...** is a compatibility/operator path for stable or legacy
-hosting and other specialist configuration. It is deliberately distinct from
-the normal one-click path.
+Stable HTTPS is a normal endpoint choice, not a separate advanced launcher.
 
 Local provider-backed agents, native VS Code MCP integration, manual OAuth
-registration, collaboration operation, and Full-access launch can remain in the
-backend/CLI for compatibility without becoming parallel graphical products.
+registration, collaboration operation, Full-access launch, and legacy hosting
+remain CLI/operator concerns where supported; they are not parallel graphical
+products.
 
 The dashboard webview never needs the ChatGPT DOM, cookies, transcript,
 composer, or model reasoning. ChatGPT remains in its own client surface.
@@ -157,7 +156,9 @@ Project-folder access is the normal boundary. Workspace tools resolve paths
 against the selected canonical project and a general shell is not exposed.
 Repository execution is controlled separately by PiLink's execution policy.
 
-Both normal graphical first-run buttons choose this boundary.
+All three ordinary graphical endpoint choices—**Set up stable endpoint**,
+**Temporary quick start**, and **Local only**—retain this Project-folder
+boundary.
 
 ## Full access
 
@@ -167,14 +168,17 @@ machine-wide file access and process execution as the PiLink OS user.
 Because it is qualitatively different from the normal bridge, the VS Code
 launcher does not offer Full access as a normal start action. If it detects an
 existing Full-access configuration, it replaces the ordinary start state with a
-visible safety state. Quick start and Local only never request it.
+visible safety state. None of the three ordinary graphical endpoint choices
+requests Full access.
 
-Operators who actually need Full access should use the explicit CLI controls or
-deliberately review the retained Advanced setup compatibility flow and its
-warning/confirmation.
+Operators who actually need Full access must use the explicit CLI/operator
+controls and review the warning/confirmation there.
 
-Full access is client-specific. It must not be implemented as a wildcard grant
-for every registered OAuth client.
+The compatibility CLI flag `--allow-unsafe-full-access` initially permits newly
+authorized clients through `PI_FULL_ACCESS_CLIENT_IDS=*`. Operators who intend
+client-specific Full access should narrow that value to the exact reviewed
+client ID and restart. A normal graphical setup never creates this wildcard
+grant.
 
 ## OAuth and connection state
 
@@ -205,17 +209,16 @@ as runtime state, active MCP-session counts, and compatibility projections.
 Private credentials, prompts, workspace file contents, OAuth token hashes, and
 model reasoning must not cross into the webview state.
 
-## Tool activity
+## Server tool-audit metadata
 
 The MCP harness records bounded tool-audit metadata independently from the
-private ChatGPT transcript. The audit record is intended for operational
-questions such as whether a tool ran, whether it succeeded, and how long it
-took.
+private ChatGPT transcript. The audit record is intended for operator questions
+such as whether a tool ran, whether it succeeded, and how long it took.
 
-The launcher may display that metadata when it is available through the current
-admin projection. In modes where that projection is unavailable, the activity
-section remains absent. The UI must never turn the audit stream into a prompt,
-path, argument, or result viewer.
+That metadata can remain available to bounded administrative projections or
+compatible operator diagnostics, but the normal VS Code dashboard does **not**
+render a tool-activity feed, prompt history, task board, transcript, arguments,
+paths, or results.
 
 ## Collaboration mode
 
@@ -266,9 +269,11 @@ with:
 A remote ChatGPT client needs a reachable HTTPS origin. Local-only operation is
 valid for same-machine clients but cannot be reached by ChatGPT web.
 
-Quick start deliberately uses a temporary Quick Tunnel. Recreating it changes
-the public origin. Stable and legacy hosting live in Advanced setup because
-they require more operator choices.
+**Temporary quick start** deliberately uses a temporary Quick Tunnel.
+Recreating it changes the public origin. **Set up stable endpoint** is the
+normal graphical route for a Cloudflare fixed domain or an existing HTTPS
+origin/reverse proxy. Legacy `nip.io` and other specialist hosting remain
+CLI/operator paths.
 
 ## Process ownership
 
@@ -304,5 +309,5 @@ The architectural rule for future extension work is:
 > endpoint/OAuth state, or recover a common bridge failure, it does not belong
 > in the normal dashboard.
 
-Compatibility can remain in the backend or an explicitly advanced/operator
-path without making the primary VS Code product complicated again.
+Compatibility can remain in the backend or an explicit CLI/operator path
+without making the primary VS Code product complicated again.

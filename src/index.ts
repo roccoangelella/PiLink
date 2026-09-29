@@ -1910,7 +1910,7 @@ function renderLandingPage(): string {
       <article class="card"><span class="num">02</span><h2>OAuth-protected remote access</h2><p>A public endpoint is not authorization. PiLink keeps remote OAuth and local owner verification as separate trust boundaries.</p></article>
       <article class="card"><span class="num">03</span><h2>Optional local model gateway</h2><p>A connected ChatGPT conversation can provide model responses through a loopback API. Streaming is buffered; caller tools execute in the local harness.</p></article>
     </section>
-    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project</span></footer>
+    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project · Not affiliated with or endorsed by OpenAI, Microsoft, or Cloudflare.</span></footer>
   </main>
 </body>
 </html>`;
