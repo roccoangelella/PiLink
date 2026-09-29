@@ -8,7 +8,7 @@ NODE_DOWNLOAD_BASE="https://nodejs.org/dist/v24.18.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 fail() {
-  printf 'VSPiLink installer: %s\n' "$1" >&2
+  printf 'PiLink installer: %s\n' "$1" >&2
   exit 1
 }
 
@@ -198,7 +198,7 @@ if [ -n "$node_cli" ]; then
 fi
 if [ "$actual_node_version" != "$EXPECTED_NODE_VERSION" ]; then
   if [ -n "$node_cli" ]; then
-    printf 'Found %s at %s; VSPiLink requires %s exactly. Installing a verified per-user runtime.\n' "${actual_node_version:-an unreadable Node.js}" "$node_cli" "$EXPECTED_NODE_VERSION" >&2
+    printf 'Found %s at %s; PiLink requires %s exactly. Installing a verified per-user runtime.\n' "${actual_node_version:-an unreadable Node.js}" "$node_cli" "$EXPECTED_NODE_VERSION" >&2
   else
     printf 'Node.js %s was not found. Installing a verified per-user runtime.\n' "$EXPECTED_NODE_VERSION" >&2
   fi
@@ -224,8 +224,8 @@ printf 'VS Code CLI: %s\n' "$code_cli"
 
 if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]; then
   printf '%s\n' \
-    'Remote-SSH detected. When this script runs in the VS Code remote integrated terminal, the CLI should install VSPiLink into that remote extension host.' \
-    'After installation, open Extensions and verify VSPiLink says "Installed on SSH: <host>". If it appears only under Local, use the extension gear menu and choose "Install in SSH: <host>".'
+    'Remote-SSH detected. When this script runs in the VS Code remote integrated terminal, the CLI should install PiLink for VS Code into that remote extension host.' \
+    'After installation, open Extensions and verify PiLink says "Installed on SSH: <host>". If it appears only under Local, use the extension gear menu and choose "Install in SSH: <host>".'
 fi
 
 "$code_cli" --install-extension "$vsix" --force >/dev/null || fail "VS Code rejected the VSIX installation."
@@ -236,4 +236,4 @@ printf '%s\n' "$installed" | grep -Fxi "$EXTENSION_ID@$extension_version" >/dev/
 printf '%s\n' \
   "Installed and verified: $EXTENSION_ID@$extension_version" \
   'Final required click: return to VS Code, press Ctrl+Shift+P (macOS: Cmd+Shift+P), select "Developer: Reload Window", and press Enter.' \
-  'With Remote-SSH, reload the remote VS Code window and re-check that VSPiLink is installed on the SSH host.'
+  'With Remote-SSH, reload the remote VS Code window and re-check that PiLink is installed on the SSH host.'

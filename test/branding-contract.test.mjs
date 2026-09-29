@@ -18,6 +18,16 @@ function withoutTechnicalIdentifiers(markdown) {
     .join("\n");
 }
 
+function withoutInstallerCompatibilityIdentifiers(source) {
+  return source
+    .replace(/0xfunboy\.vspilink/giu, "")
+    .replace(/\bvspilink(?=[/\\-])/giu, "")
+    .replace(/\bvspilink\b/gu, "")
+    .split("\n")
+    .map((line) => /Join-Path\b.*["']VSPiLink["']/iu.test(line) ? "" : line)
+    .join("\n");
+}
+
 function assertAccessibleSafeSvg(file, svg) {
   assert.match(svg, /^\s*<svg\b/iu, `${file} must be an SVG document`);
   assert.match(svg, /\brole\s*=\s*["']img["']/iu, `${file} must expose image semantics`);
@@ -114,6 +124,11 @@ test("current onboarding surfaces do not revive retired launcher labels", async 
   for (const file of currentLauncherDocs) {
     const prose = withoutTechnicalIdentifiers(await fs.readFile(file, "utf8"));
     assert.doesNotMatch(prose, retiredUserVisibleLabels, `${file} must use current PiLink launcher labels`);
+  }
+
+  for (const file of ["install/install.sh", "install/install.ps1"]) {
+    const source = withoutInstallerCompatibilityIdentifiers(await fs.readFile(file, "utf8"));
+    assert.doesNotMatch(source, retiredUserVisibleLabels, `${file} must use current PiLink installer labels`);
   }
 });
 

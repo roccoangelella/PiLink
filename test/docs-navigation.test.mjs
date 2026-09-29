@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+const repositoryRoot = path.resolve(".");
 const entrypointDocs = [
   "README.md",
   "packages/vscode/README.md",
@@ -159,6 +160,22 @@ function isExternalOrDynamic(target) {
   );
 }
 
+function isInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function resolveRepositoryTarget(root, sourceFile, decodedPath) {
+  const sourceAbsolute = path.resolve(root, sourceFile);
+  const targetFile = decodedPath
+    ? path.resolve(path.dirname(sourceAbsolute), decodedPath)
+    : sourceAbsolute;
+  if (!isInside(root, targetFile)) {
+    throw new Error(`relative documentation target escapes repository: ${decodedPath}`);
+  }
+  return targetFile;
+}
+
 async function documentationFiles() {
   const [docsEntries, operationsEntries] = await Promise.all([
     fs.readdir("docs", { withFileTypes: true }),
@@ -182,6 +199,7 @@ test("public documentation has valid relative links, images, and simple heading 
   );
   const anchorsByFile = new Map();
   const failures = [];
+  const realRepositoryRoot = await fs.realpath(repositoryRoot);
 
   const anchorsFor = async (file) => {
     if (!anchorsByFile.has(file)) {
@@ -208,12 +226,21 @@ test("public documentation has valid relative links, images, and simple heading 
         continue;
       }
 
-      const targetFile = decodedPath
-        ? path.normalize(path.join(path.dirname(sourceFile), decodedPath))
-        : sourceFile;
+      let targetFile;
+      try {
+        targetFile = resolveRepositoryTarget(repositoryRoot, sourceFile, decodedPath);
+      } catch (error) {
+        failures.push(`${sourceFile}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
 
       try {
-        await fs.access(targetFile);
+        // Resolve symlinks before opening linked content, not just lexical ../ traversal.
+        const realTarget = await fs.realpath(targetFile);
+        if (!isInside(realRepositoryRoot, realTarget)) {
+          failures.push(`${sourceFile}: relative target escapes repository via symlink ${JSON.stringify(target)}`);
+          continue;
+        }
       } catch {
         failures.push(`${sourceFile}: missing relative target ${JSON.stringify(target)} -> ${targetFile}`);
         continue;
@@ -238,4 +265,19 @@ test("public documentation has valid relative links, images, and simple heading 
   }
 
   assert.deepEqual(failures, []);
+});
+
+test("relative documentation targets cannot escape the repository after URL decoding", () => {
+  const fixtureRoot = path.resolve("scoped-documentation-fixture");
+  assert.equal(
+    resolveRepositoryTarget(fixtureRoot, "docs/guide.md", "../README.md"),
+    path.join(fixtureRoot, "README.md"),
+  );
+
+  const decodedTraversal = safeDecode("%2e%2e/%2e%2e/outside.md");
+  assert.equal(decodedTraversal, "../../outside.md");
+  assert.throws(
+    () => resolveRepositoryTarget(fixtureRoot, "docs/guide.md", decodedTraversal),
+    /escapes repository/u,
+  );
 });

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { assertNoPinnedReleaseVersionCollision } from "./release-version-guard.mjs";
 
 const expectedNodeVersion = "v24.18.0";
 const expectedNpmVersion = "11.16.0";
@@ -57,6 +58,12 @@ function main() {
   }
 
   assertSafeReleasePath();
+  assertNoPinnedReleaseVersionCollision({
+    releaseDirectory,
+    packageName: rootPackage.name,
+    extensionName: extensionPackage.name,
+    version: rootPackage.version,
+  });
   fs.rmSync(releaseDirectory, { recursive: true, force: true });
   fs.mkdirSync(releaseDirectory, { recursive: true, mode: 0o755 });
 
