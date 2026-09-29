@@ -215,6 +215,33 @@ test("release is the only terminal gateway lifecycle state", async (t) => {
   assert.equal(status.state, "released");
 });
 
+test("status exposes only the opaque oldest queued request id and advances it with the queue head", async (t) => {
+  const { store } = await fixture(t);
+  const first = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "first payload must not appear in status" }],
+  });
+  const second = await store.enqueueRequest({
+    model: "pilink",
+    messages: [{ role: "user", content: "second payload must not appear in status" }],
+  });
+
+  let status = await store.status();
+  assert.equal(status.queued, 2);
+  assert.equal(status.oldest_queue_request_id, first.requestId);
+  assert.equal("messages" in status, false);
+
+  await store.cancelRequest(first.requestId);
+  status = await store.status();
+  assert.equal(status.queued, 1);
+  assert.equal(status.oldest_queue_request_id, second.requestId);
+
+  await store.cancelRequest(second.requestId);
+  status = await store.status();
+  assert.equal(status.queued, 0);
+  assert.equal(status.oldest_queue_request_id, undefined);
+});
+
 test("a disconnected session makes the gateway unavailable until a new exchange", async (t) => {
   const { store } = await fixture(t);
   const waiting = store.exchange("session-disconnect", undefined, 5);

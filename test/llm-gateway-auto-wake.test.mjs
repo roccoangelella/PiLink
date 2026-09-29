@@ -182,6 +182,44 @@ test("a failed idle wake cannot suppress a later queued request after ChatGPT sl
   }
 });
 
+test("a hidden queued-request replacement rearms once without rearming for an append", async () => {
+  const requestA = "req_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const requestB = "req_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  let state = status({ oldest_queue_request_id: requestA });
+  let opens = 0;
+  const logs = [];
+  const supervisor = startGatewayAutoWakeSupervisor({
+    store: { status: async () => state },
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true",
+      PILINK_GATEWAY_LAUNCH: "true", PI_LLM_GATEWAY_AUTO_WAKE: "true" },
+    platform: "linux", driver: { wake: async () => { opens++; } },
+    pollIntervalMs: 5, suspendedPollMs: 5, wakeGraceMs: 0, confirmationMs: 30,
+    log: (line) => logs.push(line),
+  });
+  assert.ok(supervisor);
+  try {
+    await eventually(() => logs.filter((line) => /no worker contact/.test(line)).length === 1);
+    assert.equal(opens, 1);
+
+    // A was removed and B was enqueued entirely between supervisor polls. The
+    // queue count never appears as zero, but the oldest queued request changed.
+    state = status({ oldest_queue_request_id: requestB });
+    await eventually(() => opens === 2);
+    await eventually(() => logs.filter((line) => /no worker contact/.test(line)).length === 2);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(opens, 2, "unchanged B must stay suppressed after its bounded attempt");
+
+    // C is appended behind B: queue depth changes, but the oldest request does
+    // not, so this is still the same wake condition.
+    state = status({ queued: 2, oldest_queue_request_id: requestB });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(opens, 2, "appending behind B must not rearm auto-wake");
+  } finally {
+    supervisor.close();
+  }
+});
+
 test("a temporary suppression does not retry a failed wake for the same stranded queue", async () => {
   let state = status();
   let opens = 0;

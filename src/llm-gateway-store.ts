@@ -118,6 +118,8 @@ export interface GatewayStatusSnapshot {
   claim_age_ms?: number;
   lease_expires_at?: string;
   oldest_queue_age_ms: number;
+  /** Opaque identity of the current oldest queued request; no request payload is exposed. */
+  oldest_queue_request_id?: string;
   next_action: GatewayStatusNextAction;
 }
 
@@ -360,6 +362,7 @@ export class LlmGatewayJobStore {
       const currentClaim = currentGatewayClaim(state);
       const workerContact = classifyWorkerContact(state, nowMs, this.staleAfterMs);
       const pendingWorkerPolls = this.pendingWorkerPolls.size;
+      const oldestQueued = oldestQueuedJob(state.jobs);
       return {
         state: state.released ? "released" : active ? "active" : "waiting_for_chatgpt",
         ...(state.activeSessionId ? { active_session_id: state.activeSessionId } : {}),
@@ -372,7 +375,8 @@ export class LlmGatewayJobStore {
         processing_claim: currentClaim !== undefined,
         ...(currentClaim?.claimedAt ? { claim_age_ms: claimAgeMs(currentClaim, nowMs) } : {}),
         ...(currentClaim?.leaseExpiresAt ? { lease_expires_at: currentClaim.leaseExpiresAt } : {}),
-        oldest_queue_age_ms: oldestQueueAgeMs(state.jobs, nowMs),
+        oldest_queue_age_ms: oldestQueued ? queueAgeMs(oldestQueued, nowMs) : 0,
+        ...(oldestQueued ? { oldest_queue_request_id: oldestQueued.requestId } : {}),
         next_action: nextStatusAction(
           state.released,
           workerContact,
@@ -1647,15 +1651,24 @@ function claimAgeMs(job: StoredGatewayJob, nowMs: number): number {
   return Math.max(0, Number.isFinite(claimedAtMs) ? nowMs - claimedAtMs : 0);
 }
 
-function oldestQueueAgeMs(jobs: StoredGatewayJob[], nowMs: number): number {
-  let oldestCreatedAtMs: number | undefined;
+function oldestQueuedJob(jobs: StoredGatewayJob[]): StoredGatewayJob | undefined {
+  let oldest: StoredGatewayJob | undefined;
+  let oldestCreatedAtMs = Number.POSITIVE_INFINITY;
   for (const job of jobs) {
     if (job.status !== "queued") continue;
     const createdAtMs = Date.parse(job.createdAt);
     if (!Number.isFinite(createdAtMs)) continue;
-    if (oldestCreatedAtMs === undefined || createdAtMs < oldestCreatedAtMs) oldestCreatedAtMs = createdAtMs;
+    if (createdAtMs < oldestCreatedAtMs) {
+      oldest = job;
+      oldestCreatedAtMs = createdAtMs;
+    }
   }
-  return oldestCreatedAtMs === undefined ? 0 : Math.max(0, nowMs - oldestCreatedAtMs);
+  return oldest;
+}
+
+function queueAgeMs(job: StoredGatewayJob, nowMs: number): number {
+  const createdAtMs = Date.parse(job.createdAt);
+  return Math.max(0, Number.isFinite(createdAtMs) ? nowMs - createdAtMs : 0);
 }
 
 function nextStatusAction(
@@ -1712,7 +1725,7 @@ function countStatuses(jobs: StoredGatewayJob[]): Omit<
   GatewayStatusSnapshot,
   "state" | "active_session_id" | "last_exchange_at" | "release_reason" |
   "worker_polling" | "pending_worker_polls" | "worker_contact" | "processing_claim" |
-  "claim_age_ms" | "lease_expires_at" | "oldest_queue_age_ms" | "next_action"
+  "claim_age_ms" | "lease_expires_at" | "oldest_queue_age_ms" | "oldest_queue_request_id" | "next_action"
 > {
   return {
     queued: jobs.filter((job) => job.status === "queued").length,

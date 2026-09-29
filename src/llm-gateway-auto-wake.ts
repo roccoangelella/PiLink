@@ -138,6 +138,7 @@ export function startGatewayAutoWakeSupervisor(
   let failedCycles = 0;
   let hasSeenWorker = false;
   let lastObservedExchange: string | undefined;
+  let lastObservedOldestQueueRequestId: string | undefined;
   let hadQueuedWork = false;
   let driverPromise: Promise<GatewayWakeDriver> | undefined = options.driver
     ? Promise.resolve(options.driver)
@@ -158,7 +159,18 @@ export function startGatewayAutoWakeSupervisor(
       failedCycles = 0;
     }
     const hasQueuedWork = status.queued > 0;
-    if (hasQueuedWork && !hadQueuedWork) failedCycles = 0;
+    const oldestQueueRequestId = status.oldest_queue_request_id;
+    if (hasQueuedWork && oldestQueueRequestId !== undefined) {
+      if (!hadQueuedWork || (lastObservedOldestQueueRequestId !== undefined &&
+          oldestQueueRequestId !== lastObservedOldestQueueRequestId)) failedCycles = 0;
+      lastObservedOldestQueueRequestId = oldestQueueRequestId;
+    } else if (hasQueuedWork && !hadQueuedWork) {
+      // Compatibility for minimal status fixtures that predate the opaque
+      // oldest-queue identity: preserve the previous empty->queued reset.
+      failedCycles = 0;
+    } else if (!hasQueuedWork) {
+      lastObservedOldestQueueRequestId = undefined;
+    }
     hadQueuedWork = hasQueuedWork;
   };
 
