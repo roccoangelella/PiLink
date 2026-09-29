@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import test from "node:test";
 
 const repositoryUrl = "https://github.com/roccoangelella/PiLink.git";
+const originalLogoDigest = "9cc5aa2f1682ad651da33a118615a94fdbd1c88e7525c492adb1fd5a2c76d576";
+const originalIconDigest = "0a1ca2c827ddfd09a56bc520db18c06788e1d349e6ca664e0ba8a83a9011d4f7";
 
 function withoutTechnicalIdentifiers(markdown) {
   let inFence = false;
@@ -28,24 +31,8 @@ function withoutInstallerCompatibilityIdentifiers(source) {
     .join("\n");
 }
 
-function assertAccessibleSafeSvg(file, svg) {
-  assert.match(svg, /^\s*<svg\b/iu, `${file} must be an SVG document`);
-  assert.match(svg, /\brole\s*=\s*["']img["']/iu, `${file} must expose image semantics`);
-
-  const labelledBy = svg.match(/\baria-labelledby\s*=\s*["']([^"']+)["']/iu)?.[1]?.split(/\s+/u) ?? [];
-  const title = svg.match(/<title\b[^>]*\bid\s*=\s*["']([^"']+)["'][^>]*>\s*([^<]+?)\s*<\/title>/iu);
-  const description = svg.match(/<desc\b[^>]*\bid\s*=\s*["']([^"']+)["'][^>]*>\s*([^<]+?)\s*<\/desc>/iu);
-
-  assert.ok(title?.[2]?.trim(), `${file} must contain a non-empty <title>`);
-  assert.ok(description?.[2]?.trim(), `${file} must contain a non-empty <desc>`);
-  assert.ok(labelledBy.includes(title[1]), `${file} aria-labelledby must reference its title`);
-  assert.ok(labelledBy.includes(description[1]), `${file} aria-labelledby must reference its description`);
-
-  assert.doesNotMatch(svg, /<script\b/iu, `${file} must not contain scripts`);
-  assert.doesNotMatch(svg, /\son[a-z]+\s*=/iu, `${file} must not contain script event handlers`);
-  for (const match of svg.matchAll(/\b(?:href|xlink:href)\s*=\s*["']([^"']+)["']/giu)) {
-    assert.match(match[1], /^#/u, `${file} must not load external href resources`);
-  }
+async function sha256(file) {
+  return crypto.createHash("sha256").update(await fs.readFile(file)).digest("hex");
 }
 
 async function pngDimensions(file) {
@@ -73,7 +60,8 @@ test("PiLink remains the project brand and compatibility names stay stable", asy
   const pluginManifest = JSON.parse(pluginManifestText);
 
   assert.match(readme, /^# PiLink$/mu);
-  assert.match(readme, /docs\/assets\/brand\/pilink-lockup\.svg/u);
+  assert.match(readme, /docs\/assets\/logo\.png/u);
+  assert.doesNotMatch(readme, /independent open-source project|not affiliated with|not endorsed by/iu);
   assert.ok(readme.split("\n").length < 240, "the root README must remain concise");
   for (const command of [
     "pilink start --mode single",
@@ -105,7 +93,7 @@ test("PiLink remains the project brand and compatibility names stay stable", asy
   assert.equal(pluginManifest.name, "pilink");
   assert.doesNotMatch(serverSource, /watch remote ChatGPT conversations|Collaborative monitor/u);
   assert.doesNotMatch(serverSource, /VSPiLink/u);
-  assert.match(serverSource, /Not affiliated with or endorsed by OpenAI, Microsoft, or Cloudflare\./u);
+  assert.doesNotMatch(serverSource, /independent open-source project|not affiliated with|not endorsed by/iu);
 });
 
 test("current onboarding surfaces do not revive retired launcher labels", async () => {
@@ -132,28 +120,21 @@ test("current onboarding surfaces do not revive retired launcher labels", async 
   }
 });
 
-test("brand SVGs are accessible and self-contained", async () => {
-  const assets = [
-    "docs/assets/brand/pilink-mark.svg",
-    "docs/assets/brand/pilink-lockup.svg",
+test("public and plugin surfaces reuse the exact original PiLink logo", async () => {
+  const logoPaths = [
+    "docs/assets/logo.png",
+    "packages/vscode/media/logo.png",
+    "plugins/pilink/assets/logo.png",
   ];
 
-  for (const file of assets) {
-    const svg = await fs.readFile(file, "utf8");
-    assertAccessibleSafeSvg(file, svg);
-    assert.doesNotMatch(svg, /OpenAI|ChatGPT|Cloudflare|Microsoft/u);
+  for (const file of logoPaths) {
+    assert.equal(await sha256(file), originalLogoDigest, `${file} must match the pre-refresh PiLink logo exactly`);
+    assert.deepEqual(await pngDimensions(file), { width: 1280, height: 720 });
   }
-});
 
-test("important public PNG assets have expected PNG geometry", async () => {
-  const assets = new Map([
-    ["docs/assets/logo.png", { width: 1024, height: 1024 }],
-    ["packages/vscode/media/logo.png", { width: 1024, height: 1024 }],
-    ["plugins/pilink/assets/logo.png", { width: 1024, height: 1024 }],
-    ["packages/vscode/media/icon.png", { width: 256, height: 256 }],
-  ]);
+  assert.equal(await sha256("packages/vscode/media/icon.png"), originalIconDigest);
+  assert.deepEqual(await pngDimensions("packages/vscode/media/icon.png"), { width: 256, height: 256 });
 
-  for (const [file, expected] of assets) {
-    assert.deepEqual(await pngDimensions(file), expected);
-  }
+  await assert.rejects(fs.access("docs/assets/brand/pilink-mark.svg"));
+  await assert.rejects(fs.access("docs/assets/brand/pilink-lockup.svg"));
 });

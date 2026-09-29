@@ -1867,8 +1867,8 @@ function renderLandingPage(): string {
     body { margin:0; min-height:100vh; color:var(--text); background:radial-gradient(circle at 14% 0%,#13352f 0,transparent 34rem),radial-gradient(circle at 90% 18%,#1b2852 0,transparent 30rem),var(--bg); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     main { width:min(1040px,calc(100% - 40px)); margin:0 auto; padding:68px 0 36px; }
     .top { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:76px; }
-    .brand { display:flex; align-items:center; gap:12px; color:var(--text); font-size:20px; font-weight:760; letter-spacing:-.03em; }
-    .brand img { display:block; width:42px; height:42px; border-radius:10px; }
+    .brand { display:flex; align-items:center; color:var(--text); font-weight:760; letter-spacing:-.02em; }
+    .brand img { display:block; width:180px; max-width:42vw; height:auto; border-radius:6px; background:#fff; }
     .status { display:flex; align-items:center; gap:8px; padding:7px 11px; border:1px solid #5fe0ba38; border-radius:999px; background:#50d5ae12; color:#a1f2da; font-size:12px; font-weight:650; }
     .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 16px #77e0c1; }
     .hero { max-width:780px; margin-bottom:56px; }
@@ -1893,7 +1893,7 @@ function renderLandingPage(): string {
 <body>
   <main>
     <header class="top">
-      <div class="brand"><img src="/assets/logo.png" width="42" height="42" alt=""><span>PiLink</span></div>
+      <div class="brand"><img src="/assets/logo.png" width="180" height="101" alt="PiLink"></div>
       <div class="status"><span class="dot"></span>Service online</div>
     </header>
     <section class="hero">
@@ -1910,7 +1910,7 @@ function renderLandingPage(): string {
       <article class="card"><span class="num">02</span><h2>OAuth-protected remote access</h2><p>A public endpoint is not authorization. PiLink keeps remote OAuth and local owner verification as separate trust boundaries.</p></article>
       <article class="card"><span class="num">03</span><h2>Optional local model gateway</h2><p>A connected ChatGPT conversation can provide model responses through a loopback API. Streaming is buffered; caller tools execute in the local harness.</p></article>
     </section>
-    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project · Not affiliated with or endorsed by OpenAI, Microsoft, or Cloudflare.</span></footer>
+    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span></footer>
   </main>
 </body>
 </html>`;

@@ -1,16 +1,13 @@
 # PiLink
 
 <p align="center">
-  <img src="docs/assets/brand/pilink-lockup.svg" width="560" alt="PiLink">
+  <img src="docs/assets/logo.png" width="640" alt="PiLink">
 </p>
 
 PiLink is a self-hosted, OAuth-protected MCP bridge that gives authorized AI
 clients controlled access to a project you choose. The normal path is
 **project-scoped by default**; broader execution and Full machine access require
 separate operator decisions.
-
-PiLink is an independent open-source project. It is not affiliated with or
-endorsed by OpenAI, Microsoft, or Cloudflare.
 
 ## Choose your route
 
