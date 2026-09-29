@@ -85,11 +85,16 @@ export function stageGatewayBrowserExtension(options: {
     throw new Error("Refusing an unsafe browser extension reload marker");
   }
   const manifestText = JSON.stringify(manifest, null, 2) + "\n";
-  const approvedExtensionChanged = fs.existsSync(sourceMarker) && (
+  const existingStagedFiles = [manifestFile, scriptFile, backgroundFile].some((file) => fs.existsSync(file));
+  const stagedExtensionChanged = (
     !fs.existsSync(manifestFile) || fs.readFileSync(manifestFile, "utf8") !== manifestText ||
     !fs.existsSync(scriptFile) || fs.readFileSync(scriptFile, "utf8") !== script ||
     !fs.existsSync(backgroundFile) || fs.readFileSync(backgroundFile, "utf8") !== background
   );
+  // A user may load the unpacked directory before setup records its source
+  // marker. Once any staged extension file exists, changing that directory can
+  // leave Chromium running the old script until the operator clicks Reload.
+  const approvedExtensionChanged = (fs.existsSync(sourceMarker) || existingStagedFiles) && stagedExtensionChanged;
   fs.writeFileSync(manifestFile, manifestText, { mode: 0o600 });
   fs.writeFileSync(scriptFile, script, { mode: 0o600 });
   fs.writeFileSync(backgroundFile, background, { mode: 0o600 });
@@ -215,6 +220,15 @@ export async function waitForLoadedGatewayBrowserExtension(
   }
 }
 
+export function gatewayBrowserPreferencesCanAutoEnable(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  // Windows' HTTPS association identifies a browser family, not the exact
+  // profile the handler will choose. Passive Preferences evidence may belong
+  // to another profile, so require explicit operator confirmation there.
+  return platform === "linux";
+}
+
 export function gatewayBrowserWakeEnabledMessage(startedForSetup = false): string {
   return startedForSetup
     ? "Auto-wake enabled. The gateway started for this setup and will apply the setting within a few seconds while running. To start it again later: pilink gateway start. Check it with: pilink gateway status."
@@ -239,7 +253,8 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
       console.error("Auto-wake paused until the updated extension has been reloaded and confirmed.");
     }
   }
-  if (!enable && !reloadRequired && loadedGatewayBrowserExtension({ destination: location })) {
+  const passiveAutoEnable = gatewayBrowserPreferencesCanAutoEnable();
+  if (!enable && !reloadRequired && passiveAutoEnable && loadedGatewayBrowserExtension({ destination: location })) {
     enableGatewayBrowserWake();
     rememberGatewayBrowserExtensionSource(location);
     console.error("PiLink Wake is active in the default browser; no terminal confirmation is needed.");
@@ -255,7 +270,12 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
     return;
   }
   console.error(`Browser extension files: ${location}`);
-  console.error("The browser must approve this extension once. PiLink cannot silently install it; auto-wake turns on by default after PiLink verifies it is loaded.");
+  console.error("The browser must approve this extension once. PiLink cannot silently install it.");
+  if (process.platform === "win32") {
+    console.error("On Windows, auto-wake stays off until you explicitly confirm the extension in the browser profile used by default HTTPS links.");
+  } else {
+    console.error("On Linux, auto-wake turns on after PiLink verifies the enabled unpacked extension.");
+  }
   console.error("Open brave://extensions (Brave) or chrome://extensions (Chrome/Chromium).");
   if (reloadRequired) {
     console.error("PiLink Wake changed: click Reload on its card and keep it enabled (otherwise it will use an old wake phrase).");
@@ -263,20 +283,32 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
     console.error("1. Turn on Developer mode. 2. Click Load unpacked. 3. Select the DIRECTORY above, not manifest.json. 4. Keep PiLink Wake enabled.");
   }
   if (!process.stdin.isTTY || !process.stderr.isTTY) {
-    console.error("Once installed, run 'pilink gateway browser-extension' again. If PiLink cannot detect a non-default browser profile, verify the extension yourself before using 'pilink gateway browser-extension --enable'.");
+    if (process.platform === "win32") {
+      console.error("On Windows, passive browser Preferences cannot prove which Chromium profile the default HTTPS handler will open. Open a normal HTTPS link with your default browser, verify PiLink Wake is loaded and enabled in that profile, then run 'pilink gateway browser-extension --enable'.");
+    } else {
+      console.error("Once installed, run 'pilink gateway browser-extension' again. If PiLink cannot detect a non-default browser profile, verify the extension yourself before using 'pilink gateway browser-extension --enable'.");
+    }
     return;
   }
-  try {
-    openGatewayBrowserExtensionsPage();
-  } catch {
-    console.error("Open brave://extensions or chrome://extensions in your browser if its Extensions page did not open.");
+  if (process.platform === "win32") {
+    console.error("Windows cannot prove which Chromium profile the default HTTPS handler will use. Open a normal HTTPS link with your default browser, then check PiLink Wake in that browser profile's Extensions page.");
+  } else {
+    try {
+      openGatewayBrowserExtensionsPage();
+    } catch {
+      console.error("Open brave://extensions or chrome://extensions in your browser if its Extensions page did not open.");
+    }
   }
   const readline = createInterface({ input: process.stdin, output: gatewayVisiblePromptOutput(), terminal: true });
   try {
     while (true) {
-      const answer = (await readline.question(reloadRequired
-        ? "After clicking Reload in your browser, press Enter to continue (or type skip): "
-        : "After loading PiLink Wake in your browser, press Enter to check it (or type skip): ")).trim().toLowerCase();
+      const answer = (await readline.question(process.platform === "win32"
+        ? (reloadRequired
+          ? "After verifying the default-HTTPS browser profile and clicking Reload on PiLink Wake, press Enter to confirm (or type skip): "
+          : "After verifying PiLink Wake is loaded and enabled in the default-HTTPS browser profile, press Enter to confirm (or type skip): ")
+        : (reloadRequired
+          ? "After clicking Reload in your browser, press Enter to continue (or type skip): "
+          : "After loading PiLink Wake in your browser, press Enter to check it (or type skip): "))).trim().toLowerCase();
       if (answer === "skip") {
         console.error("Auto-wake remains off. Run 'pilink gateway browser-extension' after installing the extension.");
         return;
@@ -287,7 +319,9 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
       }
       console.error("Checking browser extension status (up to 5 seconds)...");
       if (!await waitForLoadedGatewayBrowserExtension({ destination: location })) {
-        console.error("PiLink still cannot verify an enabled PiLink Wake in the default browser profile. Brave/Chrome may still be saving its extension state; check the Extensions page and press Enter to retry. For a non-default profile, verify it yourself before using 'pilink gateway browser-extension --enable'.");
+        console.error(process.platform === "win32"
+          ? "PiLink cannot verify an enabled PiLink Wake in the configured browser's profiles. Check the Extensions page and press Enter to retry; if detection is unavailable, verify it in the default-HTTPS browser yourself before using 'pilink gateway browser-extension --enable'."
+          : "PiLink still cannot verify an enabled PiLink Wake in the default browser profile. Brave/Chrome may still be saving its extension state; check the Extensions page and press Enter to retry. For a non-default profile, verify it yourself before using 'pilink gateway browser-extension --enable'.");
         continue;
       }
       enableGatewayBrowserWake();

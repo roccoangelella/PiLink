@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { enableGatewayBrowserWake, gatewayBrowserExtensionDirectory, gatewayBrowserExtensionNeedsReload, gatewayBrowserWakeEnabledMessage, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension, waitForLoadedGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
+import { enableGatewayBrowserWake, gatewayBrowserExtensionDirectory, gatewayBrowserExtensionNeedsReload, gatewayBrowserPreferencesCanAutoEnable, gatewayBrowserWakeEnabledMessage, loadedGatewayBrowserExtension, pauseGatewayBrowserWake, rememberGatewayBrowserExtensionSource, stageGatewayBrowserExtension, waitForLoadedGatewayBrowserExtension } from "../dist/llm-gateway-browser-setup.js";
 
 const source = fileURLToPath(new URL("../browser-extension/", import.meta.url));
 
@@ -48,6 +48,21 @@ test("staged extension pins the configured connection name rather than accepting
   assert.equal(gatewayBrowserExtensionNeedsReload(destination), true, "a changed approved content script must require a browser reload");
   stageGatewayBrowserExtension({ source, destination, connectorName: "PiLink Gateway" });
   assert.equal(gatewayBrowserExtensionNeedsReload(destination), true, "a later launch must not silently clear the reload requirement");
+});
+
+test("changed staged files require reload even before setup records the source marker", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-unrecorded-reload-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, "browser-extension");
+
+  stageGatewayBrowserExtension({ source, destination, connectorName: "First Connector" });
+  assert.equal(gatewayBrowserExtensionNeedsReload(destination), false, "initial stage must not require reload");
+  stageGatewayBrowserExtension({ source, destination, connectorName: "First Connector" });
+  assert.equal(gatewayBrowserExtensionNeedsReload(destination), false, "identical restage must not require reload");
+
+  stageGatewayBrowserExtension({ source, destination, connectorName: "Second Connector" });
+  assert.equal(gatewayBrowserExtensionNeedsReload(destination), true,
+    "changing an existing unpacked directory must conservatively require browser reload before source ownership is recorded");
 });
 
 test("rebuilding an approved extension preserves its configured wake name", async (t) => {
@@ -113,6 +128,12 @@ test("first Enter can wait for Brave to persist a newly loaded extension", async
   assert.equal(detected, true);
   await fs.writeFile(preferences, "{", "utf8");
   assert.equal(await waitForLoadedGatewayBrowserExtension(options, 25, 5), false);
+});
+
+test("passive Preferences detection can auto-enable on Linux but never on Windows", () => {
+  assert.equal(gatewayBrowserPreferencesCanAutoEnable("linux"), true);
+  assert.equal(gatewayBrowserPreferencesCanAutoEnable("win32"), false);
+  assert.equal(gatewayBrowserPreferencesCanAutoEnable("darwin"), false);
 });
 
 test("Windows stages the approved extension under LocalAppData", () => {
