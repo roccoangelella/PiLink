@@ -42,17 +42,20 @@
           current.searchParams.getAll("pilink_wake").length !== 1 ||
           current.searchParams.get("pilink_wake") !== nonceValues[0]) return false;
       const query = current.searchParams.getAll("q");
+      const prompt = current.searchParams.getAll("prompt");
       const ports = current.searchParams.getAll("pilink_port");
       const expectedPortCount = wakePort === null ? 0 : 1;
       if (ports.length !== expectedPortCount || (wakePort !== null && ports[0] !== String(wakePort))) return false;
       const count = Array.from(current.searchParams).length;
       const withQuery = wakePort === null ? 2 : 3;
       const withoutQuery = wakePort === null ? 1 : 2;
-      // ChatGPT consumes ?q to pre-fill the editor, then removes only ?q
-      // with a same-tab history change. Keep the nonce/port and strict editor
-      // check; never send after another route or extra query parameter.
-      return (query.length === 1 && query[0] === WAKE_TEXT && count === withQuery) ||
-        (query.length === 0 && count === withoutQuery);
+      // ChatGPT may rewrite ?q to ?prompt before consuming it. Keep the
+      // original nonce/port and require the exact phrase in either parameter;
+      // permit only the subsequent removal of that parameter on the same root.
+      // Other routes, extra/duplicate parameters or changed text fail closed.
+      return (query.length === 1 && query[0] === WAKE_TEXT && prompt.length === 0 && count === withQuery) ||
+        (prompt.length === 1 && prompt[0] === WAKE_TEXT && query.length === 0 && count === withQuery) ||
+        (query.length === 0 && prompt.length === 0 && count === withoutQuery);
     } catch (_) {
       return false;
     }
@@ -195,15 +198,26 @@
         return;
       }
 
-      if (pinnedComposer === null) {
+      // ChatGPT may replace its editor while enabling the send button. Only
+      // follow a replacement after the old editor has actually detached; the
+      // current page must still have exactly one editor with the pinned text.
+      if (composer !== pinnedComposer) {
+        if (pinnedComposer !== null && pinnedComposer.isConnected !== false) {
+          finish("editor changed; nothing sent");
+          return;
+        }
         if (typeof composer.focus !== "function") {
           finish("editor cannot be focused; nothing sent");
           return;
         }
         composer.focus();
         pinnedComposer = composer;
-      } else if (composer !== pinnedComposer) {
-        finish("editor changed; nothing sent");
+      }
+      // Focusing itself can cause a React rerender. Never click a control
+      // belonging to an editor that has already been replaced.
+      if (composer.isConnected === false) {
+        waitingFor = "current ChatGPT editor";
+        scheduleNext();
         return;
       }
 
@@ -224,7 +238,7 @@
         scheduleNext();
         return;
       }
-      if (typeof button.click !== "function" || readComposerText(composer) !== WAKE_TEXT) {
+      if (composer.isConnected === false || typeof button.click !== "function" || readComposerText(composer) !== WAKE_TEXT) {
         finish("send button or phrase changed; nothing sent");
         return;
       }

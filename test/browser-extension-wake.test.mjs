@@ -59,6 +59,7 @@ class FakeComposer {
     this.tagName = tagName;
     this.form = form;
     this.focusCount = 0;
+    this.isConnected = true;
     this.value = tagName === "TEXTAREA" ? text : undefined;
     this.innerText = tagName === "TEXTAREA" ? undefined : text;
     this.textContent = text;
@@ -305,6 +306,67 @@ test("waits for delayed composer readiness within the bounded window", () => {
   assert.equal(button.clickCount, 1);
 });
 
+test("a detached editor can be replaced by one exact wake editor before the send button is ready", () => {
+  const clock = new FakeClock();
+  const oldButton = new FakeButton({ disabled: true });
+  const oldComposer = new FakeComposer({ form: new FakeForm([oldButton]) });
+  const { button, composer } = readyFixture();
+  const composers = [oldComposer];
+  const { banners } = runExtension({ composers, clock });
+  clock.setTimeout(() => {
+    oldComposer.isConnected = false;
+    composers.splice(0, 1, composer);
+  }, 150);
+  clock.advance(300);
+  assert.equal(oldButton.clickCount, 0);
+  assert.equal(button.clickCount, 1);
+  assert.equal(composer.focusCount, 1);
+  assert.match(banners[0].textContent, /clicked the send button once/);
+});
+
+test("an editor replaced during focus cannot click its detached send button", () => {
+  const clock = new FakeClock();
+  const { button: oldButton, composer: oldComposer } = readyFixture();
+  const { button, composer } = readyFixture();
+  const composers = [oldComposer];
+  oldComposer.focus = () => {
+    oldComposer.focusCount++;
+    oldComposer.isConnected = false;
+    composers.splice(0, 1, composer);
+  };
+  runExtension({ composers, clock });
+  assert.equal(oldButton.clickCount, 0);
+  clock.advance(200);
+  assert.equal(button.clickCount, 1);
+});
+
+test("a replacement is rejected while the pinned editor remains attached", () => {
+  const clock = new FakeClock();
+  const oldButton = new FakeButton({ disabled: true });
+  const oldComposer = new FakeComposer({ form: new FakeForm([oldButton]) });
+  const { button, composer } = readyFixture();
+  const composers = [oldComposer];
+  const { banners } = runExtension({ composers, clock });
+  clock.setTimeout(() => composers.splice(0, 1, composer), 150);
+  clock.advance(300);
+  assert.equal(button.clickCount, 0);
+  assert.match(banners[0].textContent, /editor changed; nothing sent/);
+});
+
+test("a detached editor cannot switch to a different phrase", () => {
+  const clock = new FakeClock();
+  const oldButton = new FakeButton({ disabled: true });
+  const oldComposer = new FakeComposer({ form: new FakeForm([oldButton]) });
+  const { button, composer } = readyFixture();
+  composer.value = "not the wake phrase";
+  const composers = [oldComposer];
+  const { banners } = runExtension({ composers, clock });
+  clock.setTimeout(() => { oldComposer.isConnected = false; composers.splice(0, 1, composer); }, 150);
+  clock.advance(15000);
+  assert.equal(button.clickCount, 0);
+  assert.match(banners[0].textContent, /exact pre-filled wake phrase not ready/);
+});
+
 test("ChatGPT consuming only ?q retains the nonce and permits one exact send", () => {
   const clock = new FakeClock();
   const composers = [];
@@ -316,6 +378,52 @@ test("ChatGPT consuming only ?q retains the nonce and permits one exact send", (
   assert.equal(button.clickCount, 1);
   clock.advance(1000);
   assert.equal(button.clickCount, 1);
+});
+
+test("ChatGPT's q-to-prompt-to-none transition retains the nonce and exact wake phrase", () => {
+  for (const port of ["", "&pilink_port=3210"]) {
+    const clock = new FakeClock();
+    const composers = [];
+    const { button, composer } = readyFixture();
+    const { context, banners } = runExtension({ href: `${URL_OK}${port}`, composers, clock });
+    context.location.href = `https://chatgpt.com/?prompt=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}${port}`;
+    clock.advance(200);
+    assert.equal(button.clickCount, 0);
+    context.location.href = `https://chatgpt.com/?pilink_wake=${NONCE}${port}`;
+    composers.push(composer);
+    clock.advance(200);
+    assert.equal(button.clickCount, 1);
+    assert.match(banners[0].textContent, /clicked the send button once/);
+  }
+});
+
+test("an exact prompt transition can send without waiting for its removal", () => {
+  const clock = new FakeClock();
+  const composers = [];
+  const { button, composer } = readyFixture();
+  const { context } = runExtension({ composers, clock });
+  context.location.href = `https://chatgpt.com/?prompt=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}`;
+  composers.push(composer);
+  clock.advance(200);
+  assert.equal(button.clickCount, 1);
+});
+
+test("a different or duplicated prompt parameter cancels the wake", () => {
+  for (const params of [
+    `prompt=unrelated&pilink_wake=${NONCE}`,
+    `prompt=${encodeURIComponent(WAKE)}&prompt=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}`,
+    `prompt=${encodeURIComponent(WAKE)}&pilink_wake=${NONCE}&other=1`,
+  ]) {
+    const clock = new FakeClock();
+    const composers = [];
+    const { button, composer } = readyFixture();
+    const { context, banners } = runExtension({ composers, clock });
+    context.location.href = `https://chatgpt.com/?${params}`;
+    composers.push(composer);
+    clock.advance(200);
+    assert.equal(button.clickCount, 0);
+    assert.match(banners[0].textContent, /changed the wake URL/);
+  }
 });
 
 test("captures the authorized URL before ChatGPT consumes q or creates the body", () => {
