@@ -314,8 +314,8 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
     while (true) {
       const answer = (await readline.question(process.platform === "win32"
         ? (reloadRequired
-          ? "After verifying the default-HTTPS browser profile and clicking Reload on PiLink Wake, press Enter to confirm (or type skip): "
-          : "After verifying PiLink Wake is loaded and enabled in the default-HTTPS browser profile, press Enter to confirm (or type skip): ")
+          ? "After verifying the actual default-HTTPS browser profile and clicking Reload on PiLink Wake, press Enter to confirm (or type skip): "
+          : "After verifying PiLink Wake is loaded and enabled in the actual default-HTTPS browser profile, press Enter to confirm (or type skip): ")
         : (reloadRequired
           ? "After clicking Reload in your browser, press Enter to continue (or type skip): "
           : "After loading PiLink Wake in your browser, press Enter to check it (or type skip): "))).trim().toLowerCase();
@@ -327,11 +327,16 @@ export async function runGatewayBrowserSetup(enable: boolean, options: { started
         console.error("Press Enter without text to check, or type skip to leave auto-wake off.");
         continue;
       }
+      if (process.platform === "win32") {
+        enableGatewayBrowserWake();
+        rememberGatewayBrowserExtensionSource(location);
+        fs.rmSync(path.join(location, ".pilink-reload-required"), { force: true });
+        console.error(gatewayBrowserWakeEnabledMessage(options.startedForSetup));
+        return;
+      }
       console.error("Checking browser extension status (up to 5 seconds)...");
       if (!await waitForLoadedGatewayBrowserExtension({ destination: location })) {
-        console.error(process.platform === "win32"
-          ? "PiLink cannot verify an enabled PiLink Wake in the configured browser's profiles. Check the Extensions page and press Enter to retry; if detection is unavailable, verify it in the default-HTTPS browser yourself before using 'pilink gateway browser-extension --enable'."
-          : "PiLink still cannot verify an enabled PiLink Wake in the default browser profile. Brave/Chrome may still be saving its extension state; check the Extensions page and press Enter to retry. For a non-default profile, verify it yourself before using 'pilink gateway browser-extension --enable'.");
+        console.error("PiLink still cannot verify an enabled PiLink Wake in the default browser profile. Brave/Chrome may still be saving its extension state; check the Extensions page and press Enter to retry. For a non-default profile, verify it yourself before using 'pilink gateway browser-extension --enable'.");
         continue;
       }
       enableGatewayBrowserWake();

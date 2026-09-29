@@ -165,6 +165,30 @@ test("Windows stages the approved extension under LocalAppData", () => {
   );
 });
 
+test("interactive Windows blank Enter is explicit approval without a Preferences scan", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-browser-win-confirm-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const config = path.join(root, ".env");
+  const localAppData = path.join(root, "Local AppData");
+  await fs.writeFile(config, "PI_LLM_GATEWAY_AUTO_WAKE=false\n", { mode: 0o600 });
+  const moduleUrl = new URL("../dist/llm-gateway-browser-setup.js", import.meta.url).href;
+  const script = `
+Object.defineProperty(process, "platform", { value: "win32" });
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+Object.defineProperty(process.stderr, "isTTY", { value: true });
+const { runGatewayBrowserSetup } = await import(${JSON.stringify(moduleUrl)});
+await runGatewayBrowserSetup(false);
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    input: "\n", encoding: "utf8", timeout: 3_000,
+    env: { ...process.env, LOCALAPPDATA: localAppData, PILINK_CONFIG: config, PATH: "" },
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stderr, /actual default-HTTPS browser profile/);
+  assert.doesNotMatch(result.stderr, /Checking browser extension status/);
+  assert.match(await fs.readFile(config, "utf8"), /PI_LLM_GATEWAY_AUTO_WAKE=true/);
+});
+
 test("wake confirmation copy distinguishes the running setup from a standalone extension command", () => {
   const startup = gatewayBrowserWakeEnabledMessage(true);
   const standalone = gatewayBrowserWakeEnabledMessage();

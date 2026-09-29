@@ -37,7 +37,7 @@ test("browser approval enables and disables a running gateway without a restart"
   await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=false\n", { mode: 0o600 });
   const updates = [];
   const watcher = watchGatewayBrowserApproval({
-    configPath, intervalMs: 10,
+    configPath, browserExtensionDirectory: path.join(root, "browser-extension"), intervalMs: 10,
     env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true" },
     store: { async status() { return { state: "released" }; } },
     onChange: (enabled) => updates.push(enabled),
@@ -50,6 +50,44 @@ test("browser approval enables and disables a running gateway without a restart"
   await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=false\n", { mode: 0o600 });
   for (let i = 0; i < 50 && watcher.isActive(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(watcher.isActive(), false);
+  assert.ok(updates.includes(true));
+});
+
+test("a staged extension reload marker suppresses auto-wake until it is removed", async (t) => {
+  if (process.platform !== "linux") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pilink-wake-reload-marker-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const configPath = path.join(root, ".env");
+  const browserExtensionDirectory = path.join(root, "browser-extension");
+  const reloadMarker = path.join(browserExtensionDirectory, ".pilink-reload-required");
+  await fs.mkdir(browserExtensionDirectory);
+  await fs.writeFile(configPath, "PI_LLM_GATEWAY_AUTO_WAKE=true\n", { mode: 0o600 });
+  await fs.writeFile(reloadMarker, "reload required\n", { mode: 0o600 });
+  const updates = [];
+  const watcher = watchGatewayBrowserApproval({
+    configPath, browserExtensionDirectory, intervalMs: 10,
+    env: { WAYLAND_DISPLAY: "wayland-0", PI_LLM_GATEWAY_ENABLED: "true", PILINK_GATEWAY_LAUNCH: "true" },
+    store: { async status() { return { state: "released" }; } },
+    onChange: (enabled) => updates.push(enabled),
+  });
+  t.after(() => watcher.close());
+
+  assert.equal(watcher.isActive(), false, "approval must stay suppressed while reload is required");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(watcher.isActive(), false);
+
+  await fs.rm(reloadMarker);
+  for (let i = 0; i < 50 && !watcher.isActive(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(watcher.isActive(), true, "approval should resume after the marker is removed");
+
+  await fs.writeFile(reloadMarker, "reload required\n", { mode: 0o600 });
+  for (let i = 0; i < 50 && watcher.isActive(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(watcher.isActive(), false, "a rebuild marker must suppress an already-running supervisor");
+
+  await fs.rm(reloadMarker);
+  for (let i = 0; i < 50 && !watcher.isActive(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(watcher.isActive(), true, "removing the marker should resume because approval remained true");
+  assert.ok(updates.includes(false));
   assert.ok(updates.includes(true));
 });
 

@@ -1,8 +1,10 @@
 import fs from "node:fs";
+import path from "node:path";
 import dotenv from "dotenv";
 import { defaultConfigPath, loadRuntimeConfig } from "./config.js";
 import { GatewayWakeConfirmations, gatewayAutoWakeEnabled, startGatewayAutoWakeSupervisor, type GatewayAutoWakeSupervisor } from "./llm-gateway-auto-wake.js";
 import { deriveGatewayApiKey, startGatewayApi, type StartedGatewayApi } from "./llm-gateway-api.js";
+import { gatewayBrowserExtensionDirectory } from "./llm-gateway-browser-setup.js";
 import { gatewayApiPortForMcp } from "./llm-gateway-ports.js";
 import {
   GATEWAY_DEFAULT_CLAIM_LEASE_SECONDS,
@@ -64,7 +66,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
     claimLeaseSeconds,
   });
   const activation = store.activate();
-  const autoWakeAdmission = { enabled: gatewayAutoWakeEnabled() };
+  const autoWakeAdmission = { enabled: false };
   const wakeConfirmations = new GatewayWakeConfirmations();
   let api: StartedGatewayApi;
   try {
@@ -109,6 +111,7 @@ export function getLlmGatewayRuntime(): LlmGatewayRuntime {
 export function watchGatewayBrowserApproval(options: {
   store: Pick<LlmGatewayJobStore, "status">;
   configPath?: string;
+  browserExtensionDirectory?: string;
   env?: NodeJS.ProcessEnv;
   intervalMs?: number;
   apiPort?: number;
@@ -117,6 +120,7 @@ export function watchGatewayBrowserApproval(options: {
 }): { isActive(): boolean; close(): void } {
   const configPath = options.configPath ?? process.env.PILINK_CONFIG ?? defaultConfigPath();
   const env = options.env ?? process.env;
+  const browserExtensionDirectory = options.browserExtensionDirectory ?? gatewayBrowserExtensionDirectory(env);
   let supervisor: GatewayAutoWakeSupervisor | undefined;
   let active = false;
   let closed = false;
@@ -132,7 +136,8 @@ export function watchGatewayBrowserApproval(options: {
       return; // Keep the previous policy if a config update is temporarily unreadable.
     }
     const effectiveEnv = { ...env, PI_LLM_GATEWAY_AUTO_WAKE: approval };
-    const desired = gatewayAutoWakeEnabled(effectiveEnv);
+    const reloadRequired = fs.existsSync(path.join(browserExtensionDirectory, ".pilink-reload-required"));
+    const desired = !reloadRequired && gatewayAutoWakeEnabled(effectiveEnv);
     if (desired === active) { options.onChange?.(active); return; }
     if (desired) {
       supervisor = startGatewayAutoWakeSupervisor({
