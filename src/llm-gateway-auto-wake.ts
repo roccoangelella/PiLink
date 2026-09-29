@@ -87,8 +87,8 @@ export function gatewayAutoWakeEnabled(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  if (platform !== "linux") return false;
-  if (!env.WAYLAND_DISPLAY?.trim() && !env.DISPLAY?.trim()) return false;
+  if (platform !== "linux" && platform !== "win32") return false;
+  if (platform === "linux" && !env.WAYLAND_DISPLAY?.trim() && !env.DISPLAY?.trim()) return false;
   if (env.PI_LLM_GATEWAY_ENABLED !== "true" || env.PILINK_GATEWAY_LAUNCH !== "true") return false;
   // Opt in only after the operator has installed the extension in their own
   // browser. No key injection or browser-profile modification is involved.
@@ -144,7 +144,7 @@ export function startGatewayAutoWakeSupervisor(
     : undefined;
 
   const getDriver = (): Promise<GatewayWakeDriver> => {
-    driverPromise ??= prepareBrowserWakeDriver(env, options.apiPort);
+    driverPromise ??= prepareBrowserWakeDriver(env, options.apiPort, platform);
     return driverPromise;
   };
 
@@ -247,7 +247,24 @@ async function waitForWakeOutcome(
   }
 }
 
-async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv, apiPort?: number): Promise<GatewayWakeDriver> {
+async function prepareBrowserWakeDriver(
+  env: NodeJS.ProcessEnv,
+  apiPort: number | undefined,
+  platform: NodeJS.Platform,
+): Promise<GatewayWakeDriver> {
+  if (platform === "win32") {
+    const urlHandler = await resolveWindowsUrlHandler(env);
+    if (!urlHandler) {
+      throw new GatewayAutoWakeUnavailableError("rundll32.exe was not found; open the gateway wake URL manually or disable auto-wake.");
+    }
+    return {
+      async wake(nonce?: string): Promise<void> {
+        const wakeNonce = nonce ?? randomBytes(16).toString("hex");
+        await runExecutable(urlHandler, ["url.dll,FileProtocolHandler", buildGatewayWakeUrl(wakeNonce, env, apiPort)], env, 5_000);
+      },
+    };
+  }
+
   const [xdgOpen, xdgSettings, brave] = await Promise.all([
     resolveExecutable("xdg-open", env),
     resolveExecutable("xdg-settings", env),
@@ -282,6 +299,20 @@ async function prepareBrowserWakeDriver(env: NodeJS.ProcessEnv, apiPort?: number
       }
     },
   };
+}
+
+async function resolveWindowsUrlHandler(env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const systemRoot = env.SystemRoot?.trim() || env.WINDIR?.trim();
+  if (systemRoot) {
+    const candidate = path.join(systemRoot, "System32", "rundll32.exe");
+    try {
+      await fs.access(candidate, fsConstants.F_OK);
+      return candidate;
+    } catch {
+      // Fall back to PATH for portable/test environments.
+    }
+  }
+  return resolveExecutable("rundll32.exe", env);
 }
 
 async function resolveExecutable(name: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {

@@ -1840,6 +1840,11 @@ async function syncDirectory(directory: string): Promise<void> {
     handle = await fs.open(directory, "r");
     await handle.sync();
   } catch (error) {
+    // Windows does not support flushing a directory handle and reports EPERM.
+    // The state file itself was already fsynced before the atomic rename, so
+    // retain the strongest durability Windows exposes instead of failing every
+    // gateway state transition after a successful rename.
+    if (process.platform === "win32" && isNodeError(error, "EPERM")) return;
     if (!isNodeError(error, "EINVAL") && !isNodeError(error, "ENOTSUP") && !isNodeError(error, "EISDIR")) throw error;
   } finally {
     await handle?.close().catch(() => undefined);
