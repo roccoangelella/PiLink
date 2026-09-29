@@ -181,7 +181,7 @@ process.exit(2);
 
   const second = await runCli(["install-vscode-plugin"], root, environment);
   assert.equal(second.code, 0, second.output);
-  assert.match(second.output, new RegExp(`VSPiLink ${escapeRegExp(packageJson.version)} is already installed`));
+  assert.match(second.output, new RegExp(`PiLink for VS Code ${escapeRegExp(packageJson.version)} is already installed`));
 
   const calls = (await fs.readFile(callLog, "utf8")).trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.equal(calls.filter((call) => call[0] === "--install-extension").length, 1);

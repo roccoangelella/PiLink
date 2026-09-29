@@ -75,7 +75,7 @@ export function resolveSidecarNodeRuntime(options: ResolveSidecarNodeOptions = {
   return {
     ok: false,
     ...(observed ? { version: observed } : {}),
-    error: `Exactly Node ${REQUIRED_NODE_VERSION} is not available for the VSPiLink helper process. Install it on PATH or set its path in vspilink.nodeExecutable. The extension-host runtime (${processVersion || "not detected"}) remains independent.`,
+    error: `Exactly Node ${REQUIRED_NODE_VERSION} is not available for the PiLink helper process. Install it on PATH or set its path in vspilink.nodeExecutable. The extension-host runtime (${processVersion || "not detected"}) remains independent.`,
   };
 }
 

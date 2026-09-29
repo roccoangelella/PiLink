@@ -1,8 +1,13 @@
-# Install PiLink's optional VS Code extension bundle
+# Install PiLink for VS Code
 
 Keep every downloaded file in this directory. In particular, do not separate
 the installer, `vspilink-*.vsix`, and `SHA256SUMS`: the installer refuses to
 install a VSIX whose release checksum cannot be verified.
+
+The release installer does not require administrator privileges and does not
+replace the system `node` command. When necessary, it downloads the pinned
+official Node.js 24.18.0 archive, verifies its built-in SHA-256, and installs it
+under PiLink's private per-user data directory.
 
 ## Linux or macOS
 
@@ -29,37 +34,40 @@ install a VSIX whose release checksum cannot be verified.
    and checksum first, then run `Unblock-File .\install.ps1` and repeat the
    command.
 
-The installer does not require administrator privileges and does not replace
-the system `node` command. When necessary, it downloads the pinned official
-Node.js 24.18.0 archive, verifies its built-in SHA-256, and installs it under a
-private per-user PiLink data directory.
+## First launch in VS Code
 
-## Final VS Code clicks
+1. Return to VS Code and run **Developer: Reload Window**.
+2. Open the exact project PiLink may access and review **Workspace Trust**.
+3. Select **PiLink** in the Activity Bar.
+4. Choose the endpoint that matches your use:
+   - **Set up stable endpoint** for regular remote ChatGPT Work use with an
+     HTTPS origin you control;
+   - **Temporary quick start** for a public Quick Tunnel used for evaluation;
+   - **Local only** for same-machine MCP clients. Remote ChatGPT Work cannot
+     reach this endpoint.
+5. For remote ChatGPT Work, make sure your ChatGPT workspace already provides
+   the intended private PiLink plugin or allows you to create/import it. PiLink
+   cannot grant those ChatGPT workspace controls.
+6. When a public HTTPS endpoint is ready, select **Connect ChatGPT**.
+7. Complete local owner verification first, then complete OAuth for the
+   intended private PiLink plugin.
+8. Start with a read-only task that confirms the selected project before
+   allowing edits or repository execution.
 
-1. Return to VS Code.
-2. Press `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS).
-3. Select **Developer: Reload Window** and press Enter.
-4. Select **PiLink** in the Activity Bar.
-6. Open the project PiLink should access and review Workspace Trust.
-7. Use the main PiLink card:
-   - **Quick start for ChatGPT** for the simplest safe remote setup;
-   - **Local only** when no public endpoint is needed.
-8. When the public endpoint is ready, select **Connect ChatGPT** and complete
-   the remote OAuth flow.
+Fresh graphical setup uses **Single agent** and **Project-folder** access.
+Collaboration, Full access, manual OAuth-client management, provider-backed
+agents, and legacy hosting remain explicit CLI/operator concerns.
 
-Fresh ordinary graphical setups use Single agent and Project-folder access by
-default. If you deliberately need a stable domain, legacy hosting, or another
-specialist configuration, use **Advanced setup...** and review the additional
-workflow/access choices it may expose.
+## Remote SSH
 
-Collaboration, Full access, local model-provider execution, native VS Code MCP
-compatibility, and manual OAuth registration are not presented as parallel
-products in the normal launcher UI.
+In a Remote SSH window, the project, PiLink extension host, sidecar runtime,
+and hosting process belong on the **remote SSH host**. Run this release installer
+from the **remote VS Code integrated terminal**, then reload the window and
+verify the extension is installed on the SSH host.
 
-For Remote SSH, run this installer in the remote VS Code integrated terminal.
-After the reload, open Extensions and verify that the extension says **Installed
-on SSH: _host_**. If it is installed only under Local, use the extension gear
-menu and select **Install in SSH: _host_**.
+The VS Code desktop UI and the browser used for owner verification/OAuth remain
+on the local UI machine. Do not install only on the local machine and expect it
+to control a remote workspace.
 
 ## Development-only checksum override
 
@@ -68,7 +76,9 @@ menu and select **Install in SSH: _host_**.
 built and reviewed yourself. Never use it for a downloaded bundle, customer
 installation, CI release, or production deployment.
 
-Complete setup, hosting, OAuth, security, and troubleshooting documentation is
-available at <https://github.com/roccoangelella/PiLink/tree/main/docs>. The
-sanitized illustrated walkthrough is at
-<https://github.com/roccoangelella/PiLink/blob/main/docs/ILLUSTRATED_GUIDE.md>.
+Current documentation:
+
+- Getting started: <https://github.com/roccoangelella/PiLink/blob/main/docs/GETTING_STARTED.md>
+- Installation and Remote SSH: <https://github.com/roccoangelella/PiLink/blob/main/docs/INSTALLATION.md>
+- Connect ChatGPT Work: <https://github.com/roccoangelella/PiLink/blob/main/docs/CONNECT_CHATGPT.md>
+- Illustrated walkthrough: <https://github.com/roccoangelella/PiLink/blob/main/docs/ILLUSTRATED_GUIDE.md>

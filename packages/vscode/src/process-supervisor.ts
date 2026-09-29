@@ -31,7 +31,7 @@ export interface JsonCliOptions {
 export async function runJsonCli(options: JsonCliOptions): Promise<Record<string, unknown>> {
   for (const argument of [options.nodeExecutable, options.cliPath, options.cwd, options.configPath, ...options.args]) {
     if (typeof argument !== "string" || !argument || argument.length > 8_192 || /[\r\n\0]/.test(argument)) {
-      throw new Error("Invalid VSPiLink helper-process argument.");
+      throw new Error("Invalid PiLink helper-process argument.");
     }
   }
   return new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -75,7 +75,7 @@ export async function runJsonCli(options: JsonCliOptions): Promise<Record<string
       }
       stderr += chunk.toString("utf8");
     });
-    child.once("error", () => finish(new Error("Could not start the VSPiLink helper process.")));
+    child.once("error", () => finish(new Error("Could not start the PiLink helper process.")));
     child.once("close", (code) => {
       let payload: unknown;
       try {
@@ -99,7 +99,7 @@ export async function runJsonCli(options: JsonCliOptions): Promise<Record<string
     });
     timeout = setTimeout(() => {
       child.kill("SIGKILL");
-      finish(new Error("The VSPiLink helper process timed out."));
+      finish(new Error("The PiLink helper process timed out."));
     }, options.timeoutMs ?? 120_000);
     timeout.unref();
   });
@@ -137,7 +137,7 @@ export class ProcessSupervisor implements vscode.Disposable {
   private disposed = false;
 
   constructor() {
-    this.output = vscode.window.createOutputChannel("VSPiLink", { log: true });
+    this.output = vscode.window.createOutputChannel("PiLink", { log: true });
   }
 
   onDidChange(listener: () => void): vscode.Disposable {
@@ -191,7 +191,7 @@ export class ProcessSupervisor implements vscode.Disposable {
   }
 
   async start(options: ProcessStartOptions): Promise<void> {
-    if (this.disposed) throw new Error("The VSPiLink supervisor has already been closed.");
+    if (this.disposed) throw new Error("The PiLink supervisor has already been closed.");
     if (this.isActive || this.status === "starting") throw new Error("PiLink is already running.");
 
     this.lastStart = { ...options, args: [...options.args] };
@@ -223,7 +223,7 @@ export class ProcessSupervisor implements vscode.Disposable {
       },
       onError: (error) => {
         this.status = "error";
-        this.captureOutput(`\n[VSPiLink] ${error.message}\n`);
+        this.captureOutput(`\n[PiLink] ${error.message}\n`);
       },
       onExit: (code, signal) => {
         const wasStopping = this.status === "stopping";
@@ -233,7 +233,7 @@ export class ProcessSupervisor implements vscode.Disposable {
         this.awaitingInput = false;
         this.publicUrl = undefined;
         this.detectionTail = "";
-        this.captureOutput(`\n[VSPiLink] Process exited (${signal ?? code ?? "unknown"}).\n`);
+        this.captureOutput(`\n[PiLink] Process exited (${signal ?? code ?? "unknown"}).\n`);
         this.processTerminal = undefined;
         this.terminal = undefined;
         this.emitChange();
@@ -245,13 +245,13 @@ export class ProcessSupervisor implements vscode.Disposable {
       // bridge in the background without creating an Integrated Terminal tab.
       terminalBridge.open();
     } else {
-      this.terminal = vscode.window.createTerminal({ name: `VSPiLink · ${options.mode}`, pty: terminalBridge });
+      this.terminal = vscode.window.createTerminal({ name: `PiLink · ${options.mode}`, pty: terminalBridge });
       this.terminal.show(true);
     }
   }
 
   async restart(): Promise<void> {
-    if (!this.lastStart) throw new Error("There is no previous VSPiLink start command to repeat.");
+    if (!this.lastStart) throw new Error("There is no previous PiLink start command to repeat.");
     const options = { ...this.lastStart, args: [...this.lastStart.args] };
     await this.stop();
     await this.start(options);
@@ -283,7 +283,7 @@ export class ProcessSupervisor implements vscode.Disposable {
   }
 
   showTerminal(): void {
-    if (!this.terminal) throw new Error("The VSPiLink terminal is not available yet.");
+    if (!this.terminal) throw new Error("The PiLink terminal is not available yet.");
     this.terminal.show(false);
   }
 

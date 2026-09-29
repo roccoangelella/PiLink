@@ -748,7 +748,7 @@ function currentPackageVersion(): string {
     throw new Error("PiLink could not read its package version while preparing the VS Code extension.");
   }
   if (typeof version !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
-    throw new Error("PiLink's package version is invalid; VSPiLink installation was not attempted.");
+    throw new Error("PiLink's package version is invalid; PiLink for VS Code installation was not attempted.");
   }
   return version;
 }
@@ -780,13 +780,13 @@ interface VscodeVsixSource {
 async function ensureVscodeExtensionInstalled(command: string, expectedVersion: string): Promise<void> {
   const installed = installedVscodeExtensionVersion(command);
   if (installed === expectedVersion) {
-    console.error(`VSPiLink ${expectedVersion} is already installed.`);
+    console.error(`PiLink for VS Code ${expectedVersion} is already installed.`);
     return;
   }
 
   console.error(installed
-    ? `Updating VSPiLink from ${installed} to ${expectedVersion}...`
-    : `Installing VSPiLink ${expectedVersion}...`);
+    ? `Updating PiLink for VS Code from ${installed} to ${expectedVersion}...`
+    : `Installing PiLink for VS Code ${expectedVersion}...`);
   const source = await resolveVscodeVsix(expectedVersion);
   try {
     const result = spawnSync(command, ["--install-extension", source.path, "--force"], {
@@ -795,14 +795,14 @@ async function ensureVscodeExtensionInstalled(command: string, expectedVersion: 
       killSignal: "SIGKILL",
       windowsHide: true,
     });
-    if (result.error) throw new Error(`VS Code could not install VSPiLink: ${result.error.message}`);
+    if (result.error) throw new Error(`VS Code could not install PiLink for VS Code: ${result.error.message}`);
     if (result.signal) throw new Error(`VS Code extension installation was interrupted by ${result.signal}.`);
-    if (result.status !== 0) throw new Error(`VS Code rejected the VSPiLink VSIX (exit code ${result.status ?? "unknown"}).`);
+    if (result.status !== 0) throw new Error(`VS Code rejected the PiLink VSIX (exit code ${result.status ?? "unknown"}).`);
 
     const verifiedVersion = installedVscodeExtensionVersion(command);
     if (verifiedVersion !== expectedVersion) {
       throw new Error(
-        `VS Code reported VSPiLink ${verifiedVersion || "as missing"} after installation; expected ${expectedVersion}.`,
+        `VS Code reported PiLink for VS Code ${verifiedVersion || "as missing"} after installation; expected ${expectedVersion}.`,
       );
     }
     console.error(`Installed and verified: ${VSCODE_EXTENSION_ID}@${expectedVersion}`);
@@ -839,7 +839,7 @@ async function resolveVscodeVsix(version: string): Promise<VscodeVsixSource> {
   fs.chmodSync(temporaryDirectory, 0o700);
   const destination = path.join(temporaryDirectory, assetName);
   try {
-    await fetchVerifiedDownload(`${releaseBase}/${assetName}`, destination, expectedSha256, "VSPiLink VSIX");
+    await fetchVerifiedDownload(`${releaseBase}/${assetName}`, destination, expectedSha256, "PiLink VSIX");
     return {
       path: destination,
       cleanup: () => fs.rmSync(temporaryDirectory, { recursive: true, force: true }),
@@ -847,7 +847,7 @@ async function resolveVscodeVsix(version: string): Promise<VscodeVsixSource> {
   } catch (error) {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     throw new Error(
-      `Could not download the matching VSPiLink ${version} release. ` +
+      `Could not download the matching PiLink for VS Code ${version} release. ` +
       `${error instanceof Error ? error.message : String(error)} ` +
       "Install the release VSIX manually or set PI_VSCODE_VSIX_PATH to a trusted local copy, then try again.",
     );
@@ -857,7 +857,7 @@ async function resolveVscodeVsix(version: string): Promise<VscodeVsixSource> {
 function checksumForReleaseAsset(manifest: string, assetName: string): string {
   for (const line of manifest.split(/\r?\n/u)) {
     const match = line.match(/^([0-9a-fA-F]{64})  ([A-Za-z0-9._-]+)$/u);
-    if (match?.[2] === assetName) return normalizedSha256(match[1], "VSPiLink release SHA-256");
+    if (match?.[2] === assetName) return normalizedSha256(match[1], "PiLink VS Code release SHA-256");
   }
   throw new Error(`The PiLink release checksum manifest does not contain ${assetName}.`);
 }
@@ -1494,7 +1494,7 @@ async function runFirstTimeSetup(serverUrl: string, forceSetup: boolean, allowAd
 
       if (externallyManagedPairing) {
         printChatGptDcrSetupInstructions(serverUrl, false);
-        console.error("VSPiLink will handle its local-owner verification flow.\n");
+        console.error("PiLink will handle its local-owner verification flow.\n");
         return;
       }
 

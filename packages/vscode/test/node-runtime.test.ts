@@ -165,6 +165,6 @@ test("selection reports a sidecar error without rejecting the extension-host run
 
   if (runtime.ok) assert.fail("expected sidecar runtime selection to fail");
   assert.equal(runtime.version, "v24.17.0");
-  assert.match(runtime.error, /Exactly Node 24\.18\.0 is not available for the VSPiLink helper process/);
+  assert.match(runtime.error, /Exactly Node 24\.18\.0 is not available for the PiLink helper process/);
   assert.match(runtime.error, /extension-host runtime \(v22\.20\.0\) remains independent/);
 });
