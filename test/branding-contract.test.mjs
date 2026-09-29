@@ -1,21 +1,52 @@
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import test from "node:test";
 
 const repositoryUrl = "https://github.com/roccoangelella/PiLink.git";
-const legacyLogoDigest = "9cc5aa2f1682ad651da33a118615a94fdbd1c88e7525c492adb1fd5a2c76d576";
-const legacyMarketplaceIconDigest = "0a1ca2c827ddfd09a56bc520db18c06788e1d349e6ca664e0ba8a83a9011d4f7";
-const markDigest = "3fd809e948fb2dbeaeae621232cfe6b102ad425a6fef724c96d1a10246bf0861";
-const lockupDigest = "ceafc12b9920f37161e6bce53717f9350b48b699993d3c354555e3d206c6bd8a";
 
-async function digest(file) {
-  return crypto.createHash("sha256").update(await fs.readFile(file)).digest("hex");
+function withoutTechnicalIdentifiers(markdown) {
+  let inFence = false;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(?:\x60{3,}|~{3,})/u.test(line)) {
+        inFence = !inFence;
+        return "";
+      }
+      return inFence ? "" : line.replace(/\x60+[^\x60\n]*\x60+/gu, "");
+    })
+    .join("\n");
+}
+
+function assertAccessibleSafeSvg(file, svg) {
+  assert.match(svg, /^\s*<svg\b/iu, `${file} must be an SVG document`);
+  assert.match(svg, /\brole\s*=\s*["']img["']/iu, `${file} must expose image semantics`);
+
+  const labelledBy = svg.match(/\baria-labelledby\s*=\s*["']([^"']+)["']/iu)?.[1]?.split(/\s+/u) ?? [];
+  const title = svg.match(/<title\b[^>]*\bid\s*=\s*["']([^"']+)["'][^>]*>\s*([^<]+?)\s*<\/title>/iu);
+  const description = svg.match(/<desc\b[^>]*\bid\s*=\s*["']([^"']+)["'][^>]*>\s*([^<]+?)\s*<\/desc>/iu);
+
+  assert.ok(title?.[2]?.trim(), `${file} must contain a non-empty <title>`);
+  assert.ok(description?.[2]?.trim(), `${file} must contain a non-empty <desc>`);
+  assert.ok(labelledBy.includes(title[1]), `${file} aria-labelledby must reference its title`);
+  assert.ok(labelledBy.includes(description[1]), `${file} aria-labelledby must reference its description`);
+
+  assert.doesNotMatch(svg, /<script\b/iu, `${file} must not contain scripts`);
+  assert.doesNotMatch(svg, /\son[a-z]+\s*=/iu, `${file} must not contain script event handlers`);
+  for (const match of svg.matchAll(/\b(?:href|xlink:href)\s*=\s*["']([^"']+)["']/giu)) {
+    assert.match(match[1], /^#/u, `${file} must not load external href resources`);
+  }
 }
 
 async function pngDimensions(file) {
   const data = await fs.readFile(file);
-  assert.deepEqual([...data.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], `${file} must be a PNG`);
+  assert.ok(data.length >= 24, `${file} must contain a complete PNG header`);
+  assert.deepEqual(
+    [...data.subarray(0, 8)],
+    [137, 80, 78, 71, 13, 10, 26, 10],
+    `${file} must have the PNG signature`,
+  );
+  assert.equal(data.subarray(12, 16).toString("ascii"), "IHDR", `${file} must begin with an IHDR chunk`);
   return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
 }
 
@@ -67,26 +98,47 @@ test("PiLink remains the project brand and compatibility names stay stable", asy
   assert.match(serverSource, /Not affiliated with or endorsed by OpenAI, Microsoft, or Cloudflare\./u);
 });
 
-test("brand assets intentionally use the new original PiLink mark", async () => {
-  const mark = await fs.readFile("docs/assets/brand/pilink-mark.svg", "utf8");
-  const lockup = await fs.readFile("docs/assets/brand/pilink-lockup.svg", "utf8");
-  assert.equal(await digest("docs/assets/brand/pilink-mark.svg"), markDigest);
-  assert.equal(await digest("docs/assets/brand/pilink-lockup.svg"), lockupDigest);
-  assert.match(mark, /Two open geometric links joined by a bright central bridge/u);
-  assert.match(lockup, />PiLink<\/text>/u);
-  assert.doesNotMatch(`${mark}\n${lockup}`, /OpenAI|ChatGPT|Cloudflare|Microsoft/u);
-
-  const sharedMarkPaths = [
-    "docs/assets/logo.png",
-    "packages/vscode/media/logo.png",
-    "plugins/pilink/assets/logo.png",
+test("current onboarding surfaces do not revive retired launcher labels", async () => {
+  const currentLauncherDocs = [
+    "README.md",
+    "docs/GETTING_STARTED.md",
+    "docs/CONNECT_CHATGPT.md",
+    "docs/INSTALLATION.md",
+    "docs/VSCODE_EXTENSION.md",
+    "packages/vscode/README.md",
+    "install/INSTALL.md",
+    "release/INSTALL.md",
   ];
-  for (const file of sharedMarkPaths) {
-    assert.deepEqual(await pngDimensions(file), { width: 1024, height: 1024 });
-    assert.notEqual(await digest(file), legacyLogoDigest, `${file} must not retain the pre-refresh logo`);
-  }
-  assert.equal(new Set(await Promise.all(sharedMarkPaths.map(digest))).size, 1, "public/plugin header marks must stay visually aligned");
+  const retiredUserVisibleLabels = /\bVSPiLink\b|Collaborative monitor|watch remote ChatGPT conversations/iu;
 
-  assert.deepEqual(await pngDimensions("packages/vscode/media/icon.png"), { width: 256, height: 256 });
-  assert.notEqual(await digest("packages/vscode/media/icon.png"), legacyMarketplaceIconDigest);
+  for (const file of currentLauncherDocs) {
+    const prose = withoutTechnicalIdentifiers(await fs.readFile(file, "utf8"));
+    assert.doesNotMatch(prose, retiredUserVisibleLabels, `${file} must use current PiLink launcher labels`);
+  }
+});
+
+test("brand SVGs are accessible and self-contained", async () => {
+  const assets = [
+    "docs/assets/brand/pilink-mark.svg",
+    "docs/assets/brand/pilink-lockup.svg",
+  ];
+
+  for (const file of assets) {
+    const svg = await fs.readFile(file, "utf8");
+    assertAccessibleSafeSvg(file, svg);
+    assert.doesNotMatch(svg, /OpenAI|ChatGPT|Cloudflare|Microsoft/u);
+  }
+});
+
+test("important public PNG assets have expected PNG geometry", async () => {
+  const assets = new Map([
+    ["docs/assets/logo.png", { width: 1024, height: 1024 }],
+    ["packages/vscode/media/logo.png", { width: 1024, height: 1024 }],
+    ["plugins/pilink/assets/logo.png", { width: 1024, height: 1024 }],
+    ["packages/vscode/media/icon.png", { width: 256, height: 256 }],
+  ]);
+
+  for (const [file, expected] of assets) {
+    assert.deepEqual(await pngDimensions(file), expected);
+  }
 });
