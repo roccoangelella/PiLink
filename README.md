@@ -1,238 +1,208 @@
 # PiLink
 
 <p align="center">
-  <img src="docs/assets/logo.png" width="640" alt="PiLink logo">
+  <img src="docs/assets/brand/pilink-lockup.svg" width="560" alt="PiLink">
 </p>
 
-PiLink is a self-hosted, OAuth-protected MCP bridge for the Pi coding-tool
-harness. It gives authorized clients controlled access to a selected project.
+PiLink is a self-hosted, OAuth-protected MCP bridge that gives authorized AI
+clients controlled access to a project you choose. The normal path is
+**project-scoped by default**; broader execution and Full machine access require
+separate operator decisions.
 
-The core server and CLI do not require VS Code. The optional **PiLink VS Code
-extension** is a graphical launcher/status panel for choosing the project,
-starting/stopping PiLink, configuring the endpoint, connecting ChatGPT, and
-checking bridge status. It is not a second chat frontend.
+PiLink is an independent open-source project. It is not affiliated with or
+endorsed by OpenAI, Microsoft, or Cloudflare.
 
-## Features
+## Choose your route
 
-- Workspace-scoped read, search, edit, write, safe Git inspection, and optional
-  repository execution.
-- OAuth with PKCE, refresh, revocation, client controls, and bounded MCP
-  sessions.
-- Three CLI launch experiences: **Single agent**, **Agents chat** collaboration,
-  and **CLI pilink-endpoint**; PiLink for VS Code installs separately.
-- **ChatGPT LLM Gateway:** run a connected ChatGPT conversation as a local
-  OpenAI-compatible model provider with native tool-calling for coding agents.
-- Stable Cloudflare fixed-domain hosting, existing HTTPS domains, Quick Tunnel,
-  local-only operation, and legacy CLI hosting paths.
-- Explicit opt-ins for repository execution and unrestricted machine access.
-- Optional VS Code launcher and Textual collaboration monitor.
+PiLink has three distinct workflows. Pick the one that matches where you want
+the model and tools to run.
 
-## Requirements
+### 1. VS Code MCP bridge → ChatGPT Work
 
-- Node.js **24.18.0 exactly** and npm **11.16.0 exactly** for source builds.
-- A project directory you are willing to trust.
-- A public HTTPS endpoint only for remote clients such as ChatGPT Work.
-- VS Code 1.106 or newer only for the optional extension.
-- Python/Textual only for the optional terminal collaboration monitor.
+Use this when you want a small graphical launcher for a selected project and a
+remote ChatGPT client.
+
+**Prerequisites**
+
+- VS Code 1.106 or newer and a trusted project folder.
+- The PiLink sidecar runtime. Release installers can provision the required
+  Node.js runtime; source builds require Node.js **24.18.0 exactly** and npm
+  **11.16.0 exactly**.
+- A reachable HTTPS origin for remote use. A temporary Quick Tunnel is available
+  for evaluation; stable use needs a Cloudflare fixed domain or an HTTPS reverse
+  proxy you operate.
+- A ChatGPT account/workspace where the intended private PiLink plugin is already
+  available, or where permitted plugin creation/import controls exist. PiLink
+  cannot grant that account/workspace capability.
+
+Install or update the extension, then open **PiLink** from the Activity Bar:
+
+```bash
+pilink install-vscode-plugin
+```
+
+The graphical setup always uses **Single agent + Project-folder access**. When
+the endpoint is healthy, select **Connect ChatGPT**, complete local owner
+verification and OAuth, then begin with a read-only task that confirms the
+project boundary.
+
+See [Getting started](docs/GETTING_STARTED.md),
+[PiLink for VS Code](docs/VSCODE_EXTENSION.md), and
+[Connect ChatGPT Work](docs/CONNECT_CHATGPT.md).
+
+### 2. CLI MCP bridge
+
+Use this when you do not need the VS Code launcher. Start the project-scoped
+single-agent bridge directly:
+
+```bash
+pilink start --mode single
+```
+
+For remote MCP clients, configure a reachable HTTPS origin. For a local server
+behind an existing reverse proxy, use:
+
+```bash
+pilink serve --mode single
+```
+
+Collaboration is an explicit operator workflow, not part of the default bridge:
+
+```bash
+pilink start --mode collaboration
+```
+
+See [Installation](docs/INSTALLATION.md),
+[Runtime mode selection](docs/operations/mode-selection.md), and the
+[Security model](docs/SECURITY_MODEL.md).
+
+### 3. Local ChatGPT LLM Gateway
+
+Use this when a local coding agent should receive model responses from a
+connected ChatGPT conversation through a loopback OpenAI-compatible API.
+
+```bash
+pilink gateway start
+# equivalent launch surface:
+pilink start --mode cli
+
+# after setup, launch Pi Agent in the current project:
+pilink-cli
+```
+
+The gateway requires a compatible ChatGPT MCP connection, OAuth/Dynamic Client
+Registration support, and an active worker conversation. The local API normally
+binds to `127.0.0.1:3210` and requires its bearer key.
+
+Important limits:
+
+- `stream: true` is **buffered SSE**: PiLink receives the complete ChatGPT result
+  before emitting OpenAI-style stream events. It is not token streaming.
+- Tool calls are returned to the local caller harness; **PiLink does not execute
+  caller-advertised tools**. The harness executes them with its own permissions.
+- Common generation controls such as `temperature`, `top_p`,
+  `max_completion_tokens`, and `store` are accepted only for compatibility and
+  are ignored there; strict mode rejects unsupported controls.
+- Browser auto-wake is optional and requires one-time extension approval. On
+  Linux, PiLink may enable wake after detecting the approved Chromium extension.
+  On Windows, passive profile detection is not trusted: verify the extension in
+  the browser/profile reached by a normal HTTPS link and explicitly confirm it;
+  headless setup requires manual verification before
+  `pilink gateway browser-extension --enable`.
+
+See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for the full protocol,
+wake, retry, and security contract.
 
 ## Install from source
 
 ```bash
 git clone https://github.com/roccoangelella/PiLink.git
 cd PiLink
+node --version   # v24.18.0
+npm --version    # 11.16.0
 npm ci
 npm run build
 ```
 
-`npm run build` compiles PiLink and attempts to expose `pilink` through an
-existing user-writable directory already on `PATH`. It never uses `sudo`, edits
-shell startup files, or replaces an unrelated command.
-
-If no safe `PATH` location exists, run the checkout directly:
+`npm run build` compiles PiLink and may create or repair a PiLink-owned launcher
+in an existing user-writable directory already on `PATH`. It never uses `sudo`,
+edits shell startup files, or replaces an unrelated command. If no safe launcher
+location exists, run:
 
 ```bash
 npm run cli -- start
 ```
 
-Set `PILINK_SKIP_CLI_LINK=1` when you explicitly want a build that does not
-create/repair the generated launcher.
+Private OAuth state, tunnel credentials, provider credentials, and PiLink data
+must stay outside the project exposed to MCP clients.
 
-Private configuration and runtime state normally live outside the repository,
-for example `~/.config/pilink/.env` on Linux/macOS. Do not place OAuth state,
-tunnel credentials, provider credentials, or PiLink private data inside the
-workspace exposed to MCP clients.
+## Security boundaries
 
-See [Installation](docs/INSTALLATION.md) for release installers, VSIX/source
-installation, Remote SSH, managed Node, and upgrade details.
+Project-folder access is the baseline. Filesystem tools are confined to the
+canonical selected project; repository execution is a separate opt-in. Public
+MCP OAuth, local owner administration, and optional provider authentication are
+separate trust boundaries.
 
-## Launch modes
+### Full machine access
 
-`pilink start` prompts for three experiences in this order:
+Full access removes the project boundary and enables process execution as the
+PiLink OS user. It is remote code execution by design and is **not** part of the
+normal VS Code workflow.
 
-| Mode | Command | Purpose |
-| --- | --- | --- |
-| **Single agent** | `pilink start --mode single` | Original project-tool bridge for a single MCP client without public collaboration services. Confined to project-folder access. |
-| **Agents chat** | `pilink start --mode collaboration` | Collaborative orchestration adding verified multi-agent chat (`pilink chat`), shared tasks, memory, and supervised agents. |
-| **CLI pilink-endpoint** | `pilink start --mode cli` | Launches the ChatGPT gateway provider as a local OpenAI-compatible endpoint with native tool calling; existing `pilink gateway` subcommands remain. |
-
-PiLink for VS Code is separate from launch-mode selection: `pilink install-vscode-plugin`.
-
-For a local server behind an existing reverse proxy:
-
-```bash
-pilink serve --mode single
-pilink serve --mode collaboration
-```
-
-See [Runtime mode selection](docs/operations/mode-selection.md) and the [ChatGPT LLM Gateway guide](docs/operations/llm-gateway.md) for details.
-
-## ChatGPT LLM Gateway
-
-PiLink exposes a ChatGPT conversation as a local model for coding agents such as [Pi Agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent):
-
-```bash
-pilink gateway start         # first-time interactive gateway setup
-pilink-cli                  # thereafter: start Pi Agent here; auto-start the configured gateway if stopped
-```
-
-- **OpenAI-compatible endpoint:** Loopback API at `http://127.0.0.1:3210/v1`
-  (with automatic port fallback to `3211/v1` if `3210` is occupied).
-- **Tool-calling bridge:** Forwards caller-advertised function tools (`bash`,
-  `read`, `edit`, `write`) to ChatGPT. ChatGPT selects tools via the structured
-  MCP dispatcher `gateway_call_local_tool`, PiLink returns standard OpenAI
-  `assistant.tool_calls`, and the caller executes them locally with its own
-  permissions.
-- **Harness execution boundary:** Tool execution remains strictly with the
-  caller harness. PiLink never executes caller tools and requires no
-  `--allow-unsafe-full-access` flag.
-- **Client compatibility:** Supports streaming (`stream: true`) with buffered SSE
-  chunks, multi-part text messages, and standard client parameters (`store`,
-  `max_completion_tokens`, `temperature`, `top_p`, etc.).
-
-Gateway setup first asks for the exact ChatGPT connection name. Add the printed MCP URL in ChatGPT and approve the **separate OAuth request** in the gateway terminal within 90 seconds. Only after ChatGPT has received its token does interactive setup offer browser auto-wake on Linux or Windows. The extension is built by `npm run build`, but Brave/Chrome/Chromium requires one-time **Developer mode → Load unpacked** approval. Once PiLink detects the enabled extension in the default browser profile, auto-wake turns on by default: no `yes` is needed. If the connection failed, remove the failed ChatGPT connection, run `pilink gateway connect`, and create it again. `pilink-cli` launches Pi Agent from your current folder and safely auto-starts the configured gateway. See [ChatGPT LLM Gateway](docs/operations/llm-gateway.md) for details and limitations.
-
-## Start PiLink from VS Code
-
-The graphical path intentionally fixes the security/workflow policy and asks
-only for the endpoint choice:
-
-1. install/update the extension once with `pilink install-vscode-plugin`, then open and trust the project;
-2. open **PiLink** from the Activity Bar;
-3. choose **Set up stable endpoint** (recommended), **Temporary quick start**,
-   or **Local only**;
-4. every choice writes Single agent + Project-folder access;
-5. when a public endpoint is ready, select **Connect ChatGPT**;
-6. do the coding task in ChatGPT Work or another MCP client.
-
-**Set up stable endpoint** supports a Cloudflare fixed domain or an existing
-HTTPS reverse proxy. The Quick Tunnel option is intentionally secondary because
-its URL changes when recreated.
-
-The extension no longer exposes collaboration enablement, Full-access launch,
-provider-backed chat/agents, native VS Code MCP integration, or manual OAuth
-client registration as graphical products. Those specialist capabilities remain
-in the core CLI/backend where appropriate.
-
-See [PiLink VS Code extension](docs/VSCODE_EXTENSION.md) and
-[Connect ChatGPT Work](docs/CONNECT_CHATGPT.md).
-
-## Full machine access
-
-Full access is intentionally unsafe and is not part of the VS Code workflow.
-From the CLI it must be enabled explicitly:
-
-```bash
-pilink start --allow-unsafe-full-access  # or pilink-agents / pilink-single-agent
-```
-
-Prefer assigning it to one reviewed OAuth client rather than every client:
+Use it only after reviewing the OAuth client and the
+[Security model](docs/SECURITY_MODEL.md):
 
 ```bash
 pilink clients list
-PI_FULL_ACCESS_CLIENT_IDS=pi_your_client_id pilink start --allow-unsafe-full-access
+PI_FULL_ACCESS_CLIENT_IDS=pi_your_client_id \
+  pilink start --allow-unsafe-full-access
 ```
 
-Full access removes the project filesystem boundary and enables process
-execution as the PiLink OS user. It does not grant root automatically, but it
-is remote code execution with that user's authority.
+Compatibility shortcuts such as `pilink agents`, `pilink-agents`,
+`pilink single-agents`, and `pilink-single-agent` enter Full-access workflows;
+they are not synonyms for ordinary project-scoped mode selection.
 
-If the VS Code launcher detects an existing Full-access configuration, it shows
-a safety state and refuses to start/restart/connect it. **Reconfigure safely...**
-resets it to the fixed graphical policy. Deliberate unrestricted operation
-belongs to the CLI/operator workflow.
+## Hosting choices
 
-Read [Security model](docs/SECURITY_MODEL.md) before enabling it.
+| Choice | Intended use | URL behavior |
+| --- | --- | --- |
+| Cloudflare fixed domain | Regular remote use | Stable |
+| Existing HTTPS domain | Operator-managed reverse proxy | Stable |
+| Cloudflare Quick Tunnel | Evaluation | Changes when recreated |
+| Local only | Same-machine clients | Not reachable by ChatGPT web |
 
-## Hosting
-
-PiLink supports temporary and stable HTTPS arrangements. In the VS Code
-launcher:
-
-- **Cloudflare fixed domain** — stable, PiLink provisions tunnel/DNS from a
-  scoped one-use API token;
-- **Existing HTTPS domain** — stable, operator-managed reverse proxy;
-- **Cloudflare Quick Tunnel** — temporary evaluation URL;
-- **Local only** — same-machine clients.
-
-The core CLI retains additional legacy hosting paths. A remote ChatGPT client
-needs a reachable HTTPS origin. Recreating a Quick Tunnel changes that origin
-and therefore changes the MCP/OAuth URL clients use.
-
-Hosting credentials must remain private. Automatic helper downloads are pinned
-and integrity-checked; controlled mirrors must provide both the download URL
-and independently verified SHA-256 digest.
-
-See [Installation](docs/INSTALLATION.md) for provisioning details.
-
-## Client and operator options
-
-- **ChatGPT Work / remote MCP clients:** connect to the OAuth-protected PiLink
-  endpoint.
-- **PiLink VS Code extension:** optional graphical launcher/status panel for the
-  same server, with a fixed safe policy.
-- **Agents chat / collaboration:** verified multi-agent chat, task coordination,
-  memory, and supervised agent controls via `--mode collaboration` and `pilink chat`.
-- **ChatGPT LLM Gateway:** run ChatGPT as a local OpenAI-compatible model
-  provider with native tool-calling via `--mode cli` or `pilink gateway` subcommands.
-- **Full machine access:** explicit CLI-only opt-in (`--allow-unsafe-full-access`)
-  for reviewed OAuth clients.
-
-## Security
-
-Project-folder access is the baseline. It confines filesystem tools to the
-canonical selected project, rejects traversal/symlink escapes, and does not
-expose a general shell. Repository execution and Full access require separate
-operator decisions.
-
-Public MCP OAuth, local VS Code administration, and optional model-provider
-authentication are independent trust boundaries. Keep all private PiLink state
-outside the project.
-
-Read [Security model](docs/SECURITY_MODEL.md) before exposing PiLink publicly or
-broadening execution/access policy.
+A public URL is not authorization. Remote access still requires the configured
+OAuth flow and the relevant client/plugin capability.
 
 ## Documentation
 
-- [Getting started](docs/GETTING_STARTED.md)
+**Start here**
+
+- [Documentation by task](docs/README.md)
 - [Installation](docs/INSTALLATION.md)
-- [VS Code extension](docs/VSCODE_EXTENSION.md)
+- [Getting started](docs/GETTING_STARTED.md)
 - [Connect ChatGPT Work](docs/CONNECT_CHATGPT.md)
-- [ChatGPT LLM Gateway](docs/operations/llm-gateway.md)
-- [Runtime mode selection](docs/operations/mode-selection.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Security model](docs/SECURITY_MODEL.md)
+- [PiLink for VS Code](docs/VSCODE_EXTENSION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Documentation index](docs/README.md)
+
+**Reference / operator**
+
+- [Security model](docs/SECURITY_MODEL.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Runtime mode selection](docs/operations/mode-selection.md)
+- [ChatGPT LLM Gateway](docs/operations/llm-gateway.md)
+- [Usage, models, and costs](docs/USAGE_AND_COSTS.md)
 
 ## Development
 
 ```bash
 npm ci
-npm run dev          # compile/watch only; does not start PiLink
-npm run dev:server   # explicitly run the raw development server
+npm run dev          # compile/watch only
+npm run dev:server   # run the raw development server
 npm run test:all
 npm run release:check
 ```
 
-PiLink uses the [MIT License](LICENSE) and the [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) harness.
-The repository history and [NOTICE](NOTICE.md) retain attribution.
+PiLink uses the [MIT License](LICENSE) and the
+[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+harness. Repository history and [NOTICE](NOTICE.md) retain attribution.

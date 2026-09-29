@@ -1860,15 +1860,15 @@ function renderLandingPage(): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>PiLink · Local-first MCP bridge</title>
+  <title>PiLink · Project-scoped MCP bridge</title>
   <style>
-    :root { color-scheme: dark; --bg:#090a0d; --panel:#121419; --line:#272b33; --text:#f4f6f8; --muted:#9aa3ad; --accent:#77e0c1; --accent2:#8ea8ff; }
+    :root { color-scheme: dark; --bg:#070b16; --panel:#11182a; --line:#27314b; --text:#f8fafc; --muted:#a7b0c2; --accent:#63e6c2; --accent2:#8da2ff; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; color:var(--text); background:radial-gradient(circle at 14% 0%,#17332e 0,transparent 34rem),radial-gradient(circle at 90% 18%,#182343 0,transparent 30rem),var(--bg); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { margin:0; min-height:100vh; color:var(--text); background:radial-gradient(circle at 14% 0%,#13352f 0,transparent 34rem),radial-gradient(circle at 90% 18%,#1b2852 0,transparent 30rem),var(--bg); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     main { width:min(1040px,calc(100% - 40px)); margin:0 auto; padding:68px 0 36px; }
     .top { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:76px; }
-    .brand { display:flex; align-items:center; color:var(--text); font-weight:760; letter-spacing:-.02em; }
-    .brand img { display:block; width:180px; max-width:42vw; height:auto; border-radius:6px; background:#fff; }
+    .brand { display:flex; align-items:center; gap:12px; color:var(--text); font-size:20px; font-weight:760; letter-spacing:-.03em; }
+    .brand img { display:block; width:42px; height:42px; border-radius:10px; }
     .status { display:flex; align-items:center; gap:8px; padding:7px 11px; border:1px solid #5fe0ba38; border-radius:999px; background:#50d5ae12; color:#a1f2da; font-size:12px; font-weight:650; }
     .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 16px #77e0c1; }
     .hero { max-width:780px; margin-bottom:56px; }
@@ -1893,24 +1893,24 @@ function renderLandingPage(): string {
 <body>
   <main>
     <header class="top">
-      <div class="brand"><img src="/assets/logo.png" width="180" height="101" alt="PiLink"></div>
+      <div class="brand"><img src="/assets/logo.png" width="42" height="42" alt=""><span>PiLink</span></div>
       <div class="status"><span class="dot"></span>Service online</div>
     </header>
     <section class="hero">
-      <p class="eyebrow">Local-first agent infrastructure</p>
-      <h1>Your workspace, connected <span>on your terms.</span></h1>
-      <p class="lead">A secure bridge from ChatGPT to the Pi coding-tool harness in your local workspace, with explicit OAuth consent and collaborative agent monitoring.</p>
+      <p class="eyebrow">Self-hosted MCP bridge</p>
+      <h1>One project. <span>Explicit access.</span></h1>
+      <p class="lead">PiLink gives authorized MCP clients controlled access to a project you select. Remote use needs a reachable HTTPS origin; client or plugin availability is separate from PiLink.</p>
       <div class="actions">
         <a class="button primary" href="https://github.com/roccoangelella/PiLink" rel="noreferrer">View source on GitHub</a>
         <a class="button" href="https://github.com/roccoangelella/PiLink#readme" rel="noreferrer">Read documentation</a>
       </div>
     </section>
     <section class="grid" aria-label="PiLink capabilities">
-      <article class="card"><span class="num">01</span><h2>ChatGPT via MCP</h2><p>Use the real ChatGPT frontend while PiLink exposes the Pi tools and guides endpoint, OAuth and connection health.</p></article>
-      <article class="card"><span class="num">02</span><h2>Secure by default</h2><p>Loopback origin, PKCE, rotating refresh tokens, paired owner consent and workspace-scoped tools.</p></article>
-      <article class="card"><span class="num">03</span><h2>Collaborative monitor</h2><p>Watch remote ChatGPT conversations, durable agent chat and the shared task board beside the files they change.</p></article>
+      <article class="card"><span class="num">01</span><h2>Project-scoped by default</h2><p>The normal bridge confines workspace tools to the selected project. Repository execution and Full machine access are separate operator choices.</p></article>
+      <article class="card"><span class="num">02</span><h2>OAuth-protected remote access</h2><p>A public endpoint is not authorization. PiLink keeps remote OAuth and local owner verification as separate trust boundaries.</p></article>
+      <article class="card"><span class="num">03</span><h2>Optional local model gateway</h2><p>A connected ChatGPT conversation can provide model responses through a loopback API. Streaming is buffered; caller tools execute in the local harness.</p></article>
     </section>
-    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project · Not affiliated with OpenAI</span></footer>
+    <footer><span>PiLink ${VERSION} · Streamable HTTP + legacy SSE</span><span>Independent open-source project</span></footer>
   </main>
 </body>
 </html>`;
